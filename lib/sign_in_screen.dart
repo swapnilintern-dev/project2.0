@@ -15,7 +15,7 @@ import 'package:flutter/material.dart';
 import 'vendor_registration_screen.dart'; // AppColors + VendorRegistrationScreen
 import 'customer_dashboard.dart';
 import 'delivery_dashboard.dart';
-import 'admin_dashboard.dart';
+import 'admin/admin_main.dart';
 import 'marketing/marketing_role_main.dart';
 
 /// The account types a user can sign in as. The role is decided by the account
@@ -64,7 +64,7 @@ class _SignInScreenState extends State<SignInScreen> {
     final role = _roleFor(_identifierCtrl.text);
     final Widget nextScreen = switch (role) {
       SignInRole.vendor => const CustomerDashboardScreen(),
-      SignInRole.admin => const AdminDashboardScreen(),
+      SignInRole.admin => const AdminRoleMain(),
       SignInRole.delivery => const DeliveryDashboardScreen(),
       SignInRole.marketing => const MarketingRoleMain(),
     };
