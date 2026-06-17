@@ -1,0 +1,159 @@
+# =========================
+
+# General
+
+# =========================
+
+*.class
+*.log
+*.pyc
+*.swp
+*.tmp
+.DS_Store
+Thumbs.db
+
+# =========================
+
+# IDEs
+
+# =========================
+
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# =========================
+
+# Flutter / Dart
+
+# =========================
+
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub/
+.pub-cache/
+build/
+coverage/
+
+# Generated docs
+
+**/doc/api/
+
+# Flutter build cache
+
+**/ios/Flutter/.last_build_id
+
+# Obfuscation
+
+app.*.symbols
+app.*.map.json
+
+# =========================
+
+# Android
+
+# =========================
+
+android/.gradle/
+android/local.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+
+# =========================
+
+# iOS
+
+# =========================
+
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.podspec
+
+# =========================
+
+# macOS
+
+# =========================
+
+macos/Pods/
+
+# =========================
+
+# Linux
+
+# =========================
+
+linux/flutter/ephemeral/
+
+# =========================
+
+# Windows
+
+# =========================
+
+windows/flutter/ephemeral/
+
+# =========================
+
+# Node.js Backend
+
+# =========================
+
+server/node_modules/
+server/npm-debug.log*
+server/yarn-debug.log*
+server/yarn-error.log*
+server/pnpm-debug.log*
+
+# Backend environment variables
+
+server/.env
+server/.env.*
+.env
+.env.*
+
+# =========================
+
+# Generated Reports
+
+# =========================
+
+analyze_report.txt
+lib_structure.txt
+
+# =========================
+
+# Misc
+
+# =========================
+
+.history/
+.svn/
+.atom/
+.build/
+.buildlog/
+.swiftpm/
+migrate_working_dir/
+
+# =========================
+
+# Firebase (optional)
+
+# =========================
+
+firebase-debug.log
+.firestore/
+
+# =========================
+
+# Crash / Profiling
+
+# =========================
+
+crashlytics-build.properties
+*.hprof
