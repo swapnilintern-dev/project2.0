@@ -11,6 +11,7 @@
 // =============================================================================
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // Clipboard (tap-to-copy support details)
 
 import 'vendor_registration_screen.dart'; // AppColors + VendorRegistrationScreen
 import 'customer_dashboard.dart';
@@ -93,6 +94,19 @@ class _SignInScreenState extends State<SignInScreen> {
   void _openVendorRegistration() {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const VendorRegistrationScreen()),
+    );
+  }
+
+  /// Opens the "Contact Support" bottom sheet (company phone + email, each
+  /// tap-to-copy).
+  void _showSupportSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (_) => const _SupportSheet(),
     );
   }
 
@@ -308,7 +322,7 @@ class _SignInScreenState extends State<SignInScreen> {
               ),
               validator: (v) {
                 if (v == null || v.isEmpty) return 'Password is required';
-                if (v.length < 6) return 'Password must be at least 6 characters';
+                if (v.length < 4) return 'Password must be at least 6 characters';
                 return null;
               },
             ),
@@ -366,9 +380,7 @@ class _SignInScreenState extends State<SignInScreen> {
             // Support footer.
             Center(
               child: TextButton(
-                onPressed: () {
-                  // TODO: open support contact options.
-                },
+                onPressed: _showSupportSheet,
                 style: TextButton.styleFrom(
                   foregroundColor: AppColors.greyText,
                 ),
@@ -394,11 +406,6 @@ class _SignInScreenState extends State<SignInScreen> {
       ),
     );
   }
-
-  // ---------------------------------------------------------------------------
-  // ROLE SELECTOR (sliding indicator driven by AnimationController)
-  // ---------------------------------------------------------------------------
-  // ---------------------------------------------------------------------------
   // VENDOR REGISTRATION BANNER
   // ---------------------------------------------------------------------------
 
@@ -630,6 +637,173 @@ class _GlowGradientButton extends StatelessWidget {
                       ),
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// "Contact Support" bottom sheet — the company's phone & email, each tappable
+/// to copy. Replace the placeholder values below with the real support details.
+class _SupportSheet extends StatelessWidget {
+  const _SupportSheet();
+
+  // TODO: replace with the company's real support contact details.
+  static const String _phone = '+91 1800 123 4567';
+  static const String _email = 'support@vsarogya.in';
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Grab handle.
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.border,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Center(
+              child: Container(
+                width: 60,
+                height: 60,
+                decoration: const BoxDecoration(
+                  color: AppColors.lightGreenBg,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.support_agent_rounded,
+                    color: AppColors.darkGreen, size: 30),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Center(
+              child: Text(
+                'Contact Support',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.darkText,
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Center(
+              child: Text(
+                "We're here to help — reach us anytime.",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: AppColors.greyText),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const _SupportContactTile(
+              icon: Icons.call_outlined,
+              label: 'Phone',
+              value: _phone,
+            ),
+            const SizedBox(height: 12),
+            const _SupportContactTile(
+              icon: Icons.mail_outline,
+              label: 'Email',
+              value: _email,
+            ),
+            const SizedBox(height: 16),
+            const Center(
+              child: Text(
+                'Mon–Sat · 9:00 AM – 7:00 PM',
+                style: TextStyle(fontSize: 12, color: AppColors.greyText),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One tap-to-copy support channel row (phone / email) inside [_SupportSheet].
+class _SupportContactTile extends StatelessWidget {
+  const _SupportContactTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () {
+          Clipboard.setData(ClipboardData(text: value));
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              SnackBar(
+                content: Text('$label copied'),
+                backgroundColor: AppColors.darkGreen,
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(milliseconds: 1300),
+              ),
+            );
+        },
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.pageBg,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: const BoxDecoration(
+                  color: AppColors.primary,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: AppColors.white, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.greyText),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      value,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.darkText,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.copy_rounded, size: 18, color: AppColors.greyText),
+            ],
           ),
         ),
       ),

@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../theme/app_widgets.dart';
 import 'customer_controllers.dart';
 import 'customer_mock_data.dart';
 import 'customer_models.dart';
@@ -100,12 +101,11 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
           child: Hero(
             tag: 'product-${_p.id}',
             child: Center(
-              child: _p.imageUrl != null && _p.imageUrl!.isNotEmpty
-                  ? Image.network(_p.imageUrl!,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, _, _) =>
-                          Icon(_p.icon, size: 120, color: AppColors.primary))
-                  : Icon(_p.icon, size: 120, color: AppColors.primary),
+              child: AppNetworkImage(
+                url: _p.imageUrl,
+                fit: BoxFit.contain,
+                fallback: Icon(_p.icon, size: 120, color: AppColors.primary),
+              ),
             ),
           ),
         ),
@@ -211,7 +211,9 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                 itemBuilder: (context, i) {
                   final r = _related[i];
                   return GestureDetector(
-                    onTap: () => Navigator.of(context).pushReplacement(
+                    // push (not pushReplacement) so Back returns to the
+                    // product the user came from, per expected back behavior.
+                    onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(
                           builder: (_) => ProductDetailsScreen(product: r)),
                     ),

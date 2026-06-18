@@ -10,6 +10,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../theme/app_theme.dart' show AppShadows;
 import 'customer_api.dart';
 import 'customer_mock_data.dart';
 import 'customer_models.dart';
@@ -247,8 +248,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(16),
                     border: Border.all(color: AppColors.border),
+                    boxShadow: AppShadows.card,
                   ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,

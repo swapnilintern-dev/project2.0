@@ -11,6 +11,7 @@
 
 import 'package:flutter/material.dart';
 
+import 'customer/customer_controllers.dart';
 import 'customer/customer_shell.dart';
 import 'sign_in_screen.dart';
 
@@ -21,6 +22,9 @@ class CustomerDashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return CustomerShell(
       onLogout: () {
+        // Clear in-memory session so the next user doesn't inherit this
+        // account's cart / wishlist / orders / addresses.
+        resetCustomerSession();
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const SignInScreen()),
           (route) => false,

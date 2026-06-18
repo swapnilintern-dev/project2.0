@@ -31,7 +31,11 @@ const productSchema = new mongoose.Schema({
             url : String ,
             publicId : String 
         }
-    ]
+    ],
+    quantity:{
+        type : String ,
+        default :"1"
+    }
 
 } ,{timestamps: true} ) ;
 

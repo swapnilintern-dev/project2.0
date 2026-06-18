@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import '../../vendor_registration_screen.dart' show AppColors;
 import '../admin_common.dart';
 import '../admin_models.dart';
+import '../../theme/app_widgets.dart' show showAppActionSheet, AppSheetAction;
 
 class UserDetailScreen extends StatelessWidget {
   const UserDetailScreen({super.key, required this.user});
@@ -225,61 +226,31 @@ class UserDetailScreen extends StatelessWidget {
   void _moreSheet(BuildContext context, Color accent) {
     final suspended = user.tag == UserTag.flagged ||
         user.tag == UserTag.suspended;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      builder: (sheetCtx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 10),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppColors.border,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 8),
-            _SheetItem(
-              icon: Icons.edit_outlined,
-              label: 'Edit ${user.kind.label}',
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                adminSnack(context, 'Edit ${user.name}');
-              },
-            ),
-            _SheetItem(
-              icon: Icons.lock_reset,
-              label: 'Reset Login',
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                adminSnack(context, 'Login reset for ${user.name}');
-              },
-            ),
-            _SheetItem(
-              icon: suspended ? Icons.lock_open_outlined : Icons.block,
-              label: suspended ? 'Reactivate Account' : 'Suspend Account',
-              danger: !suspended,
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                adminSnack(
-                  context,
-                  suspended
-                      ? '${user.name} reactivated'
-                      : '${user.name} suspended',
-                  color: suspended ? AppColors.darkGreen : AdminColors.red,
-                );
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
+    showAppActionSheet(
+      context,
+      title: user.name,
+      actions: [
+        AppSheetAction(
+          label: 'Edit ${user.kind.label}',
+          icon: Icons.edit_outlined,
+          onSelected: () => adminSnack(context, 'Edit ${user.name}'),
         ),
-      ),
+        AppSheetAction(
+          label: 'Reset Login',
+          icon: Icons.lock_reset,
+          onSelected: () => adminSnack(context, 'Login reset for ${user.name}'),
+        ),
+        AppSheetAction(
+          label: suspended ? 'Reactivate Account' : 'Suspend Account',
+          icon: suspended ? Icons.lock_open_outlined : Icons.block,
+          destructive: !suspended,
+          onSelected: () => adminSnack(
+            context,
+            suspended ? '${user.name} reactivated' : '${user.name} suspended',
+            color: suspended ? AppColors.darkGreen : AdminColors.red,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -372,32 +343,6 @@ class _TimelineRow extends StatelessWidget {
               style: const TextStyle(fontSize: 11, color: AppColors.greyText)),
         ],
       ),
-    );
-  }
-}
-
-class _SheetItem extends StatelessWidget {
-  const _SheetItem({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.danger = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final bool danger;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = danger ? AdminColors.red : AppColors.darkText;
-    return ListTile(
-      leading: Icon(icon, color: color),
-      title: Text(label,
-          style: TextStyle(
-              fontSize: 14.5, fontWeight: FontWeight.w600, color: color)),
-      onTap: onTap,
     );
   }
 }

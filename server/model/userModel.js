@@ -89,6 +89,20 @@ const vendorSchema = new mongoose.Schema(
       url: String,
       publicId: String,
     },
+
+    cart:[
+      {
+        product :{
+          type : mongoose.Schema.Types.ObjectId ,
+          ref:"product"
+        },
+
+        quantity:{
+          type : Number ,
+          default : 1 
+        }
+      }
+    ]
   },
   {
     timestamps: true,
@@ -96,3 +110,19 @@ const vendorSchema = new mongoose.Schema(
 );
 
 export default mongoose.model("Vendor", vendorSchema);
+
+
+
+// cart: [
+//     {
+//       product: {
+//         type: mongoose.Schema.Types.ObjectId,
+//         ref: "Product"
+//       },
+
+//       quantity: {
+//         type: Number,
+//         default: 1
+//       }
+//     }
+//   ]

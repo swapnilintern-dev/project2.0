@@ -11,6 +11,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../theme/app_theme.dart' show AppShadows;
 import '../customer/customer_widgets.dart'
     show formatRupees, SectionHeader;
 import 'marketing_controllers.dart';
@@ -172,6 +173,7 @@ class _StatCard extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: AppColors.border),
+          boxShadow: AppShadows.card,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

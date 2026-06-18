@@ -127,11 +127,9 @@ class CategorySplit {
 
 // TODO: GET /api/admin/analytics/categories
 const List<CategorySplit> kCategorySplit = [
-  CategorySplit('Tablets', 0.38, AdminColors.green),
-  CategorySplit('Injections', 0.24, AdminColors.blue),
-  CategorySplit('Surgical', 0.18, AdminColors.purple),
-  CategorySplit('Wellness', 0.12, AdminColors.orange),
-  CategorySplit('Devices', 0.08, AdminColors.darkGreen),
+  CategorySplit('Medicine', 0.52, AdminColors.green),
+  CategorySplit('Lifesaving Injections', 0.30, AdminColors.blue),
+  CategorySplit('Vaccines', 0.18, AdminColors.purple),
 ];
 
 // -----------------------------------------------------------------------------
@@ -142,18 +140,18 @@ enum VendorStatus { active, pending, review, suspended }
 
 extension VendorStatusX on VendorStatus {
   String get label => switch (this) {
-        VendorStatus.active => 'Active',
-        VendorStatus.pending => 'Pending',
-        VendorStatus.review => 'Review',
-        VendorStatus.suspended => 'Suspended',
-      };
+    VendorStatus.active => 'Active',
+    VendorStatus.pending => 'Pending',
+    VendorStatus.review => 'Review',
+    VendorStatus.suspended => 'Suspended',
+  };
 
   Color get color => switch (this) {
-        VendorStatus.active => AdminColors.green,
-        VendorStatus.pending => AdminColors.orange,
-        VendorStatus.review => AdminColors.blue,
-        VendorStatus.suspended => AdminColors.red,
-      };
+    VendorStatus.active => AdminColors.green,
+    VendorStatus.pending => AdminColors.orange,
+    VendorStatus.review => AdminColors.blue,
+    VendorStatus.suspended => AdminColors.red,
+  };
 }
 
 class VendorDoc {
@@ -198,11 +196,9 @@ final List<Vendor> kVendors = [
     appliedOn: '02 Jan 2026',
     status: VendorStatus.active,
     docs: const [
-      VendorDoc('Drug Licence (Form 20B)', true),
+      VendorDoc('Store Photo', true),
+      VendorDoc('Drug License Copy', true),
       VendorDoc('GST Certificate', true),
-      VendorDoc('FSSAI Licence', true),
-      VendorDoc('PAN Card', true),
-      VendorDoc('Bank Proof', true),
     ],
   ),
   Vendor(
@@ -215,11 +211,9 @@ final List<Vendor> kVendors = [
     appliedOn: '08 Jan 2026',
     status: VendorStatus.active,
     docs: const [
-      VendorDoc('Drug Licence (Form 20B)', true),
+      VendorDoc('Store Photo', true),
+      VendorDoc('Drug License Copy', true),
       VendorDoc('GST Certificate', true),
-      VendorDoc('FSSAI Licence', true),
-      VendorDoc('PAN Card', true),
-      VendorDoc('Bank Proof', true),
     ],
   ),
   Vendor(
@@ -232,11 +226,9 @@ final List<Vendor> kVendors = [
     appliedOn: '14 Jun 2026',
     status: VendorStatus.pending,
     docs: const [
-      VendorDoc('Drug Licence (Form 20B)', true),
-      VendorDoc('GST Certificate', true),
-      VendorDoc('FSSAI Licence', true),
-      VendorDoc('PAN Card', false),
-      VendorDoc('Bank Proof', false),
+      VendorDoc('Store Photo', true),
+      VendorDoc('Drug License Copy', true),
+      VendorDoc('GST Certificate', false),
     ],
   ),
   Vendor(
@@ -249,11 +241,9 @@ final List<Vendor> kVendors = [
     appliedOn: '11 Jun 2026',
     status: VendorStatus.review,
     docs: const [
-      VendorDoc('Drug Licence (Form 20B)', true),
+      VendorDoc('Store Photo', true),
+      VendorDoc('Drug License Copy', false),
       VendorDoc('GST Certificate', true),
-      VendorDoc('FSSAI Licence', false),
-      VendorDoc('PAN Card', true),
-      VendorDoc('Bank Proof', false),
     ],
   ),
   Vendor(
@@ -266,11 +256,9 @@ final List<Vendor> kVendors = [
     appliedOn: '20 Feb 2026',
     status: VendorStatus.suspended,
     docs: const [
-      VendorDoc('Drug Licence (Form 20B)', true),
+      VendorDoc('Store Photo', true),
+      VendorDoc('Drug License Copy', true),
       VendorDoc('GST Certificate', true),
-      VendorDoc('FSSAI Licence', true),
-      VendorDoc('PAN Card', true),
-      VendorDoc('Bank Proof', true),
     ],
   ),
 ];
@@ -283,18 +271,18 @@ enum AdminOrderStatus { processing, transit, delivered, disputed }
 
 extension AdminOrderStatusX on AdminOrderStatus {
   String get label => switch (this) {
-        AdminOrderStatus.processing => 'Processing',
-        AdminOrderStatus.transit => 'In Transit',
-        AdminOrderStatus.delivered => 'Delivered',
-        AdminOrderStatus.disputed => 'Disputed',
-      };
+    AdminOrderStatus.processing => 'Processing',
+    AdminOrderStatus.transit => 'In Transit',
+    AdminOrderStatus.delivered => 'Delivered',
+    AdminOrderStatus.disputed => 'Disputed',
+  };
 
   Color get color => switch (this) {
-        AdminOrderStatus.processing => AdminColors.orange,
-        AdminOrderStatus.transit => AdminColors.blue,
-        AdminOrderStatus.delivered => AdminColors.darkGreen,
-        AdminOrderStatus.disputed => AdminColors.red,
-      };
+    AdminOrderStatus.processing => AdminColors.orange,
+    AdminOrderStatus.transit => AdminColors.blue,
+    AdminOrderStatus.delivered => AdminColors.darkGreen,
+    AdminOrderStatus.disputed => AdminColors.red,
+  };
 }
 
 class AdminOrder {
@@ -320,55 +308,62 @@ class AdminOrder {
 // TODO: GET /api/admin/orders
 const List<AdminOrder> kOrders = [
   AdminOrder(
-      id: 'MCP-48210',
-      buyer: 'Apollo Pharmacy',
-      vendor: 'MedSupply Co.',
-      amount: 1519,
-      items: 8,
-      status: AdminOrderStatus.transit),
+    id: 'MCP-48210',
+    buyer: 'Apollo Pharmacy',
+    vendor: 'MedSupply Co.',
+    amount: 1519,
+    items: 8,
+    status: AdminOrderStatus.transit,
+  ),
   AdminOrder(
-      id: 'MCP-48196',
-      buyer: 'HealthFirst',
-      vendor: 'CarePlus',
-      amount: 14280,
-      items: 36,
-      status: AdminOrderStatus.processing),
+    id: 'MCP-48196',
+    buyer: 'HealthFirst',
+    vendor: 'CarePlus',
+    amount: 14280,
+    items: 36,
+    status: AdminOrderStatus.processing,
+  ),
   AdminOrder(
-      id: 'MCP-47120',
-      buyer: 'Wellness Mart',
-      vendor: 'ValueRx',
-      amount: 6240,
-      items: 15,
-      status: AdminOrderStatus.disputed,
-      disputeId: 'DSP-1042'),
+    id: 'MCP-47120',
+    buyer: 'Wellness Mart',
+    vendor: 'ValueRx',
+    amount: 6240,
+    items: 15,
+    status: AdminOrderStatus.disputed,
+    disputeId: 'DSP-1042',
+  ),
   AdminOrder(
-      id: 'MCP-48108',
-      buyer: 'MedPlus',
-      vendor: 'HealthFirst',
-      amount: 3380,
-      items: 11,
-      status: AdminOrderStatus.delivered),
+    id: 'MCP-48108',
+    buyer: 'MedPlus',
+    vendor: 'HealthFirst',
+    amount: 3380,
+    items: 11,
+    status: AdminOrderStatus.delivered,
+  ),
   AdminOrder(
-      id: 'MCP-48090',
-      buyer: 'City Care Chemist',
-      vendor: 'QuickMeds',
-      amount: 9870,
-      items: 24,
-      status: AdminOrderStatus.transit),
+    id: 'MCP-48090',
+    buyer: 'City Care Chemist',
+    vendor: 'QuickMeds',
+    amount: 9870,
+    items: 24,
+    status: AdminOrderStatus.transit,
+  ),
   AdminOrder(
-      id: 'MCP-48055',
-      buyer: 'Green Cross Pharma',
-      vendor: 'MedSupply Co.',
-      amount: 2110,
-      items: 6,
-      status: AdminOrderStatus.processing),
+    id: 'MCP-48055',
+    buyer: 'Green Cross Pharma',
+    vendor: 'MedSupply Co.',
+    amount: 2110,
+    items: 6,
+    status: AdminOrderStatus.processing,
+  ),
   AdminOrder(
-      id: 'MCP-47980',
-      buyer: 'Sunrise Medicals',
-      vendor: 'ValueRx',
-      amount: 540,
-      items: 3,
-      status: AdminOrderStatus.delivered),
+    id: 'MCP-47980',
+    buyer: 'Sunrise Medicals',
+    vendor: 'ValueRx',
+    amount: 540,
+    items: 3,
+    status: AdminOrderStatus.delivered,
+  ),
 ];
 
 // -----------------------------------------------------------------------------
@@ -448,48 +443,48 @@ enum UserTag { premium, isNew, flagged, suspended, active, onDuty }
 
 extension UserTagX on UserTag {
   String get label => switch (this) {
-        UserTag.premium => 'Premium',
-        UserTag.isNew => 'New',
-        UserTag.flagged => 'Flagged',
-        UserTag.suspended => 'Suspended',
-        UserTag.active => 'Active',
-        UserTag.onDuty => 'On Duty',
-      };
+    UserTag.premium => 'Premium',
+    UserTag.isNew => 'New',
+    UserTag.flagged => 'Flagged',
+    UserTag.suspended => 'Suspended',
+    UserTag.active => 'Active',
+    UserTag.onDuty => 'On Duty',
+  };
 
   Color get color => switch (this) {
-        UserTag.premium => AdminColors.purple,
-        UserTag.isNew => AdminColors.blue,
-        UserTag.flagged => AdminColors.amber,
-        UserTag.suspended => AdminColors.red,
-        UserTag.active => AdminColors.green,
-        UserTag.onDuty => AdminColors.green,
-      };
+    UserTag.premium => AdminColors.purple,
+    UserTag.isNew => AdminColors.blue,
+    UserTag.flagged => AdminColors.amber,
+    UserTag.suspended => AdminColors.red,
+    UserTag.active => AdminColors.green,
+    UserTag.onDuty => AdminColors.green,
+  };
 }
 
 extension UserKindX on UserKind {
   String get label => switch (this) {
-        UserKind.customer => 'Customer',
-        UserKind.agent => 'Delivery Agent',
-        UserKind.staff => 'Staff Member',
-      };
+    UserKind.customer => 'Customer',
+    UserKind.agent => 'Delivery Agent',
+    UserKind.staff => 'Staff Member',
+  };
 
   String get detailTitle => switch (this) {
-        UserKind.customer => 'Customer Details',
-        UserKind.agent => 'Agent Details',
-        UserKind.staff => 'Staff Details',
-      };
+    UserKind.customer => 'Customer Details',
+    UserKind.agent => 'Agent Details',
+    UserKind.staff => 'Staff Details',
+  };
 
   Color get color => switch (this) {
-        UserKind.customer => AdminColors.blue,
-        UserKind.agent => AdminColors.purple,
-        UserKind.staff => AppColors.darkGreen,
-      };
+    UserKind.customer => AdminColors.blue,
+    UserKind.agent => AdminColors.purple,
+    UserKind.staff => AppColors.darkGreen,
+  };
 
   IconData get icon => switch (this) {
-        UserKind.customer => Icons.local_pharmacy_outlined,
-        UserKind.agent => Icons.delivery_dining_outlined,
-        UserKind.staff => Icons.badge_outlined,
-      };
+    UserKind.customer => Icons.local_pharmacy_outlined,
+    UserKind.agent => Icons.delivery_dining_outlined,
+    UserKind.staff => Icons.badge_outlined,
+  };
 }
 
 /// A headline metric tile shown at the top of the detail screen.
@@ -590,23 +585,26 @@ const List<PlatformUser> kUsers = [
     timelineTitle: 'Recent Orders',
     timeline: [
       TimelineEntry(
-          icon: Icons.check_circle_outline,
-          color: AppColors.darkGreen,
-          title: '#MCP-48210 · ₹1,519',
-          subtitle: 'Delivered · MedSupply Co.',
-          time: '2d ago'),
+        icon: Icons.check_circle_outline,
+        color: AppColors.darkGreen,
+        title: '#MCP-48210 · ₹1,519',
+        subtitle: 'Delivered · MedSupply Co.',
+        time: '2d ago',
+      ),
       TimelineEntry(
-          icon: Icons.local_shipping_outlined,
-          color: AdminColors.blue,
-          title: '#MCP-48055 · ₹2,110',
-          subtitle: 'Processing · MedSupply Co.',
-          time: '4d ago'),
+        icon: Icons.local_shipping_outlined,
+        color: AdminColors.blue,
+        title: '#MCP-48055 · ₹2,110',
+        subtitle: 'Processing · MedSupply Co.',
+        time: '4d ago',
+      ),
       TimelineEntry(
-          icon: Icons.check_circle_outline,
-          color: AppColors.darkGreen,
-          title: '#MCP-47980 · ₹540',
-          subtitle: 'Delivered · ValueRx',
-          time: '1w ago'),
+        icon: Icons.check_circle_outline,
+        color: AppColors.darkGreen,
+        title: '#MCP-47980 · ₹540',
+        subtitle: 'Delivered · ValueRx',
+        time: '1w ago',
+      ),
     ],
   ),
   PlatformUser(
@@ -634,17 +632,19 @@ const List<PlatformUser> kUsers = [
     timelineTitle: 'Recent Orders',
     timeline: [
       TimelineEntry(
-          icon: Icons.local_shipping_outlined,
-          color: AdminColors.blue,
-          title: '#MCP-48196 · ₹14,280',
-          subtitle: 'In Transit · CarePlus',
-          time: '6h ago'),
+        icon: Icons.local_shipping_outlined,
+        color: AdminColors.blue,
+        title: '#MCP-48196 · ₹14,280',
+        subtitle: 'In Transit · CarePlus',
+        time: '6h ago',
+      ),
       TimelineEntry(
-          icon: Icons.check_circle_outline,
-          color: AppColors.darkGreen,
-          title: '#MCP-48108 · ₹3,380',
-          subtitle: 'Delivered · HealthFirst',
-          time: '3d ago'),
+        icon: Icons.check_circle_outline,
+        color: AppColors.darkGreen,
+        title: '#MCP-48108 · ₹3,380',
+        subtitle: 'Delivered · HealthFirst',
+        time: '3d ago',
+      ),
     ],
   ),
   PlatformUser(
@@ -672,17 +672,19 @@ const List<PlatformUser> kUsers = [
     timelineTitle: 'Recent Orders',
     timeline: [
       TimelineEntry(
-          icon: Icons.report_gmailerrorred_outlined,
-          color: AdminColors.red,
-          title: '#MCP-47120 · ₹6,240',
-          subtitle: 'Disputed · ValueRx',
-          time: '2d ago'),
+        icon: Icons.report_gmailerrorred_outlined,
+        color: AdminColors.red,
+        title: '#MCP-47120 · ₹6,240',
+        subtitle: 'Disputed · ValueRx',
+        time: '2d ago',
+      ),
       TimelineEntry(
-          icon: Icons.check_circle_outline,
-          color: AppColors.darkGreen,
-          title: '#MCP-46980 · ₹1,180',
-          subtitle: 'Delivered · MedSupply Co.',
-          time: '1w ago'),
+        icon: Icons.check_circle_outline,
+        color: AppColors.darkGreen,
+        title: '#MCP-46980 · ₹1,180',
+        subtitle: 'Delivered · MedSupply Co.',
+        time: '1w ago',
+      ),
     ],
   ),
   PlatformUser(
@@ -710,11 +712,12 @@ const List<PlatformUser> kUsers = [
     timelineTitle: 'Recent Orders',
     timeline: [
       TimelineEntry(
-          icon: Icons.check_circle_outline,
-          color: AppColors.darkGreen,
-          title: '#MCP-48090 · ₹9,870',
-          subtitle: 'In Transit · QuickMeds',
-          time: '1d ago'),
+        icon: Icons.check_circle_outline,
+        color: AppColors.darkGreen,
+        title: '#MCP-48090 · ₹9,870',
+        subtitle: 'In Transit · QuickMeds',
+        time: '1d ago',
+      ),
     ],
   ),
   PlatformUser(
@@ -742,17 +745,19 @@ const List<PlatformUser> kUsers = [
     timelineTitle: 'Recent Activity',
     timeline: [
       TimelineEntry(
-          icon: Icons.block,
-          color: AdminColors.red,
-          title: 'Account suspended',
-          subtitle: 'By Risk team',
-          time: '5d ago'),
+        icon: Icons.block,
+        color: AdminColors.red,
+        title: 'Account suspended',
+        subtitle: 'By Risk team',
+        time: '5d ago',
+      ),
       TimelineEntry(
-          icon: Icons.report_gmailerrorred_outlined,
-          color: AdminColors.red,
-          title: 'Dispute opened · ₹12,400',
-          subtitle: 'Non-payment · HealthFirst',
-          time: '2w ago'),
+        icon: Icons.report_gmailerrorred_outlined,
+        color: AdminColors.red,
+        title: 'Dispute opened · ₹12,400',
+        subtitle: 'Non-payment · HealthFirst',
+        time: '2w ago',
+      ),
     ],
   ),
 
@@ -782,17 +787,19 @@ const List<PlatformUser> kUsers = [
     timelineTitle: 'Recent Deliveries',
     timeline: [
       TimelineEntry(
-          icon: Icons.check_circle_outline,
-          color: AppColors.darkGreen,
-          title: '#MCP-48210 · Apollo Pharmacy',
-          subtitle: 'Delivered on time',
-          time: '1h ago'),
+        icon: Icons.check_circle_outline,
+        color: AppColors.darkGreen,
+        title: '#MCP-48210 · Apollo Pharmacy',
+        subtitle: 'Delivered on time',
+        time: '1h ago',
+      ),
       TimelineEntry(
-          icon: Icons.two_wheeler_outlined,
-          color: AdminColors.blue,
-          title: '#MCP-48055 · Green Cross',
-          subtitle: 'Out for delivery',
-          time: 'Now'),
+        icon: Icons.two_wheeler_outlined,
+        color: AdminColors.blue,
+        title: '#MCP-48055 · Green Cross',
+        subtitle: 'Out for delivery',
+        time: 'Now',
+      ),
     ],
   ),
   PlatformUser(
@@ -820,11 +827,12 @@ const List<PlatformUser> kUsers = [
     timelineTitle: 'Recent Deliveries',
     timeline: [
       TimelineEntry(
-          icon: Icons.check_circle_outline,
-          color: AppColors.darkGreen,
-          title: '#MCP-48108 · MedPlus',
-          subtitle: 'Delivered on time',
-          time: '3h ago'),
+        icon: Icons.check_circle_outline,
+        color: AppColors.darkGreen,
+        title: '#MCP-48108 · MedPlus',
+        subtitle: 'Delivered on time',
+        time: '3h ago',
+      ),
     ],
   ),
   PlatformUser(
@@ -852,115 +860,12 @@ const List<PlatformUser> kUsers = [
     timelineTitle: 'Recent Deliveries',
     timeline: [
       TimelineEntry(
-          icon: Icons.check_circle_outline,
-          color: AppColors.darkGreen,
-          title: '#MCP-47990 · Sunrise Medicals',
-          subtitle: 'Delivered · 8 min late',
-          time: 'Yesterday'),
-    ],
-  ),
-
-  // --- Staff (platform team) ------------------------------------------------
-  PlatformUser(
-    name: 'Priya Menon',
-    kind: UserKind.staff,
-    meta: 'Operations Manager',
-    tag: UserTag.active,
-    phone: '+91 98765 10020',
-    email: 'priya.menon@medicaplus.in',
-    location: 'HQ · Mumbai',
-    joinedOn: '15 Aug 2023',
-    stats: [
-      UserStat('142', 'Tickets Closed', color: AppColors.darkGreen),
-      UserStat('6', 'Team Size', color: AdminColors.blue),
-      UserStat('Admin', 'Access', color: AdminColors.purple),
-    ],
-    info: [
-      InfoPair('Designation', 'Operations Manager'),
-      InfoPair('Department', 'Operations'),
-      InfoPair('Access Level', 'Admin'),
-      InfoPair('Reporting To', 'VS Arogya'),
-      InfoPair('Last Active', '2h ago'),
-      InfoPair('Joined', '15 Aug 2023'),
-    ],
-    timelineTitle: 'Recent Activity',
-    timeline: [
-      TimelineEntry(
-          icon: Icons.verified_outlined,
-          color: AppColors.darkGreen,
-          title: 'Approved vendor',
-          subtitle: 'CarePlus Wholesale',
-          time: '2h ago'),
-      TimelineEntry(
-          icon: Icons.delivery_dining_outlined,
-          color: AdminColors.blue,
-          title: 'Onboarded agent',
-          subtitle: 'Suresh Patil',
-          time: '3h ago'),
-    ],
-  ),
-  PlatformUser(
-    name: 'Rohit Verma',
-    kind: UserKind.staff,
-    meta: 'Finance · Payouts',
-    tag: UserTag.active,
-    phone: '+91 98765 33450',
-    email: 'rohit.verma@medicaplus.in',
-    location: 'HQ · Mumbai',
-    joinedOn: '02 Nov 2023',
-    stats: [
-      UserStat('₹3.4L', 'Payouts Today', color: AppColors.primary),
-      UserStat('486', 'Vendors Paid', color: AdminColors.blue),
-      UserStat('Finance', 'Access', color: AdminColors.purple),
-    ],
-    info: [
-      InfoPair('Designation', 'Finance Associate'),
-      InfoPair('Department', 'Finance · Payouts'),
-      InfoPair('Access Level', 'Finance'),
-      InfoPair('Reporting To', 'Priya Menon'),
-      InfoPair('Last Active', '20m ago'),
-      InfoPair('Joined', '02 Nov 2023'),
-    ],
-    timelineTitle: 'Recent Activity',
-    timeline: [
-      TimelineEntry(
-          icon: Icons.account_balance_wallet_outlined,
-          color: AdminColors.orange,
-          title: 'Payout processed · ₹3.4L',
-          subtitle: 'Apollo Pharmacy',
-          time: '20m ago'),
-    ],
-  ),
-  PlatformUser(
-    name: 'Sana Shaikh',
-    kind: UserKind.staff,
-    meta: 'Support Lead',
-    tag: UserTag.active,
-    phone: '+91 98765 78900',
-    email: 'sana.shaikh@medicaplus.in',
-    location: 'HQ · Mumbai',
-    joinedOn: '19 Jan 2024',
-    stats: [
-      UserStat('38', 'Open Tickets', color: AdminColors.orange),
-      UserStat('4', 'Team Size', color: AdminColors.blue),
-      UserStat('Support', 'Access', color: AdminColors.purple),
-    ],
-    info: [
-      InfoPair('Designation', 'Support Lead'),
-      InfoPair('Department', 'Customer Support'),
-      InfoPair('Access Level', 'Support'),
-      InfoPair('Reporting To', 'Priya Menon'),
-      InfoPair('Last Active', '5m ago'),
-      InfoPair('Joined', '19 Jan 2024'),
-    ],
-    timelineTitle: 'Recent Activity',
-    timeline: [
-      TimelineEntry(
-          icon: Icons.gavel_outlined,
-          color: AdminColors.red,
-          title: 'Escalated dispute',
-          subtitle: '#DSP-1042 · Wellness Mart',
-          time: '5m ago'),
+        icon: Icons.check_circle_outline,
+        color: AppColors.darkGreen,
+        title: '#MCP-47990 · Sunrise Medicals',
+        subtitle: 'Delivered · 8 min late',
+        time: 'Yesterday',
+      ),
     ],
   ),
 ];
@@ -1009,20 +914,60 @@ const int kSkusLow = 7;
 const int kSkusOut = 7;
 
 const List<String> kProductCategories = [
-  'Tablets',
-  'Injections',
-  'Surgical',
-  'Wellness',
-  'Devices',
+  'Lifesaving Injections',
+  'Vaccines',
+  'Medicine',
 ];
 
 // TODO: GET /api/admin/products
 final List<AdminProduct> kProducts = [
-  AdminProduct(name: 'Paracetamol 650mg', sku: 'PCM-650-15', price: 36, stock: 500, category: 'Tablets'),
-  AdminProduct(name: 'Amoxicillin 500mg', sku: 'AMX-500-10', price: 84, stock: 240, category: 'Tablets'),
-  AdminProduct(name: 'Insulin Glargine', sku: 'INS-GLA-3', price: 845, stock: 8, category: 'Injections'),
-  AdminProduct(name: 'Surgical Gloves (L)', sku: 'SGL-L-100', price: 320, stock: 0, category: 'Surgical'),
-  AdminProduct(name: 'Digital Thermometer', sku: 'DTH-001', price: 199, stock: 84, category: 'Devices'),
-  AdminProduct(name: 'Azithromycin 500mg', sku: 'AZI-500-3', price: 112, stock: 12, category: 'Tablets'),
-  AdminProduct(name: 'ORS Sachets', sku: 'ORS-200', price: 22, stock: 640, category: 'Wellness'),
+  AdminProduct(
+    name: 'Paracetamol 650mg',
+    sku: 'PCM-650-15',
+    price: 36,
+    stock: 500,
+    category: 'Medicine',
+  ),
+  AdminProduct(
+    name: 'Amoxicillin 500mg',
+    sku: 'AMX-500-10',
+    price: 84,
+    stock: 240,
+    category: 'Medicine',
+  ),
+  AdminProduct(
+    name: 'Insulin Glargine',
+    sku: 'INS-GLA-3',
+    price: 845,
+    stock: 8,
+    category: 'Lifesaving Injections',
+  ),
+  AdminProduct(
+    name: 'Surgical Gloves (L)',
+    sku: 'SGL-L-100',
+    price: 320,
+    stock: 0,
+    category: 'Medicine',
+  ),
+  AdminProduct(
+    name: 'Digital Thermometer',
+    sku: 'DTH-001',
+    price: 199,
+    stock: 84,
+    category: 'Medicine',
+  ),
+  AdminProduct(
+    name: 'Azithromycin 500mg',
+    sku: 'AZI-500-3',
+    price: 112,
+    stock: 12,
+    category: 'Medicine',
+  ),
+  AdminProduct(
+    name: 'ORS Sachets',
+    sku: 'ORS-200',
+    price: 22,
+    stock: 640,
+    category: 'Medicine',
+  ),
 ];

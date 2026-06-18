@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../../theme/app_theme.dart' show AppShadows;
 
 class EarningsCard extends StatelessWidget {
   const EarningsCard({
@@ -24,6 +25,7 @@ class EarningsCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.border),
+        boxShadow: AppShadows.card,
       ),
       child: Row(
         children: [

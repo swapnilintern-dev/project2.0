@@ -2,7 +2,7 @@
     <!-- Required for network requests to the backend API. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="self"
+        android:label="MediCaPlus"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:networkSecurityConfig="@xml/network_security_config">

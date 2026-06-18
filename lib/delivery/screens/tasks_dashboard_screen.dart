@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../../theme/app_theme.dart' show AppPalette;
 import '../delivery_mock_data.dart';
 import '../delivery_models.dart';
 import '../screens/delivery_verification_screen.dart';
@@ -120,11 +121,7 @@ class _TasksDashboardScreenState extends State<TasksDashboardScreen> {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 22),
       decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF004D40), Color(0xFF00796B)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        gradient: AppPalette.brandGradient,
         borderRadius: BorderRadius.vertical(bottom: Radius.circular(24)),
       ),
       child: SafeArea(
@@ -214,7 +211,7 @@ class _TasksDashboardScreenState extends State<TasksDashboardScreen> {
             value: '${rider.rating}',
             label: 'Rating',
             icon: Icons.star,
-            accentColor: const Color(0xFFF59E0B),
+            accentColor: AppPalette.warning,
           ),
         ],
       ),

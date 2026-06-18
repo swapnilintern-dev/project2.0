@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 
 import '../sign_in_screen.dart';
 import '../vendor_registration_screen.dart' show AppColors;
+import '../theme/app_widgets.dart' show maybeExitApp, BrandStatusBar;
 import 'dashboard_screen.dart';
 import 'orders_screen.dart';
 import 'products_screen.dart';
@@ -50,25 +51,66 @@ class _MarketingRoleMainState extends State<MarketingRoleMain> {
     ];
 
     return PopScope(
-      canPop: _index == 0,
+      canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _index != 0) _select(0);
+        if (didPop) return;
+        if (_index != 0) {
+          _select(0);
+        } else {
+          maybeExitApp(context);
+        }
       },
       child: Scaffold(
         backgroundColor: AppColors.pageBg,
-        appBar: AppBar(
-          backgroundColor: AppColors.pageBg,
-          elevation: 0,
-          automaticallyImplyLeading: false,
-          actions: [
-            IconButton(
-              onPressed: _logout,
-              icon: const Icon(Icons.logout, color: AppColors.darkText),
-              tooltip: 'Logout',
-            ),
-          ],
+        // No app bar: each tab draws its own gradient header. We fill the
+        // status-bar strip with the same brand gradient so the green banner
+        // reads edge-to-edge (no white gap), and float the logout at top-right.
+        body: BrandStatusBar(
+          child: Stack(
+            children: [
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: MediaQuery.paddingOf(context).top,
+                child: const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [AppColors.darkGreen, AppColors.primary],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                ),
+              ),
+              IndexedStack(index: _index, children: tabs),
+              Positioned(
+                top: 0,
+                right: 8,
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Material(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      shape: const CircleBorder(),
+                      clipBehavior: Clip.antiAlias,
+                      child: IconButton(
+                        onPressed: _logout,
+                        icon: const Icon(
+                          Icons.logout,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                        tooltip: 'Logout',
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-        body: IndexedStack(index: _index, children: tabs),
         bottomNavigationBar: NavigationBarTheme(
           data: NavigationBarThemeData(
             backgroundColor: Colors.white,

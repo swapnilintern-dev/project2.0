@@ -50,13 +50,11 @@ class VendorApiService {
   /// NOTE: This is plain HTTP for local development only. In production point
   /// API_BASE_URL at an HTTPS endpoint.
   static String get baseUrl {
-    const override = String.fromEnvironment('API_BASE_URL');
-    if (override.isNotEmpty) return override;
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      return 'http://10.0.2.2:3000';
-    }
-    return 'http://localhost:3000';
-  }
+  const override = String.fromEnvironment('API_BASE_URL');
+  if (override.isNotEmpty) return override;
+
+  return 'https://vs-arogya-backend-test.onrender.com';
+}
 
   static Uri get _registerVendorUri =>
       Uri.parse('$baseUrl/vsArogya/register-vendor');

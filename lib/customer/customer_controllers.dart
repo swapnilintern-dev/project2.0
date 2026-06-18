@@ -113,6 +113,16 @@ class CartController extends ChangeNotifier {
   double get total => subtotal - discount + deliveryFee + gst;
 }
 
+/// Clears all in-memory customer session state. Call on logout (and, once the
+/// backend lands, right after a new login) so one account's cart / wishlist /
+/// orders / addresses never leak into the next user's session.
+void resetCustomerSession() {
+  CartController.instance.clear();
+  WishlistController.instance.reset();
+  OrdersController.instance.reset();
+  AddressController.instance.reset();
+}
+
 /// Saved / wishlisted products.
 class WishlistController extends ChangeNotifier {
   WishlistController._();
@@ -131,6 +141,11 @@ class WishlistController extends ChangeNotifier {
 
   List<Product> resolve(List<Product> catalogue) =>
       catalogue.where((p) => _ids.contains(p.id)).toList();
+
+  void reset() {
+    _ids.clear();
+    notifyListeners();
+  }
 }
 
 /// In-memory order history. Seeded from mock data on first access; new orders
@@ -181,6 +196,13 @@ class OrdersController extends ChangeNotifier {
     _orders![i] = _orders![i].copyWith(status: OrderStatus.cancelled);
     notifyListeners();
   }
+
+  /// Drops cached orders so the next access reseeds (or refetches from the API
+  /// once wired). Used by [resetCustomerSession] on logout.
+  void reset() {
+    _orders = null;
+    notifyListeners();
+  }
 }
 
 /// Saved delivery addresses. Seeded from mock data; supports add/edit/delete
@@ -199,6 +221,13 @@ class AddressController extends ChangeNotifier {
     final list = addresses;
     if (list.isEmpty) return null;
     return list.firstWhere((a) => a.isDefault, orElse: () => list.first);
+  }
+
+  /// Drops cached addresses so the next access reseeds (or refetches once the
+  /// API is wired). Used by [resetCustomerSession] on logout.
+  void reset() {
+    _addresses = null;
+    notifyListeners();
   }
 
   void add(Address address) {

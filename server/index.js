@@ -5,6 +5,9 @@ import cors from "cors" ;
 import connectDb from "./utils/db.js";
 import userRouter from "./routes/userRoute.js";
 import addProductRouter from "./routes/postRouter.js" ;
+import cardRouter from "./routes/cartRoute.js" ;
+import orderRouter from "./routes/orderRoute.js" ;
+
 const app = express() ;
 
 
@@ -29,12 +32,13 @@ app.use(cors(corsOptions)) ;
 // all api 
 app.use('/vsArogya', userRouter ) ;
 app.use('/vsArogya' , addProductRouter ) ;
-
+app.use('/vsArogya' , cardRouter  ) ;
+app.use('/vsArogya' , orderRouter ) ;
 
 
 
 app.get('/' , (req , res ) =>{
-    res.send(" <h1> Hey RajShree !! </h1>") ;
+    res.send("<h1> This is from Client side </h1>") ;
 })
 
 

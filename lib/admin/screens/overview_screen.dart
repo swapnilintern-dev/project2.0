@@ -7,7 +7,6 @@
 // Delivery), and a recent-activity feed.
 // =============================================================================
 
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import '../../vendor_registration_screen.dart' show AppColors;
@@ -41,8 +40,6 @@ class AdminOverviewScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _kpiGrid(context),
-                    const SizedBox(height: 22),
-                    _trendCard(),
                     const SizedBox(height: 22),
                     const AdminSectionTitle('Quick Actions'),
                     const SizedBox(height: 12),
@@ -187,45 +184,6 @@ class AdminOverviewScreen extends StatelessWidget {
       ],
     );
   }
-
-  // ---- GMV trend chart -----------------------------------------------------
-
-  Widget _trendCard() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-      decoration: adminCard(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Expanded(
-                child: Text('GMV Trend · 6 Months',
-                    style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.darkText)),
-              ),
-              Row(
-                children: const [
-                  Icon(Icons.trending_up, size: 16, color: AppColors.primary),
-                  SizedBox(width: 4),
-                  Text('Steady growth',
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.primary)),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          SizedBox(height: 150, child: _Chart()),
-        ],
-      ),
-    );
-  }
-
   // ---- Quick actions -------------------------------------------------------
 
   Widget _quickActions(BuildContext context) {
@@ -248,68 +206,6 @@ class AdminOverviewScreen extends StatelessWidget {
           if (i != items.length - 1) const SizedBox(width: 12),
         ],
       ],
-    );
-  }
-}
-
-class _Chart extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return LineChart(
-      LineChartData(
-        minY: 0,
-        maxY: 3.2,
-        gridData: FlGridData(
-          show: true,
-          drawVerticalLine: false,
-          horizontalInterval: 1,
-          getDrawingHorizontalLine: (_) =>
-              FlLine(color: AppColors.border, strokeWidth: 1),
-        ),
-        borderData: FlBorderData(show: false),
-        lineTouchData: const LineTouchData(enabled: false),
-        titlesData: FlTitlesData(
-          leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              interval: 1,
-              getTitlesWidget: (value, _) {
-                final i = value.round();
-                if (i < 0 || i >= kGmvMonths.length) return const SizedBox();
-                return Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(kGmvMonths[i],
-                      style: const TextStyle(
-                          fontSize: 11, color: AppColors.greyText)),
-                );
-              },
-            ),
-          ),
-        ),
-        lineBarsData: [
-          LineChartBarData(
-            spots: kGmvTrend,
-            isCurved: true,
-            barWidth: 3,
-            color: AppColors.primary,
-            dotData: const FlDotData(show: true),
-            belowBarData: BarAreaData(
-              show: true,
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  AppColors.primary.withValues(alpha: 0.32),
-                  AppColors.primary.withValues(alpha: 0.0),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

@@ -24,15 +24,9 @@ class MarketingColors {
 /// The medicine categories used by both the inventory filter chips and the
 /// Add / Edit Medicine category dropdown.
 const List<String> kMedicineCategories = [
-  'Tablets',
-  'Capsules',
-  'Syrup',
-  'Injection',
-  'Cream / Ointment',
-  'Powder',
-  'Drops',
-  'Devices',
-  'Others',
+  'Lifesaving Injections',
+  'Vaccines',
+  'Medicine',
 ];
 
 /// Formats a [DateTime] as a short "time ago" string (5 min ago / 1h ago …).
@@ -210,7 +204,7 @@ class InventoryProduct {
     this.marketedBy = '',
     this.description = '',
     this.mrp,
-    this.category = 'Others',
+    this.category = 'Medicine',
     this.packOf = 1,
     this.hsnCode = '',
     this.gstPercent = 5,

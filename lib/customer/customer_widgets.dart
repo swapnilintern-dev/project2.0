@@ -11,6 +11,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../theme/app_widgets.dart';
 import 'customer_models.dart';
 
 /// Formats a rupee amount as e.g. ₹1,234 or ₹1,234.50.
@@ -306,17 +307,13 @@ class ProductImage extends StatelessWidget {
         height: size,
         width: size == double.infinity ? double.infinity : size,
         color: AppColors.lightGreenBg,
-        child: url != null && url.isNotEmpty
-            ? Image.network(
-                url,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => Center(
-                    child: Icon(product.icon,
-                        size: iconSize, color: AppColors.primary)),
-              )
-            : Center(
-                child: Icon(product.icon,
-                    size: iconSize, color: AppColors.primary)),
+        child: AppNetworkImage(
+          url: url,
+          fit: BoxFit.cover,
+          fallback: Center(
+              child: Icon(product.icon,
+                  size: iconSize, color: AppColors.primary)),
+        ),
       ),
     );
   }

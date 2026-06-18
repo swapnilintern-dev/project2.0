@@ -10,6 +10,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../theme/app_theme.dart' show AppShadows;
 import '../customer/customer_widgets.dart' show showAppSnack;
 import 'marketing_controllers.dart';
 import 'marketing_models.dart';
@@ -43,7 +44,6 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   late final TextEditingController _lowThreshold;
 
   late String _category;
-  late bool _prescriptionRequired;
   late bool _active;
 
   bool get _isEdit => widget.existing != null;
@@ -66,8 +66,14 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     _sell = TextEditingController(text: e?.price.toString() ?? '');
     _stock = TextEditingController(text: e?.stock.toString() ?? '');
     _lowThreshold = TextEditingController(text: (e?.lowThreshold ?? 10).toString());
-    _category = e?.category ?? 'Others';
-    _prescriptionRequired = e?.prescriptionRequired ?? false;
+    // Always start on a category that exists in the (3-item) list, so the
+    // dropdown never gets a value with no matching item.
+    final existingCategory = e?.category;
+    _category =
+        (existingCategory != null &&
+            kMedicineCategories.contains(existingCategory))
+        ? existingCategory
+        : kMedicineCategories.first;
     _active = e?.active ?? true;
   }
 
@@ -272,15 +278,6 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               child: Column(
                 children: [
                   _toggleRow(
-                    icon: Icons.assignment_outlined,
-                    title: 'Prescription Required',
-                    subtitle: 'Customer must upload Rx to order',
-                    value: _prescriptionRequired,
-                    onChanged: (v) =>
-                        setState(() => _prescriptionRequired = v),
-                  ),
-                  const Divider(height: 22, color: AppColors.border),
-                  _toggleRow(
                     icon: Icons.visibility_outlined,
                     title: 'Active (visible to customers)',
                     subtitle: 'Inactive medicines are hidden in shop',
@@ -329,7 +326,6 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       gstPercent: double.tryParse(_gst.text.trim()) ?? 0,
       discountPercent: double.tryParse(_discount.text.trim()) ?? 0,
       lowThreshold: int.tryParse(_lowThreshold.text.trim()) ?? 10,
-      prescriptionRequired: _prescriptionRequired,
       inactiveReason: _active ? null : (existing?.inactiveReason),
       icon: existing?.icon ?? Icons.medication_liquid_outlined,
     );
@@ -468,6 +464,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: AppColors.border),
+          boxShadow: AppShadows.card,
         ),
         child: child,
       );

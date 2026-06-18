@@ -46,12 +46,6 @@ class AdminSettingsScreen extends StatelessWidget {
                 onTap: () => adminSnack(context, 'Delivery Zones'),
               ),
               _Item(
-                icon: Icons.verified_user_outlined,
-                label: 'Verification Rules',
-                trailing: '3 mandatory docs',
-                onTap: () => adminSnack(context, 'Verification Rules'),
-              ),
-              _Item(
                 icon: Icons.insights_outlined,
                 label: 'Analytics & Reports',
                 onTap: () => adminPush(context, const AdminAnalyticsScreen()),

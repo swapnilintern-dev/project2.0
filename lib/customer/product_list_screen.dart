@@ -10,6 +10,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../theme/app_widgets.dart';
 import 'customer_api.dart';
 import 'customer_mock_data.dart';
 import 'customer_models.dart';
@@ -47,6 +48,7 @@ class ProductListScreen extends StatefulWidget {
 class _ProductListScreenState extends State<ProductListScreen> {
   final CustomerApi _api = CustomerApi();
   final TextEditingController _searchCtrl = TextEditingController();
+  final Debouncer _searchDebouncer = Debouncer();
 
   List<Product> _all = [];
   bool _loading = true;
@@ -66,6 +68,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _searchDebouncer.dispose();
     super.dispose();
   }
 
@@ -178,7 +181,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
         child: TextField(
           controller: _searchCtrl,
           textInputAction: TextInputAction.search,
-          onChanged: (v) => setState(() => _query = v),
+          onChanged: (v) =>
+              _searchDebouncer.run(() => setState(() => _query = v)),
           decoration: InputDecoration(
             hintText: 'Search medicines, brands...',
             hintStyle:
@@ -313,7 +317,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
                 ),
                 itemCount: results.length,
                 itemBuilder: (context, i) =>
-                    ProductCard(product: results[i]),
+                    AppFadeIn(child: ProductCard(product: results[i])),
               ),
             ),
           ],

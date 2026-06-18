@@ -12,6 +12,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../theme/app_widgets.dart' show maybeExitApp;
 import 'screens/overview_screen.dart';
 import 'screens/vendors_screen.dart';
 import 'screens/orders_screen.dart';
@@ -41,9 +42,14 @@ class _AdminRoleMainState extends State<AdminRoleMain> {
     ];
 
     return PopScope(
-      canPop: _index == 0,
+      canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _index != 0) _select(0);
+        if (didPop) return;
+        if (_index != 0) {
+          _select(0);
+        } else {
+          maybeExitApp(context);
+        }
       },
       child: Scaffold(
         backgroundColor: AppColors.pageBg,

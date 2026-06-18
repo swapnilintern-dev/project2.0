@@ -3,6 +3,10 @@ import 'package:flutter/material.dart';
 import '../../vendor_registration_screen.dart' show AppColors;
 import '../delivery_models.dart';
 
+/// Deep-green canvas behind the navigation map (functional dark backdrop —
+/// intentionally darker than the brand surfaces so the map/route reads clearly).
+const Color _kMapCanvas = Color(0xFF0D3D32);
+
 /// Clean placeholder for the Navigation Map screen.
 class _NavigationMapPlaceholder extends StatelessWidget {
   const _NavigationMapPlaceholder();
@@ -134,7 +138,7 @@ class RouteScreen extends StatelessWidget {
         final body = Stack(
           fit: StackFit.expand,
           children: [
-            Container(color: const Color(0xFF0D3D32)),
+            Container(color: _kMapCanvas),
             SafeArea(
               child: Column(
                 children: [
@@ -152,7 +156,7 @@ class RouteScreen extends StatelessWidget {
 
         if (embedded) return body;
         return Scaffold(
-          backgroundColor: const Color(0xFF0D3D32),
+          backgroundColor: _kMapCanvas,
           body: body,
         );
       },

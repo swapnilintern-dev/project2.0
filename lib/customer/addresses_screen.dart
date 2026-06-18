@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../theme/app_theme.dart' show AppShadows;
 import 'customer_controllers.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
@@ -124,6 +125,7 @@ class _AddressCard extends StatelessWidget {
             color: address.isDefault ? AppColors.primary : AppColors.border,
             width: address.isDefault ? 1.5 : 1,
           ),
+          boxShadow: AppShadows.card,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

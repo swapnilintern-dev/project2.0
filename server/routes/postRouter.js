@@ -1,7 +1,8 @@
 import express from "express";
-import addnewProduct from "../controller/postController.js";
+import addnewProduct, { deleteProduct, getAllProducts } from "../controller/postController.js";
 import upload from "../middlewares/multer.js";
-import  { addCart, deleteProduct, getAllProducts } from "../controller/cartController.js";
+// import  addCart from "../controller/cartController.js";
+
 import isAuthenticated from "../middlewares/isAuthenticated.js";
 
 const router = express.Router();
@@ -13,7 +14,6 @@ router.post(
 );
 
 router.get("/all-products", getAllProducts ) ;
-router.post("/add-cart/:id", isAuthenticated ,  addCart ) ;
 router.delete("/delete-product/:id" , deleteProduct ) ;
 
 export default router;

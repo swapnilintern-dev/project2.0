@@ -15,12 +15,11 @@ import '../vendor_registration_screen.dart' show AppColors;
 class MockData {
   MockData._();
 
+  // Only three product categories exist across the whole app.
   static const List<Category> categories = [
-    Category(id: 'tablets', name: 'Tablets', icon: Icons.medication, color: AppColors.primary),
-    Category(id: 'capsules', name: 'Capsules', icon: Icons.medication_outlined, color: Color(0xFF8B5CF6)),
-    Category(id: 'injections', name: 'Injections', icon: Icons.vaccines, color: Color(0xFF3B82F6)),
-    Category(id: 'syrups', name: 'Syrups', icon: Icons.science, color: Color(0xFFF59E0B)),
-    Category(id: 'ointment', name: 'Ointment', icon: Icons.healing, color: Color(0xFFEC4899)),
+    Category(id: 'injections', name: 'Lifesaving Injections', icon: Icons.vaccines, color: Color(0xFF3B82F6)),
+    Category(id: 'vaccines', name: 'Vaccines', icon: Icons.health_and_safety, color: AppColors.primary),
+    Category(id: 'medicine', name: 'Medicine', icon: Icons.medication, color: Color(0xFF8B5CF6)),
   ];
 
   static const List<Product> products = [
@@ -33,7 +32,7 @@ class MockData {
           'contains 650mg paracetamol IP. Store below 30°C, away from direct light.',
       price: 36,
       mrp: 42,
-      category: 'tablets',
+      category: 'medicine',
       icon: Icons.medication,
       rating: 4.6,
       reviewCount: 1240,
@@ -51,7 +50,7 @@ class MockData {
           'infections. Take only as prescribed by your physician.',
       price: 84,
       mrp: 96,
-      category: 'tablets',
+      category: 'medicine',
       icon: Icons.medical_services,
       rating: 4.4,
       reviewCount: 860,
@@ -87,7 +86,7 @@ class MockData {
           'for adults and children above 6 years.',
       price: 118,
       mrp: 135,
-      category: 'syrups',
+      category: 'medicine',
       icon: Icons.science,
       rating: 4.3,
       reviewCount: 690,
@@ -104,7 +103,7 @@ class MockData {
           'infections. Complete the full course as prescribed.',
       price: 112,
       mrp: 130,
-      category: 'capsules',
+      category: 'medicine',
       icon: Icons.medication_outlined,
       rating: 4.5,
       reviewCount: 740,
@@ -122,7 +121,7 @@ class MockData {
           'reflux. Take before meals or as advised.',
       price: 58,
       mrp: 72,
-      category: 'capsules',
+      category: 'medicine',
       icon: Icons.medication_outlined,
       rating: 4.4,
       reviewCount: 530,
@@ -139,7 +138,7 @@ class MockData {
           'For external use only.',
       price: 75,
       mrp: 90,
-      category: 'ointment',
+      category: 'medicine',
       icon: Icons.healing,
       rating: 4.6,
       reviewCount: 910,
@@ -157,7 +156,7 @@ class MockData {
           'Apply gently to the affected area up to thrice daily.',
       price: 145,
       mrp: 170,
-      category: 'ointment',
+      category: 'medicine',
       icon: Icons.healing,
       rating: 4.5,
       reviewCount: 1320,

@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../theme/app_theme.dart' show AppShadows;
 import '../customer/customer_widgets.dart'
     show formatRupees, showAppSnack, EmptyState;
 import 'marketing_controllers.dart';
@@ -245,6 +246,7 @@ class _OrderCard extends StatelessWidget {
           color: order.urgent ? AppColors.error : AppColors.border,
           width: order.urgent ? 1.4 : 1,
         ),
+        boxShadow: AppShadows.card,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

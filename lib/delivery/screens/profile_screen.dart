@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../sign_in_screen.dart';
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../../theme/app_theme.dart' show AppPalette, AppShadows;
 import '../delivery_mock_data.dart';
 import '../delivery_models.dart';
 
@@ -108,11 +109,7 @@ class DeliveryProfileScreen extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
       decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF004D40), Color(0xFF00796B)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        gradient: AppPalette.brandGradient,
         borderRadius: BorderRadius.vertical(bottom: Radius.circular(24)),
       ),
       child: SafeArea(
@@ -171,7 +168,7 @@ class DeliveryProfileScreen extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.star, color: Color(0xFFF59E0B), size: 16),
+                  const Icon(Icons.star, color: AppPalette.warning, size: 16),
                   const SizedBox(width: 6),
                   Text(
                     '${rider.rating} · ${rider.totalDeliveries} deliveries',
@@ -197,6 +194,7 @@ class DeliveryProfileScreen extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.primary, width: 1.2),
+        boxShadow: AppShadows.card,
       ),
       child: Row(
         children: [
@@ -262,6 +260,7 @@ class DeliveryProfileScreen extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.border),
+        boxShadow: AppShadows.card,
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(

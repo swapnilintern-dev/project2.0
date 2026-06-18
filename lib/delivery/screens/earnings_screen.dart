@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../customer/customer_widgets.dart' show formatRupees;
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../../theme/app_theme.dart' show AppPalette;
 import '../delivery_mock_data.dart';
 import '../delivery_models.dart';
 import '../widgets/earnings_card.dart';
@@ -158,11 +159,7 @@ class _EarningsScreenState extends State<EarningsScreen> {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
       decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF004D40), Color(0xFF00796B)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        gradient: AppPalette.brandGradient,
         borderRadius: BorderRadius.vertical(bottom: Radius.circular(24)),
       ),
       child: SafeArea(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../customer/customer_widgets.dart' show formatRupees;
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../../theme/app_theme.dart' show AppPalette;
 import '../delivery_models.dart';
 
 class TaskCard extends StatelessWidget {
@@ -21,7 +22,7 @@ class TaskCard extends StatelessWidget {
     final isActive = task.status == DeliveryTaskStatus.active;
     final tagColor = switch (task.status) {
       DeliveryTaskStatus.active => AppColors.primary,
-      DeliveryTaskStatus.next => const Color(0xFF3B82F6),
+      DeliveryTaskStatus.next => AppPalette.info,
       DeliveryTaskStatus.queued => AppColors.greyText,
       DeliveryTaskStatus.completed => AppColors.darkGreen,
     };

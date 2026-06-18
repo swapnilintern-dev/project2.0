@@ -91,3 +91,64 @@ const addnewProduct = async (req, res) => {
 };
 
 export default addnewProduct;
+
+
+export const  deleteProduct = async( req, res ) =>{
+       
+      try{
+         
+        const product_id = req.params.id ;
+
+        console.log("Product id is : " , product_id ) ;
+
+        const get_product = await product.findById(product_id) ;
+        console.log("product is : " , get_product ) ;
+
+
+        if( ! get_product ) {
+          return res.status(401)
+          .json({ 
+            message : " Product not found ",
+            success : false 
+          });
+        }
+
+        await product.findByIdAndDelete(product_id ) ;
+        return res.status(201)
+        .json({ 
+          message :"Product deleted succesfully " ,
+          success : true 
+        })
+      }
+      catch(er) {
+        console.log(er , " er is")
+      }
+
+};
+
+
+export const getAllProducts =async(req , res ) =>{
+
+    try{
+        const products =await Product.find() ;
+
+        if( !products )
+          return res.status(401)
+        .json({ 
+          message :"Product not found ",
+          success :false 
+        }) ;
+
+        return res.status(200)
+        .json({ 
+            message :"all products are fetched successfully ",
+            success : true ,
+            products
+        });
+
+
+    }
+    catch(er){
+        console.log(er , " error from fetch all product ") ;
+    }
+}

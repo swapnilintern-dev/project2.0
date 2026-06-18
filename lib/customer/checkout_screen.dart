@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../theme/app_theme.dart' show AppShadows;
 import 'customer_api.dart';
 import 'customer_controllers.dart';
 import 'customer_mock_data.dart';
@@ -140,6 +141,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.border),
+        boxShadow: AppShadows.card,
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -199,6 +201,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             color: selected ? AppColors.primary : AppColors.border,
             width: selected ? 1.6 : 1,
           ),
+          boxShadow: AppShadows.card,
         ),
         child: Row(
           children: [
@@ -260,6 +263,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.border),
+        boxShadow: AppShadows.card,
       ),
       child: Column(
         children: [

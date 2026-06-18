@@ -2,6 +2,7 @@ import Vendor from "../model/userModel.js";
 import cloudinary from "../utils/cloudinary.js";
 import getDatauri from "../utils/datauri.js";
 import sharp from "sharp";
+import jwt from "jsonwebtoken" ;
 
 export const registerVendor = async (req, res) => {
   try {
@@ -82,6 +83,10 @@ export const registerVendor = async (req, res) => {
       });
     }
 
+    let autoPassword = Math.floor(1000+ Math.random()* 9000 ) ;
+    
+    console.log( "auto generated password is :" ,  autoPassword ) ;
+
     const vendor = await Vendor.create({
       vendor_type,
       shop_type,
@@ -96,7 +101,7 @@ export const registerVendor = async (req, res) => {
       gst_status,
       drug_lic_no,
       drug_lic_ex_date,
-      password,
+      password : autoPassword ,
 
       store_pic: {
         url: storeUpload.secure_url,
@@ -119,10 +124,11 @@ export const registerVendor = async (req, res) => {
     });
 
     return res.status(201).json({
-      success: true,
       message: "Vendor registered successfully",
+      success: true,
       vendor,
     });
+
   } catch (error) {
     console.log(error);
 
@@ -134,4 +140,100 @@ export const registerVendor = async (req, res) => {
 };
 
 
+export const login = async (req , res ) =>{
+
+  try{
+     
+    const { mobile_no , password } = req.body ;
+    
+    if( !mobile_no || !password ) {
+
+      return res.status(401)
+      .json({
+        message :"All field are required " ,
+        success : false 
+      }) ;
+    }
+
+    const user = await Vendor.findOne({ mobile_no }) ;
+    
+    console.log(user);
+    if( !user ){
+      return res.status(401)
+      .json({ 
+        message :"User not found " ,
+        success : false 
+      }) ;
+    }
+
+    console.log( "enter password " , password , "data base password is :" , user.password  ) ;
+
+
+    if( password !== user.password ){
+
+      return res.status(401)
+      .json({ 
+        message :"Credentials are wrong ",
+
+        success : false 
+      }) ;
+    }
+    
+    // token genrate
+    const token = jwt.sign(
+
+      { userId : user._id  } ,
+      process.env.SECRET_KEY ,
+      {expiresIn:"1d" } 
+    );
+
+
+    // store cookie
+    //     res.cookie("token", token, {
+    //   httpOnly: true,
+    //   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    //   sameSite: "strict",
+    //   secure: process.env.NODE_ENV === "production"
+    // });
+
+
+    res.cookie("token" , token ,{
+
+
+      httpOnly:true ,
+      maxAge :1*24*60*60*1000 ,
+      sameSite:"strict"
+
+    } );
+
+    return res.status(201)
+    .json({
+      message :"Login success ",
+      success : true
+    }) ;
+
+  }
+  catch(er ){
+
+    console.log(er , "error is :") ; 
+  }
+} ;
+
+export const logout = async( req , res ) =>{
+
+  try{
+
+    res.cookie("token", "" , {maxAge:0}) ;
+
+    return res.status(200)
+    .json({ 
+      message :"Logout successfuly",
+      success : true 
+    });
+
+  }
+  catch(er) {
+    console.log(er , "error is :" ) ;
+  }
+}
 

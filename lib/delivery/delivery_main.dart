@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../theme/app_widgets.dart';
 import 'delivery_mock_data.dart';
 import 'screens/earnings_screen.dart';
 import 'screens/profile_screen.dart';
@@ -43,13 +44,22 @@ class _DeliveryMainState extends State<DeliveryMain> {
     ];
 
     return PopScope(
-      canPop: _index == 0,
+      canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _index != 0) _select(0);
+        if (didPop) return;
+        if (_index != 0) {
+          _select(0);
+        } else {
+          maybeExitApp(context);
+        }
       },
       child: Scaffold(
         backgroundColor: AppColors.pageBg,
-        body: IndexedStack(index: _index, children: tabs),
+        // Every delivery tab has a dark top (brand gradient heroes / dark map),
+        // so light status-bar icons read correctly across the whole shell.
+        body: BrandStatusBar(
+          child: IndexedStack(index: _index, children: tabs),
+        ),
         bottomNavigationBar: NavigationBarTheme(
           data: NavigationBarThemeData(
             backgroundColor: Colors.white,
@@ -73,20 +83,26 @@ class _DeliveryMainState extends State<DeliveryMain> {
             destinations: const [
               NavigationDestination(
                 icon: Icon(Icons.assignment_outlined),
-                selectedIcon:
-                    Icon(Icons.assignment, color: AppColors.darkGreen),
+                selectedIcon: Icon(
+                  Icons.assignment,
+                  color: AppColors.darkGreen,
+                ),
                 label: 'Tasks',
               ),
               NavigationDestination(
                 icon: Icon(Icons.navigation_outlined),
-                selectedIcon:
-                    Icon(Icons.navigation, color: AppColors.darkGreen),
+                selectedIcon: Icon(
+                  Icons.navigation,
+                  color: AppColors.darkGreen,
+                ),
                 label: 'Route',
               ),
               NavigationDestination(
                 icon: Icon(Icons.account_balance_wallet_outlined),
-                selectedIcon: Icon(Icons.account_balance_wallet,
-                    color: AppColors.darkGreen),
+                selectedIcon: Icon(
+                  Icons.account_balance_wallet,
+                  color: AppColors.darkGreen,
+                ),
                 label: 'Earnings',
               ),
               NavigationDestination(

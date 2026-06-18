@@ -1,5 +1,5 @@
 name: self
-description: "A new Flutter project."
+description: "MediCaPlus — B2B medicine ordering & delivery platform (customer, vendor, delivery & admin roles)."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -55,6 +55,30 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+
+  # Generates Android (incl. adaptive) + iOS launcher icons from source PNGs.
+  flutter_launcher_icons: ^0.14.4
+
+# -----------------------------------------------------------------------------
+# App launcher icons — VS Arogya logo.
+# Generate with:  dart run flutter_launcher_icons
+# Source art (place before generating):
+#   assets/icon/app_icon.png             1024x1024, opaque (iOS + Android legacy)
+#   assets/icon/app_icon_foreground.png  1024x1024, TRANSPARENT, emblem centred
+#                                        at ~70% (Android adaptive foreground)
+# -----------------------------------------------------------------------------
+flutter_launcher_icons:
+  image_path: "assets/icon/app_icon.png"
+  android: "ic_launcher"
+  ios: true
+  remove_alpha_ios: true
+  min_sdk_android: 21
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
+  web:
+    generate: false
+  windows:
+    generate: false
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

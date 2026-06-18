@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../theme/app_theme.dart' show AppShadows;
 import 'customer_controllers.dart';
 import 'customer_widgets.dart';
 import 'orders_screen.dart';
@@ -54,13 +55,9 @@ class ProfileScreen extends StatelessWidget {
             subtitle: 'Your wishlist',
             onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const SavedItemsScreen())),
-          ),
-          _Tile(
-            icon: Icons.credit_card_outlined,
-            title: 'Payment Methods',
-            subtitle: 'Cards, UPI & wallet',
-            onTap: () => showAppSnack(context, 'Payment methods coming soon'),
-          ),
+          ),/////PAYMENTS METHOD
+          /////
+          
         ]),
         _group(context, [
           _Tile(
@@ -69,11 +66,12 @@ class ProfileScreen extends StatelessWidget {
             subtitle: 'Order & offer alerts',
             onTap: () => showAppSnack(context, 'Notification settings'),
           ),
+          ///// SUPPORT TILE
           _Tile(
             icon: Icons.headset_mic_outlined,
             title: 'Support',
             subtitle: 'Help & contact us',
-            onTap: () => showAppSnack(context, 'Opening support'),
+           onTap: () => _showSupportCard(context),
           ),
           _Tile(
             icon: Icons.info_outline,
@@ -87,6 +85,7 @@ class ProfileScreen extends StatelessWidget {
             ),
           ),
         ]),
+        
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           child: OutlinedButton.icon(
@@ -214,6 +213,7 @@ class ProfileScreen extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: AppColors.border),
+          boxShadow: AppShadows.card,
         ),
         child: Column(
           children: [
@@ -258,9 +258,10 @@ class ProfileScreen extends StatelessWidget {
   }
 
   void _confirmLogout(BuildContext context) {
-    showDialog<void>(
+    // Adaptive: native Cupertino alert on iOS, Material dialog on Android.
+    showAdaptiveDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => AlertDialog.adaptive(
         title: const Text('Logout'),
         content: const Text('Are you sure you want to log out?'),
         actions: [
@@ -320,4 +321,162 @@ class _Tile extends StatelessWidget {
       trailing: const Icon(Icons.chevron_right, color: AppColors.greyText),
     );
   }
+}
+void _showSupportCard(BuildContext context) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(
+        top: Radius.circular(24),
+      ),
+    ),
+    builder: (context) {
+      return Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Support & Contact',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            ListTile(
+              leading: const Icon(Icons.phone),
+              title: const Text('+91 9876543210'),
+              subtitle: const Text('Customer Support'),
+              onTap: () {},
+            ),
+
+            ListTile(
+              leading: const Icon(Icons.email_outlined),
+              title: const Text('support@vsarogya.com'),
+              subtitle: const Text('Email Support'),
+              onTap: () {},
+            ),
+
+            ListTile(
+              leading: const Icon(Icons.location_on_outlined),
+              title: const Text('VS Arogya Meda Pvt Ltd'),
+              subtitle: const Text(
+                'Darbhanga, Bihar, India',
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.support_agent),
+                label: const Text('Contact Us'),
+                onPressed: () {
+                  Navigator.pop(context);
+                  _showContactUsDialog(context);
+                },
+              ),
+            ),
+
+            const SizedBox(height: 20),
+          ],
+        ),
+      );
+    },
+  );
+}
+void _showContactUsDialog(BuildContext context) {
+  final nameController = TextEditingController();
+  final mobileController = TextEditingController();
+  final messageController = TextEditingController();
+
+  bool consent = false;
+
+  showDialog(
+    context: context,
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Center(
+              child: Text('Contact Us'),
+            ),
+            content: SizedBox(
+              width: 500,
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        hintText: 'Your Name',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: mobileController,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        hintText: 'Mobile Number',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: messageController,
+                      maxLines: 4,
+                      decoration: const InputDecoration(
+                        hintText: 'Write something...',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: consent,
+                          onChanged: (value) {
+                            setState(() {
+                              consent = value ?? false;
+                            });
+                          },
+                        ),
+                        const Expanded(
+                          child: Text(
+                            'I consent to be contacted by our representative.',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    // API Call Here
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Request submitted successfully',
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Submit'),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
 }

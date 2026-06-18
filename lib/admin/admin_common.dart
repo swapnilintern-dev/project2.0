@@ -19,6 +19,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../theme/app_theme.dart' show AppPalette, AppShadows;
+import '../theme/app_widgets.dart' show AppPressable;
 
 // -----------------------------------------------------------------------------
 // PALETTE — status / category accents not present in AppColors
@@ -27,13 +29,16 @@ import '../vendor_registration_screen.dart' show AppColors;
 class AdminColors {
   AdminColors._();
 
-  static const Color green = AppColors.primary; // active / success / in-stock
+  // Sourced from the shared design-system palette (AppPalette) so accents stay
+  // identical across every role. Kept as `AdminColors.*` aliases so existing
+  // admin screens don't need touching.
+  static const Color green = AppPalette.success; // active / success / in-stock
   static const Color darkGreen = AppColors.darkGreen; // delivered / headline
-  static const Color blue = Color(0xFF3B82F6); // info / processing
-  static const Color purple = Color(0xFF8B5CF6); // staff / premium
-  static const Color orange = Color(0xFFF59E0B); // pending / low / warning
-  static const Color red = AppColors.error; // disputed / suspended / out
-  static const Color amber = Color(0xFFD97706); // flagged
+  static const Color blue = AppPalette.info; // info / processing
+  static const Color purple = AppPalette.purple; // staff / premium
+  static const Color orange = AppPalette.warning; // pending / low / warning
+  static const Color red = AppPalette.danger; // disputed / suspended / out
+  static const Color amber = AppPalette.amber; // flagged
 }
 
 // -----------------------------------------------------------------------------
@@ -75,7 +80,11 @@ String moneyCompact(num value) {
 
 /// Two-letter initials, e.g. "CarePlus Wholesale" -> "CW".
 String initialsOf(String name) {
-  final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+  final parts = name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((p) => p.isNotEmpty)
+      .toList();
   if (parts.isEmpty) return '?';
   if (parts.length == 1) {
     final p = parts.first;
@@ -88,31 +97,31 @@ String initialsOf(String name) {
 // CARD + SNACK
 // -----------------------------------------------------------------------------
 
-BoxDecoration adminCard({Color? color, double radius = 16, Color? borderColor}) {
+BoxDecoration adminCard({
+  Color? color,
+  double radius = 18,
+  Color? borderColor,
+}) {
   return BoxDecoration(
     color: color ?? AppColors.white,
     borderRadius: BorderRadius.circular(radius),
     border: Border.all(color: borderColor ?? AppColors.border),
-    boxShadow: [
-      BoxShadow(
-        color: Colors.black.withValues(alpha: 0.03),
-        blurRadius: 10,
-        offset: const Offset(0, 3),
-      ),
-    ],
+    boxShadow: AppShadows.card,
   );
 }
 
 void adminSnack(BuildContext context, String msg, {Color? color}) {
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(
-      content: Text(msg),
-      backgroundColor: color ?? AppColors.darkGreen,
-      behavior: SnackBarBehavior.floating,
-      duration: const Duration(milliseconds: 1400),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-    ));
+    ..showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: color ?? AppColors.darkGreen,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(milliseconds: 1400),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
 }
 
 const ScrollPhysics adminScroll = BouncingScrollPhysics(
@@ -124,7 +133,12 @@ const ScrollPhysics adminScroll = BouncingScrollPhysics(
 // -----------------------------------------------------------------------------
 
 class AdminAvatar extends StatelessWidget {
-  const AdminAvatar({super.key, required this.label, this.size = 44, this.color});
+  const AdminAvatar({
+    super.key,
+    required this.label,
+    this.size = 44,
+    this.color,
+  });
 
   final String label;
   final double size;
@@ -187,15 +201,23 @@ class AdminScreenHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title,
-                    style: const TextStyle(
-                        fontSize: 23,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.darkText)),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 23,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.darkText,
+                  ),
+                ),
                 if (subtitle != null) ...[
                   const SizedBox(height: 2),
-                  Text(subtitle!,
-                      style: const TextStyle(fontSize: 13, color: AppColors.greyText)),
+                  Text(
+                    subtitle!,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: AppColors.greyText,
+                    ),
+                  ),
                 ],
               ],
             ),
@@ -209,7 +231,12 @@ class AdminScreenHeader extends StatelessWidget {
 
 /// Section label with an optional trailing action (e.g. "View all").
 class AdminSectionTitle extends StatelessWidget {
-  const AdminSectionTitle(this.title, {super.key, this.actionLabel, this.onAction});
+  const AdminSectionTitle(
+    this.title, {
+    super.key,
+    this.actionLabel,
+    this.onAction,
+  });
 
   final String title;
   final String? actionLabel;
@@ -220,20 +247,26 @@ class AdminSectionTitle extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: Text(title,
-              style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.darkText)),
+          child: Text(
+            title,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: AppColors.darkText,
+            ),
+          ),
         ),
         if (actionLabel != null)
           GestureDetector(
             onTap: onAction,
-            child: Text(actionLabel!,
-                style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.primary)),
+            child: Text(
+              actionLabel!,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: AppColors.primary,
+              ),
+            ),
           ),
       ],
     );
@@ -249,12 +282,15 @@ class AdminGroupLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 4, 4, 10),
-      child: Text(text.toUpperCase(),
-          style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.7,
-              color: AppColors.greyText)),
+      child: Text(
+        text.toUpperCase(),
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.7,
+          color: AppColors.greyText,
+        ),
+      ),
     );
   }
 }
@@ -264,7 +300,12 @@ class AdminGroupLabel extends StatelessWidget {
 // -----------------------------------------------------------------------------
 
 class AdminBell extends StatelessWidget {
-  const AdminBell({super.key, required this.count, this.onTap, this.light = false});
+  const AdminBell({
+    super.key,
+    required this.count,
+    this.onTap,
+    this.light = false,
+  });
 
   final int count;
   final VoidCallback? onTap;
@@ -285,23 +326,34 @@ class AdminBell extends StatelessWidget {
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            Icon(Icons.notifications_outlined,
-                size: 22, color: light ? Colors.white : AppColors.darkText),
+            Icon(
+              Icons.notifications_outlined,
+              size: 22,
+              color: light ? Colors.white : AppColors.darkText,
+            ),
             if (count > 0)
               Positioned(
                 right: -3,
                 top: -4,
                 child: Container(
                   padding: const EdgeInsets.all(3),
-                  constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                  constraints: const BoxConstraints(
+                    minWidth: 16,
+                    minHeight: 16,
+                  ),
                   decoration: const BoxDecoration(
-                      color: AdminColors.red, shape: BoxShape.circle),
-                  child: Text('$count',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w800)),
+                    color: AdminColors.red,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    '$count',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ),
               ),
           ],
@@ -332,16 +384,22 @@ class StatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: dense ? 8 : 10, vertical: dense ? 3 : 4),
+      padding: EdgeInsets.symmetric(
+        horizontal: dense ? 8 : 10,
+        vertical: dense ? 3 : 4,
+      ),
       decoration: BoxDecoration(
         color: filled ? color : color.withValues(alpha: 0.13),
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Text(label,
-          style: TextStyle(
-              fontSize: dense ? 10 : 11,
-              fontWeight: FontWeight.w700,
-              color: filled ? Colors.white : color)),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: dense ? 10 : 11,
+          fontWeight: FontWeight.w700,
+          color: filled ? Colors.white : color,
+        ),
+      ),
     );
   }
 }
@@ -373,12 +431,20 @@ class ChangeBadge extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(up ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
-              size: 12, color: color),
+          Icon(
+            up ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+            size: 12,
+            color: color,
+          ),
           const SizedBox(width: 2),
-          Text('${pct.abs().toStringAsFixed(pct.abs() % 1 == 0 ? 0 : 1)}%',
-              style: TextStyle(
-                  fontSize: 11, fontWeight: FontWeight.w700, color: color)),
+          Text(
+            '${pct.abs().toStringAsFixed(pct.abs() % 1 == 0 ? 0 : 1)}%',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
         ],
       ),
     );
@@ -419,8 +485,12 @@ class AnimatedCount extends StatelessWidget {
         final body = decimals > 0
             ? value.toStringAsFixed(decimals)
             : (grouped ? groupInt(value.round()) : value.round().toString());
-        return Text('$prefix$body$suffix',
-            maxLines: 1, overflow: TextOverflow.ellipsis, style: style);
+        return Text(
+          '$prefix$body$suffix',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: style,
+        );
       },
     );
   }
@@ -450,45 +520,52 @@ class KpiCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: adminCard(),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.13),
-                    borderRadius: BorderRadius.circular(11),
+    return AppPressable(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: adminCard(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.13),
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    child: Icon(icon, size: 20, color: color),
                   ),
-                  child: Icon(icon, size: 20, color: color),
-                ),
-                const Spacer(),
-                if (changePct != null) ChangeBadge(pct: changePct!),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Text(value,
+                  const Spacer(),
+                  if (changePct != null) ChangeBadge(pct: changePct!),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Text(
+                value,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.darkText)),
-            const SizedBox(height: 2),
-            Text(label,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.darkText,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, color: AppColors.greyText)),
-          ],
+                style: const TextStyle(fontSize: 12, color: AppColors.greyText),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -516,14 +593,21 @@ class MiniStat extends StatelessWidget {
       decoration: adminCard(),
       child: Column(
         children: [
-          Text(value,
-              style: TextStyle(
-                  fontSize: 18, fontWeight: FontWeight.w800, color: color)),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
+          ),
           const SizedBox(height: 2),
-          Text(label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11, color: AppColors.greyText)),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11, color: AppColors.greyText),
+          ),
         ],
       ),
     );
@@ -556,9 +640,15 @@ class AdminSearchField extends StatelessWidget {
             style: const TextStyle(fontSize: 14, color: AppColors.darkText),
             decoration: InputDecoration(
               hintText: hint,
-              hintStyle: const TextStyle(color: AppColors.greyText, fontSize: 13),
-              prefixIcon:
-                  const Icon(Icons.search, color: AppColors.greyText, size: 20),
+              hintStyle: const TextStyle(
+                color: AppColors.greyText,
+                fontSize: 13,
+              ),
+              prefixIcon: const Icon(
+                Icons.search,
+                color: AppColors.greyText,
+                size: 20,
+              ),
               filled: true,
               fillColor: AppColors.white,
               isDense: true,
@@ -569,7 +659,10 @@ class AdminSearchField extends StatelessWidget {
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: AppColors.primary, width: 1.4),
+                borderSide: const BorderSide(
+                  color: AppColors.primary,
+                  width: 1.4,
+                ),
               ),
             ),
           ),
@@ -636,14 +729,16 @@ class AdminSegmentTabs extends StatelessWidget {
               decoration: BoxDecoration(
                 color: active ? accent : AppColors.white,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                    color: active ? accent : AppColors.border),
+                border: Border.all(color: active ? accent : AppColors.border),
               ),
-              child: Text(tabs[i],
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                      color: active ? Colors.white : AppColors.greyText)),
+              child: Text(
+                tabs[i],
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                  color: active ? Colors.white : AppColors.greyText,
+                ),
+              ),
             ),
           );
         },
@@ -681,16 +776,21 @@ class AdminInfoRow extends StatelessWidget {
             Icon(icon, size: 15, color: AppColors.greyText),
             const SizedBox(width: 6),
           ],
-          Text(label,
-              style: const TextStyle(fontSize: 12.5, color: AppColors.greyText)),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12.5, color: AppColors.greyText),
+          ),
           const Spacer(),
           Flexible(
-            child: Text(value,
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                    color: valueColor ?? AppColors.darkText)),
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: valueColor ?? AppColors.darkText,
+              ),
+            ),
           ),
         ],
       ),
@@ -732,23 +832,29 @@ class RingGauge extends StatelessWidget {
               return CustomPaint(
                 painter: _RingPainter(value, color),
                 child: Center(
-                  child: Text('${(value * 100).round()}%',
-                      style: TextStyle(
-                          fontSize: size * 0.22,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.darkText)),
+                  child: Text(
+                    '${(value * 100).round()}%',
+                    style: TextStyle(
+                      fontSize: size * 0.22,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.darkText,
+                    ),
+                  ),
                 ),
               );
             },
           ),
         ),
         const SizedBox(height: 8),
-        Text(label,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: AppColors.greyText)),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.greyText,
+          ),
+        ),
       ],
     );
   }
@@ -817,17 +923,23 @@ class LabeledBar extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Text(label,
-                    style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.darkText)),
-              ),
-              Text(trailing ?? '${(fraction * 100).round()}%',
+                child: Text(
+                  label,
                   style: const TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.greyText)),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.darkText,
+                  ),
+                ),
+              ),
+              Text(
+                trailing ?? '${(fraction * 100).round()}%',
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.greyText,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 6),
@@ -921,24 +1033,31 @@ class AdminButton extends StatelessWidget {
                 foregroundColor: color,
                 side: BorderSide(color: color),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(13)),
+                  borderRadius: BorderRadius.circular(13),
+                ),
               ),
               icon: Icon(icon ?? Icons.circle, size: icon == null ? 0 : 18),
-              label: Text(label,
-                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              label: Text(
+                label,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
             )
           : ElevatedButton.icon(
               onPressed: onPressed,
               style: ElevatedButton.styleFrom(
                 backgroundColor: color,
                 foregroundColor: Colors.white,
-                elevation: 0,
+                elevation: 2,
+                shadowColor: color.withValues(alpha: 0.4),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(13)),
+                  borderRadius: BorderRadius.circular(13),
+                ),
               ),
               icon: Icon(icon ?? Icons.circle, size: icon == null ? 0 : 18),
-              label: Text(label,
-                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              label: Text(
+                label,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
             ),
     );
     return expand ? SizedBox(width: double.infinity, child: child) : child;
@@ -950,7 +1069,11 @@ class AdminButton extends StatelessWidget {
 // -----------------------------------------------------------------------------
 
 class AdminEmpty extends StatelessWidget {
-  const AdminEmpty({super.key, required this.label, this.icon = Icons.inbox_outlined});
+  const AdminEmpty({
+    super.key,
+    required this.label,
+    this.icon = Icons.inbox_outlined,
+  });
 
   final String label;
   final IconData icon;
@@ -961,7 +1084,11 @@ class AdminEmpty extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 46, color: AppColors.greyText.withValues(alpha: 0.6)),
+          Icon(
+            icon,
+            size: 46,
+            color: AppColors.greyText.withValues(alpha: 0.6),
+          ),
           const SizedBox(height: 10),
           Text(label, style: const TextStyle(color: AppColors.greyText)),
         ],

@@ -1,10 +1,10 @@
 // =============================================================================
 // MediCaPlus — Admin · User Management (tab 3)
 //
-// Directory of everyone on the platform, split by kind via segment tabs
-// (Customers / Agents / Staff). A headline stat strip (customers / vendors /
-// agents), a search field, and tagged user rows (Premium, New, Flagged…).
-// Agents tab links through to the Delivery Management console.
+// Directory split by kind via segment tabs (Vendors / Delivery Agents). A
+// headline stat strip (vendors / agents), a search field, and tagged user
+// rows. The Delivery Agents tab links through to the Delivery Management
+// console.
 // =============================================================================
 
 import 'package:flutter/material.dart';
@@ -29,11 +29,11 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   int _tab = 0;
   String _query = '';
 
-  static const _tabs = ['Customers', 'Agents', 'Staff'];
-  static const _kinds = [UserKind.customer, UserKind.agent, UserKind.staff];
+  static const _tabs = ['Vendors', 'Delivery Agents'];
+  static const _kinds = [UserKind.customer, UserKind.agent];
 
-  List<PlatformUser> get _filtered {
-    var list = _users.where((u) => u.kind == _kinds[_tab]);
+  List<PlatformUser> _filteredFor(int tab) {
+    var list = _users.where((u) => u.kind == _kinds[tab]);
     if (_query.isNotEmpty) {
       final q = _query.toLowerCase();
       list = list.where((u) => u.name.toLowerCase().contains(q));
@@ -43,7 +43,10 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final list = _filtered;
+    // One clamped index guards every read below (list, tab highlight, delivery
+    // button) from a stale out-of-range tab retained across a hot reload.
+    final tab = _tab.clamp(0, _tabs.length - 1);
+    final list = _filteredFor(tab);
     return Scaffold(
       backgroundColor: AppColors.pageBg,
       body: SafeArea(
@@ -55,7 +58,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: AdminSegmentTabs(
                 tabs: _tabs,
-                selected: _tab,
+                selected: tab,
                 onChanged: (i) => setState(() => _tab = i),
                 padding: EdgeInsets.zero,
               ),
@@ -63,7 +66,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: AdminSearchField(
-                hint: 'Search users…',
+                hint: 'Search vendors and delivery agents..…',
                 onChanged: (v) => setState(() => _query = v),
               ),
             ),
@@ -72,26 +75,24 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
               child: Row(
                 children: [
                   Expanded(
-                      child: MiniStat(
-                          value: '12.4k',
-                          label: 'Customers',
-                          color: AdminColors.blue)),
+                    child: MiniStat(
+                      value: groupInt(kVendorCount),
+                      label: 'Vendors',
+                      color: AppColors.darkGreen,
+                    ),
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
-                      child: MiniStat(
-                          value: groupInt(kVendorCount),
-                          label: 'Vendors',
-                          color: AppColors.darkGreen)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                      child: MiniStat(
-                          value: '$kAgentCount',
-                          label: 'Agents',
-                          color: AdminColors.purple)),
+                    child: MiniStat(
+                      value: '$kAgentCount',
+                      label: 'Agents',
+                      color: AdminColors.purple,
+                    ),
+                  ),
                 ],
               ),
             ),
-            if (_tab == 1)
+            if (tab == 1)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
                 child: AdminButton(
@@ -111,8 +112,8 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                       itemCount: list.length,
                       itemBuilder: (_, i) => _UserRow(
                         user: list[i],
-                        onTap: () => adminPush(
-                            context, UserDetailScreen(user: list[i])),
+                        onTap: () =>
+                            adminPush(context, UserDetailScreen(user: list[i])),
                       ),
                     ),
             ),
@@ -144,31 +145,46 @@ class _UserRow extends StatelessWidget {
         decoration: adminCard(),
         child: Row(
           children: [
-            AdminAvatar(label: initialsOf(user.name), size: 46, color: avatarColor),
+            AdminAvatar(
+              label: initialsOf(user.name),
+              size: 46,
+              color: avatarColor,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(user.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.darkText)),
+                  Text(
+                    user.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.darkText,
+                    ),
+                  ),
                   const SizedBox(height: 2),
-                  Text(user.meta,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 12, color: AppColors.greyText)),
+                  Text(
+                    user.meta,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.greyText,
+                    ),
+                  ),
                 ],
               ),
             ),
             const SizedBox(width: 8),
             if (user.tag != null)
-              StatusBadge(label: user.tag!.label, color: user.tag!.color, dense: true),
+              StatusBadge(
+                label: user.tag!.label,
+                color: user.tag!.color,
+                dense: true,
+              ),
           ],
         ),
       ),
