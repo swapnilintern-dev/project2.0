@@ -7,6 +7,7 @@
 // =============================================================================
 
 import 'package:flutter/material.dart';
+import 'package:razorpay_flutter/razorpay_flutter.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
@@ -17,6 +18,12 @@ import 'customer_models.dart';
 import 'customer_widgets.dart';
 import 'order_details_screen.dart';
 import 'addresses_screen.dart';
+
+/// Razorpay publishable Key ID. Replace with VS Arogya's real key before going
+/// live (test keys start with `rzp_test_`, live keys with `rzp_live_`).
+// TODO(razorpay): move this to a secure source and pair it with a backend that
+// creates the Razorpay order and verifies the payment signature.
+const String _razorpayKeyId = 'rzp_test_XXXXXXXXXXXXXX';
 
 class CheckoutScreen extends StatefulWidget {
   const CheckoutScreen({super.key});
@@ -30,8 +37,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   Address _address = AddressController.instance.defaultAddress ??
       MockData.addresses.first;
-  PaymentMethod _payment = PaymentMethod.upi;
+  PaymentMethod _payment = PaymentMethod.razorpay;
   bool _placing = false;
+
+  late final Razorpay _razorpay;
+
+  @override
+  void initState() {
+    super.initState();
+    _razorpay = Razorpay()
+      ..on(Razorpay.EVENT_PAYMENT_SUCCESS, _onPaymentSuccess)
+      ..on(Razorpay.EVENT_PAYMENT_ERROR, _onPaymentError)
+      ..on(Razorpay.EVENT_EXTERNAL_WALLET, _onExternalWallet);
+  }
+
+  @override
+  void dispose() {
+    _razorpay.clear();
+    super.dispose();
+  }
 
   Future<void> _changeAddress() async {
     final selected = await Navigator.of(context).push<Address>(
@@ -41,10 +65,76 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     if (selected != null) setState(() => _address = selected);
   }
 
+  /// Place Order button. COD records the order immediately; Razorpay opens the
+  /// payment gateway and only records the order from the success callback.
   Future<void> _placeOrder() async {
     final cart = CartController.instance;
     if (cart.isEmpty) return;
     setState(() => _placing = true);
+
+    if (_payment == PaymentMethod.razorpay) {
+      _openRazorpayGateway(cart.total);
+      return; // flow continues in _onPaymentSuccess / _onPaymentError
+    }
+
+    // Cash on Delivery — no gateway, fulfil straight away.
+    await _finalizeOrder();
+  }
+
+  /// Opens the Razorpay checkout sheet for [amount] (in rupees).
+  ///
+  /// For a fully verifiable flow your backend should create a Razorpay order
+  /// and return its `order_id`; pass it below so the payment can be captured
+  /// and the signature verified server-side. Without it the sheet still opens
+  /// in test mode using the key + amount.
+  void _openRazorpayGateway(double amount) {
+    final options = <String, dynamic>{
+      'key': _razorpayKeyId,
+      'amount': (amount * 100).round(), // Razorpay expects paise (integer)
+      'currency': 'INR',
+      'name': 'VS Arogya',
+      'description': 'MediCaPlus order payment',
+      'prefill': <String, dynamic>{
+        'contact': _address.phone,
+      },
+      'theme': <String, dynamic>{'color': '#1E8E5A'},
+      // TODO(backend): 'order_id': <id from your server-created Razorpay order>,
+    };
+    try {
+      _razorpay.open(options);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _placing = false);
+      showAppSnack(context, 'Could not open Razorpay: $e');
+    }
+  }
+
+  void _onPaymentSuccess(PaymentSuccessResponse response) {
+    if (!mounted) return;
+    // TODO(backend): verify response.signature / paymentId / orderId on your
+    // server before fulfilling. We proceed here so the demo flow completes.
+    _finalizeOrder();
+  }
+
+  void _onPaymentError(PaymentFailureResponse response) {
+    if (!mounted) return;
+    setState(() => _placing = false);
+    showAppSnack(context, 'Payment failed or cancelled. Please try again.');
+  }
+
+  void _onExternalWallet(ExternalWalletResponse response) {
+    if (!mounted) return;
+    showAppSnack(context, 'Opening ${response.walletName ?? 'wallet'}…');
+  }
+
+  /// Creates the order, records it, clears the cart and opens Order Details.
+  /// Shared by the COD path and the Razorpay success callback.
+  Future<void> _finalizeOrder() async {
+    final cart = CartController.instance;
+    if (cart.isEmpty) {
+      if (mounted) setState(() => _placing = false);
+      return;
+    }
 
     final order = Order(
       id: 'MCP-${DateTime.now().millisecondsSinceEpoch % 100000}',

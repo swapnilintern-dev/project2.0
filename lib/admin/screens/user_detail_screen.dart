@@ -3,7 +3,7 @@
 //
 // One adaptive screen for every kind of platform user. The header accent,
 // title, headline stats, "Information" rows and activity timeline all come
-// from the selected [PlatformUser], so a Customer, Delivery Agent and Staff
+// from the selected [PlatformUser], so a Vendor, Delivery Agent and Staff
 // member each render their own relevant detail set without separate screens.
 // =============================================================================
 

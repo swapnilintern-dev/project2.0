@@ -15,6 +15,7 @@ import 'customer_widgets.dart';
 import 'orders_screen.dart';
 import 'addresses_screen.dart';
 import 'saved_items_screen.dart';
+import 'about_us_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key, this.embedded = false, this.onLogout});
@@ -74,16 +75,18 @@ class ProfileScreen extends StatelessWidget {
            onTap: () => _showSupportCard(context),
           ),
           _Tile(
-            icon: Icons.info_outline,
-            title: 'About',
-            subtitle: 'MediCaPlus v1.0.0',
-            onTap: () => showAboutDialog(
-              context: context,
-              applicationName: 'MediCaPlus',
-              applicationVersion: '1.0.0',
-              applicationLegalese: '© 2026 MediCaPlus',
-            ),
-          ),
+  icon: Icons.info_outline,
+  title: 'About Us',
+  subtitle: 'Learn more about VS Arogya',
+  onTap: () {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const AboutUsScreen(),
+      ),
+    );
+  },
+),
         ]),
         
         Padding(
@@ -269,6 +272,7 @@ class ProfileScreen extends StatelessWidget {
             onPressed: () => Navigator.of(dialogContext).pop(),
             child: const Text('Cancel'),
           ),
+          ///LOGOUT BUTTON OF CUSTOMER
           TextButton(
             onPressed: () {
               Navigator.of(dialogContext).pop();
@@ -346,28 +350,42 @@ void _showSupportCard(BuildContext context) {
             ),
 
             const SizedBox(height: 20),
-
+            //// PHONE CALL
             ListTile(
               leading: const Icon(Icons.phone),
-              title: const Text('+91 9876543210'),
+              title: const Text('+91 9876543210, 0651-4502340'),
               subtitle: const Text('Customer Support'),
               onTap: () {},
             ),
-
+///// LATER IT SHOULD DIRECTLY REDIRECT TO THE GMAIL WITH ADDED SENDER.
             ListTile(
               leading: const Icon(Icons.email_outlined),
-              title: const Text('support@vsarogya.com'),
+              title: const Text('support@vsarogya.co.IN'),
               subtitle: const Text('Email Support'),
               onTap: () {},
             ),
 
-            ListTile(
-              leading: const Icon(Icons.location_on_outlined),
-              title: const Text('VS Arogya Meda Pvt Ltd'),
-              subtitle: const Text(
-                'Darbhanga, Bihar, India',
-              ),
-            ),
+            Card(
+  child: ListTile(
+    leading: const Icon(
+      Icons.location_on,
+      color: Colors.green,
+    ),
+    title: const Text(
+      'VS Arogya Meda Pvt Ltd',
+      style: TextStyle(
+        fontWeight: FontWeight.bold,
+      ),
+    ),
+    subtitle: const Text(
+      'Darbhanga, Bihar, India\n\n'
+      'Flat No. - D3, First Floor, Block B,\n'
+      'S. K. Residency, Road No.- 4, Bariatu Housing Colony,\n'
+      'District: Ranchi,\n'
+      'State: Jharkhand (India) - 834009',
+    ),
+  ),
+ ),
 
             const SizedBox(height: 16),
 

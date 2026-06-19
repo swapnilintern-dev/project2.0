@@ -463,13 +463,13 @@ extension UserTagX on UserTag {
 
 extension UserKindX on UserKind {
   String get label => switch (this) {
-    UserKind.customer => 'Customer',
+    UserKind.customer => 'Vendor',
     UserKind.agent => 'Delivery Agent',
     UserKind.staff => 'Staff Member',
   };
 
   String get detailTitle => switch (this) {
-    UserKind.customer => 'Customer Details',
+    UserKind.customer => 'Vendor Details',
     UserKind.agent => 'Agent Details',
     UserKind.staff => 'Staff Details',
   };
@@ -481,7 +481,7 @@ extension UserKindX on UserKind {
   };
 
   IconData get icon => switch (this) {
-    UserKind.customer => Icons.local_pharmacy_outlined,
+    UserKind.customer => Icons.storefront_outlined,
     UserKind.agent => Icons.delivery_dining_outlined,
     UserKind.staff => Icons.badge_outlined,
   };
@@ -559,7 +559,7 @@ const int kAgentCount = 128;
 
 // TODO: GET /api/admin/users  (and GET /api/admin/users/:id for the detail view)
 const List<PlatformUser> kUsers = [
-  // --- Customers (B2B pharmacy buyers) -------------------------------------
+  // --- Vendors (B2B pharmacy buyers) ---------------------------------------
   PlatformUser(
     name: 'Apollo Pharmacy',
     kind: UserKind.customer,

@@ -66,7 +66,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: AdminSearchField(
-                hint: 'Search vendors and delivery agents..…',
+                hint: 'Search vendors and delivery agents...',
                 onChanged: (v) => setState(() => _query = v),
               ),
             ),

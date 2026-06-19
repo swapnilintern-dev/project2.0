@@ -3,7 +3,7 @@
 //
 // Hero image, title/brand, rating, price, description, quantity selector,
 // wishlist toggle, reviews preview and related products. A sticky bottom bar
-// adds the chosen quantity to the cart and offers Buy Now (straight to cart).
+// adds the chosen quantity to the cart and offers Buy Now (straight to checkout).
 // =============================================================================
 
 import 'package:flutter/material.dart';
@@ -14,7 +14,7 @@ import 'customer_controllers.dart';
 import 'customer_mock_data.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
-import 'cart_screen.dart';
+import 'checkout_screen.dart';
 
 class ProductDetailsScreen extends StatefulWidget {
   const ProductDetailsScreen({super.key, required this.product});
@@ -43,8 +43,9 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     CartController.instance.add(_p, quantity: _qty);
     setState(() => _adding = false);
     if (buyNow) {
+      // Buy Now skips the cart and goes straight to checkout.
       Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const CartScreen()));
+          MaterialPageRoute(builder: (_) => const CheckoutScreen()));
     } else {
       showAppSnack(context, '${_qty}x ${_p.title} added to cart');
     }

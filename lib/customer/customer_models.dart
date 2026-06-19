@@ -297,34 +297,22 @@ class Address {
 }
 
 /// Supported checkout payment methods.
-enum PaymentMethod { upi, creditCard, debitCard, netBanking, cod, wallet }
+enum PaymentMethod { razorpay, cod }
 
 extension PaymentMethodX on PaymentMethod {
   String get label => switch (this) {
-        PaymentMethod.upi => 'UPI',
-        PaymentMethod.creditCard => 'Credit Card',
-        PaymentMethod.debitCard => 'Debit Card',
-        PaymentMethod.netBanking => 'Net Banking',
+        PaymentMethod.razorpay => 'Razorpay',
         PaymentMethod.cod => 'Cash on Delivery',
-        PaymentMethod.wallet => 'Wallet',
       };
 
   String get subtitle => switch (this) {
-        PaymentMethod.upi => 'GPay, PhonePe, Paytm',
-        PaymentMethod.creditCard => 'Visa, Mastercard, RuPay',
-        PaymentMethod.debitCard => 'All major banks',
-        PaymentMethod.netBanking => 'All major banks',
+        PaymentMethod.razorpay => 'UPI, Cards, Net Banking & Wallets',
         PaymentMethod.cod => 'Pay when delivered',
-        PaymentMethod.wallet => 'MediCaPlus Wallet',
       };
 
   IconData get icon => switch (this) {
-        PaymentMethod.upi => Icons.account_balance_wallet_outlined,
-        PaymentMethod.creditCard => Icons.credit_card,
-        PaymentMethod.debitCard => Icons.credit_card_outlined,
-        PaymentMethod.netBanking => Icons.account_balance_outlined,
+        PaymentMethod.razorpay => Icons.account_balance_wallet_outlined,
         PaymentMethod.cod => Icons.payments_outlined,
-        PaymentMethod.wallet => Icons.wallet_outlined,
       };
 }
 
