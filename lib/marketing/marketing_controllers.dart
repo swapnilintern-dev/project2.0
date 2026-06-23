@@ -191,6 +191,19 @@ class MarketingProductsController extends ChangeNotifier {
 
   List<InventoryProduct> get products => List.unmodifiable(_products);
 
+  /// The products the customer shop should display: only those the marketing
+  /// head has marked active. Out-of-stock-but-active items stay in the list so
+  /// the shop can show an "Out of Stock" state rather than hiding them.
+  List<InventoryProduct> get activeProducts =>
+      _products.where((p) => p.active).toList();
+
+  InventoryProduct? byId(String id) {
+    for (final p in _products) {
+      if (p.id == id) return p;
+    }
+    return null;
+  }
+
   int get total => _products.length;
   int get activeCount => _products.where((p) => p.active).length;
   int get inactiveCount => _products.where((p) => !p.active).length;
@@ -226,68 +239,213 @@ class MarketingProductsController extends ChangeNotifier {
     notifyListeners();
   }
 
-  static List<InventoryProduct> _seed() => const [
+  /// Reduces stock when a customer order is confirmed. [quantitiesById] maps a
+  /// product id to the ordered quantity. Stock never goes below zero. A single
+  /// notify after applying every line keeps the marketing + customer screens in
+  /// sync in one frame.
+  ///
+  /// TODO(backend): the server becomes the source of truth here — POST the
+  /// confirmed order and let it decrement stock atomically, then refresh this
+  /// store from the response so two buyers can't oversell the same unit.
+  void decrementForOrder(Map<String, int> quantitiesById) {
+    var changed = false;
+    quantitiesById.forEach((id, qty) {
+      final i = _products.indexWhere((p) => p.id == id);
+      if (i < 0 || qty <= 0) return;
+      final current = _products[i].stock;
+      final next = current - qty < 0 ? 0 : current - qty;
+      if (next != current) {
+        _products[i] = _products[i].copyWith(stock: next);
+        changed = true;
+      }
+    });
+    if (changed) notifyListeners();
+  }
+
+  // Single source of truth for the whole app's catalogue. The marketing head
+  // edits these records; the customer shop reads a live, mapped view of the
+  // active ones (see lib/customer/catalog.dart). Stock decrements here when a
+  // customer order is confirmed, so every screen reflects the same number.
+  //
+  // NOTE: this MUST be a modifiable (non-const) list — add / update / toggle /
+  // decrement all mutate it in place. A `const [...]` here throws at runtime.
+  static List<InventoryProduct> _seed() => [
         InventoryProduct(
-          id: 'm1',
-          name: 'Burnol',
-          brand: 'Life Co.',
-          code: 'BRN-CRM-20',
-          category: 'Medicine',
-          price: 75.00,
-          mrp: 90,
-          stock: 350,
-          active: false,
-          inactiveReason: 'Out of stock',
-          icon: Icons.healing_outlined,
-        ),
-        InventoryProduct(
-          id: 'm2',
-          name: 'ORS',
-          brand: 'Health Inc',
-          code: 'ORS-PWD-21',
-          category: 'Medicine',
-          price: 22.23,
-          mrp: 25,
-          stock: 500,
-          active: true,
-        ),
-        InventoryProduct(
-          id: 'm3',
-          name: 'Zincovit',
-          brand: 'Wellness Labs',
-          code: 'ZNC-TAB-30',
-          category: 'Medicine',
-          price: 110.00,
-          mrp: 130,
-          stock: 8,
-          active: true,
-          icon: Icons.medication_outlined,
-        ),
-        InventoryProduct(
-          id: 'm4',
-          name: 'Paracetamol 650',
-          brand: 'Medico',
+          id: 'p1',
+          name: 'Paracetamol 650mg',
+          brand: 'Calpol · Strip of 15',
           code: 'PCM-650-15',
           category: 'Medicine',
-          price: 36.00,
+          description:
+              'Effective relief from fever and mild-to-moderate pain. Each '
+              'tablet contains 650mg paracetamol IP.',
+          price: 36,
           mrp: 42,
           stock: 500,
           active: true,
-          prescriptionRequired: false,
-          icon: Icons.medication_outlined,
+          packOf: 15,
+          icon: Icons.medication,
+          rating: 4.6,
+          reviewCount: 1240,
+          badge: 'BEST SELLER',
+          packInfo: 'Strip of 15 tablets',
         ),
         InventoryProduct(
-          id: 'm5',
-          name: 'Cough Syrup',
-          brand: 'CarePlus',
+          id: 'p2',
+          name: 'Amoxicillin 500mg',
+          brand: 'Mox · 10 caps',
+          code: 'AMX-500-10',
+          category: 'Medicine',
+          description:
+              'Broad-spectrum antibiotic used to treat a wide range of '
+              'bacterial infections. Take only as prescribed.',
+          price: 84,
+          mrp: 96,
+          stock: 320,
+          active: true,
+          prescriptionRequired: true,
+          packOf: 10,
+          icon: Icons.medical_services,
+          rating: 4.4,
+          reviewCount: 860,
+          badge: 'NEW',
+          packInfo: 'Strip of 10 capsules',
+        ),
+        InventoryProduct(
+          id: 'p3',
+          name: 'Insulin Glargine',
+          brand: 'Lantus · 3ml pen',
+          code: 'INS-GLR-3',
+          category: 'Lifesaving Injections',
+          description:
+              'Long-acting insulin for the management of diabetes mellitus. '
+              'Refrigerate between 2°C and 8°C. Do not freeze.',
+          price: 845,
+          mrp: 980,
+          stock: 8,
+          active: true,
+          prescriptionRequired: true,
+          lowThreshold: 10,
+          icon: Icons.vaccines,
+          rating: 4.8,
+          reviewCount: 410,
+          badge: 'LOW STOCK',
+          packInfo: '3ml prefilled pen',
+        ),
+        InventoryProduct(
+          id: 'p4',
+          name: 'Cough Syrup 100ml',
+          brand: 'Benadryl',
           code: 'CGH-SYP-10',
           category: 'Medicine',
-          price: 95.00,
-          mrp: 115,
+          description:
+              'Soothes dry cough and throat irritation. Non-drowsy formula '
+              'suitable for adults and children above 6 years.',
+          price: 118,
+          mrp: 135,
           stock: 0,
           active: false,
           inactiveReason: 'Expired batch withdrawn',
-          icon: Icons.medication_liquid_outlined,
+          icon: Icons.science,
+          rating: 4.3,
+          reviewCount: 690,
+          packInfo: '100ml bottle',
+        ),
+        InventoryProduct(
+          id: 'p5',
+          name: 'Azithromycin 250mg',
+          brand: 'Azee · 6 caps',
+          code: 'AZI-250-6',
+          category: 'Medicine',
+          description:
+              'Macrolide antibiotic capsule used for respiratory, skin and ENT '
+              'infections. Complete the full course as prescribed.',
+          price: 112,
+          mrp: 130,
+          stock: 260,
+          active: true,
+          prescriptionRequired: true,
+          packOf: 6,
+          icon: Icons.medication_outlined,
+          rating: 4.5,
+          reviewCount: 740,
+          badge: 'BEST SELLER',
+          packInfo: 'Strip of 6 capsules',
+        ),
+        InventoryProduct(
+          id: 'p6',
+          name: 'Omeprazole 20mg',
+          brand: 'Omez · 15 caps',
+          code: 'OMP-20-15',
+          category: 'Medicine',
+          description:
+              'Proton-pump inhibitor capsule for acidity, heartburn and acid '
+              'reflux. Take before meals or as advised.',
+          price: 58,
+          mrp: 72,
+          stock: 340,
+          active: true,
+          packOf: 15,
+          icon: Icons.medication_outlined,
+          rating: 4.4,
+          reviewCount: 530,
+          packInfo: 'Strip of 15 capsules',
+        ),
+        InventoryProduct(
+          id: 'p7',
+          name: 'Antiseptic Cream 20g',
+          brand: 'Burnol · Tube',
+          code: 'BRN-CRM-20',
+          category: 'Medicine',
+          description:
+              'Soothing antiseptic ointment for minor burns, cuts and '
+              'abrasions. For external use only.',
+          price: 75,
+          mrp: 90,
+          stock: 180,
+          active: true,
+          icon: Icons.healing,
+          rating: 4.6,
+          reviewCount: 910,
+          badge: 'NEW',
+          packInfo: '20g tube',
+        ),
+        InventoryProduct(
+          id: 'p8',
+          name: 'Pain Relief Gel 30g',
+          brand: 'Volini · Tube',
+          code: 'VOL-GEL-30',
+          category: 'Medicine',
+          description:
+              'Fast-acting topical gel for muscle, joint and back pain relief. '
+              'Apply gently up to thrice daily.',
+          price: 145,
+          mrp: 170,
+          stock: 220,
+          active: true,
+          icon: Icons.healing,
+          rating: 4.5,
+          reviewCount: 1320,
+          packInfo: '30g tube',
+        ),
+        InventoryProduct(
+          id: 'p9',
+          name: 'Covishield Vaccine',
+          brand: 'Serum Inst · 0.5ml',
+          code: 'COV-VAC-1',
+          category: 'Vaccines',
+          description:
+              'COVID-19 viral vector vaccine, 0.5ml single dose. Stored and '
+              'administered under cold-chain conditions.',
+          price: 280,
+          mrp: 320,
+          stock: 60,
+          active: true,
+          prescriptionRequired: true,
+          icon: Icons.vaccines,
+          rating: 4.7,
+          reviewCount: 205,
+          packInfo: '0.5ml single dose',
         ),
       ];
 }
@@ -317,7 +475,8 @@ class MarketingCouponsController extends ChangeNotifier {
     notifyListeners();
   }
 
-  static List<MarketingCoupon> _seed() => const [
+  // Modifiable (non-const) — add / toggleActive mutate it in place.
+  static List<MarketingCoupon> _seed() => [
         MarketingCoupon(
           code: 'BULK20',
           description: '20% off above ₹5,000',

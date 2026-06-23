@@ -10,8 +10,8 @@ import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_widgets.dart';
+import 'catalog.dart';
 import 'customer_controllers.dart';
-import 'customer_mock_data.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
 import 'checkout_screen.dart';
@@ -29,9 +29,28 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
   int _qty = 1;
   bool _adding = false;
 
-  Product get _p => widget.product;
+  @override
+  void initState() {
+    super.initState();
+    // Reflect live stock / price changes from the shared catalogue store.
+    Catalog.listenable.addListener(_onCatalogChanged);
+  }
 
-  List<Product> get _related => MockData.products
+  @override
+  void dispose() {
+    Catalog.listenable.removeListener(_onCatalogChanged);
+    super.dispose();
+  }
+
+  void _onCatalogChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// The live record (current stock/price) falling back to the one we were
+  /// opened with if it has since been deactivated/removed.
+  Product get _p => Catalog.byId(widget.product.id) ?? widget.product;
+
+  List<Product> get _related => Catalog.all
       .where((p) => p.category == _p.category && p.id != _p.id)
       .take(6)
       .toList();

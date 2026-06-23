@@ -9,10 +9,13 @@
 
 import 'package:flutter/material.dart';
 
+import '../../account_deletion/account_deletion_controller.dart';
+import '../../account_deletion/admin_deletion_requests_screen.dart';
 import '../../vendor_registration_screen.dart' show AppColors;
 import '../admin_common.dart';
 import '../admin_main.dart';
 import '../admin_models.dart';
+import '../admin_users_controller.dart';
 import 'delivery_management_screen.dart';
 import 'user_detail_screen.dart';
 
@@ -24,21 +27,20 @@ class AdminUsersScreen extends StatefulWidget {
 }
 
 class _AdminUsersScreenState extends State<AdminUsersScreen> {
-  // TODO: GET /api/admin/users
-  final List<PlatformUser> _users = kUsers;
   int _tab = 0;
   String _query = '';
 
   static const _tabs = ['Vendors', 'Delivery Agents'];
   static const _kinds = [UserKind.customer, UserKind.agent];
 
+  // Reads from the live, mutable user store so deletions reflect immediately.
   List<PlatformUser> _filteredFor(int tab) {
-    var list = _users.where((u) => u.kind == _kinds[tab]);
+    var list = AdminUsersController.instance.byKind(_kinds[tab]);
     if (_query.isNotEmpty) {
       final q = _query.toLowerCase();
-      list = list.where((u) => u.name.toLowerCase().contains(q));
+      list = list.where((u) => u.name.toLowerCase().contains(q)).toList();
     }
-    return list.toList();
+    return list;
   }
 
   @override
@@ -46,7 +48,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     // One clamped index guards every read below (list, tab highlight, delivery
     // button) from a stale out-of-range tab retained across a hot reload.
     final tab = _tab.clamp(0, _tabs.length - 1);
-    final list = _filteredFor(tab);
     return Scaffold(
       backgroundColor: AppColors.pageBg,
       body: SafeArea(
@@ -103,19 +104,48 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                       adminPush(context, const DeliveryManagementScreen()),
                 ),
               ),
+            // Account-deletion requests raised by vendors / delivery partners.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+              child: ListenableBuilder(
+                listenable: AccountDeletionController.instance,
+                builder: (context, _) {
+                  final pending =
+                      AccountDeletionController.instance.pendingCount;
+                  return AdminButton(
+                    label: pending > 0
+                        ? 'Deletion Requests · $pending pending'
+                        : 'Deletion Requests',
+                    icon: Icons.delete_sweep_outlined,
+                    outlined: true,
+                    color: AdminColors.red,
+                    height: 44,
+                    onPressed: () => adminPush(
+                        context, const AdminDeletionRequestsScreen()),
+                  );
+                },
+              ),
+            ),
             Expanded(
-              child: list.isEmpty
-                  ? const AdminEmpty(label: 'No users found')
-                  : ListView.builder(
-                      physics: adminScroll,
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
-                      itemCount: list.length,
-                      itemBuilder: (_, i) => _UserRow(
-                        user: list[i],
-                        onTap: () =>
-                            adminPush(context, UserDetailScreen(user: list[i])),
-                      ),
+              child: ListenableBuilder(
+                listenable: AdminUsersController.instance,
+                builder: (context, _) {
+                  final list = _filteredFor(tab);
+                  if (list.isEmpty) {
+                    return const AdminEmpty(label: 'No users found');
+                  }
+                  return ListView.builder(
+                    physics: adminScroll,
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                    itemCount: list.length,
+                    itemBuilder: (_, i) => _UserRow(
+                      user: list[i],
+                      onTap: () =>
+                          adminPush(context, UserDetailScreen(user: list[i])),
                     ),
+                  );
+                },
+              ),
             ),
           ],
         ),

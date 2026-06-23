@@ -8,7 +8,7 @@
 
 import 'package:flutter/material.dart';
 
-import '../../sign_in_screen.dart';
+import '../../auth/session.dart';
 import '../../vendor_registration_screen.dart' show AppColors;
 import '../admin_common.dart';
 import '../admin_main.dart';
@@ -85,10 +85,7 @@ class AdminSettingsScreen extends StatelessWidget {
               color: AdminColors.red,
               outlined: true,
               height: 52,
-              onPressed: () => Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const SignInScreen()),
-                (route) => false,
-              ),
+              onPressed: () => logout(context),
             ),
             const SizedBox(height: 16),
             const Center(

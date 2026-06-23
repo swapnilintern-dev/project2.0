@@ -46,6 +46,11 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   Future<void> _addToCart() async {
+    if (!widget.product.inStock) {
+      showAppSnack(context, '${widget.product.title} is out of stock',
+          success: false);
+      return;
+    }
     setState(() => _scale = 0.85);
     await Future<void>.delayed(const Duration(milliseconds: 120));
     if (!mounted) return;
@@ -309,6 +314,11 @@ class _AddButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkResponse(
       onTap: () {
+        if (!product.inStock) {
+          showAppSnack(context, '${product.title} is out of stock',
+              success: false);
+          return;
+        }
         CartController.instance.add(product);
         showAppSnack(context, '${product.title} added to cart');
       },

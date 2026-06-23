@@ -75,10 +75,11 @@ const vendorSchema = new mongoose.Schema(
     //   required: true,
     },
 
-    gst_pdf: {
-      url: String,
-      publicId: String,
-    },
+ gst_pdf: {
+  url: String,
+  publicId: String,
+  fileName: String,
+},
 
     store_pic: {
       url: String,
@@ -88,6 +89,7 @@ const vendorSchema = new mongoose.Schema(
     drug_lic_copy: {
       url: String,
       publicId: String,
+      fileName :String ,
     },
 
     cart:[
@@ -102,14 +104,21 @@ const vendorSchema = new mongoose.Schema(
           default : 1 
         }
       }
-    ]
+    ],
+    
+  approvalStatus:{
+    type: String,
+    enum: ["Pending", "Approved", "Rejected"],
+    default: "Pending"
+}
   },
   {
     timestamps: true,
   }
 );
 
-export default mongoose.model("Vendor", vendorSchema);
+const Vendor =  mongoose.model("Vendor", vendorSchema);
+export default Vendor ;
 
 
 

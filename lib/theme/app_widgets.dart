@@ -468,9 +468,20 @@ class AppSheetAction {
 
 DateTime? _lastBackTapAt;
 
-/// Two-step "press back again to exit" for a role shell's home tab — prevents an
-/// accidental single-press exit. Call from the shell's PopScope when index == 0.
+/// Android-only "press back again to exit" for a role shell's home tab —
+/// prevents an accidental single-press exit. Call from the shell's PopScope
+/// when index == 0.
+///
+/// This is a no-op on iOS/macOS and every non-Android platform: there is no
+/// system Back button there, and Apple's Human Interface Guidelines forbid
+/// quitting an app programmatically — calling SystemNavigator.pop() on iOS is a
+/// known App Store rejection cause. The shells keep `canPop: false`, which on
+/// iOS simply means the (non-existent) root back does nothing.
 void maybeExitApp(BuildContext context) {
+  // Only Android has a system Back button and lets a well-behaved app send
+  // itself to the background via SystemNavigator.pop(). Never quit on iOS.
+  if (Theme.of(context).platform != TargetPlatform.android) return;
+
   final now = DateTime.now();
   if (_lastBackTapAt == null ||
       now.difference(_lastBackTapAt!) > const Duration(seconds: 2)) {

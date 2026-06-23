@@ -14,8 +14,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // Clipboard (tap-to-copy support details)
 
 import 'vendor_registration_screen.dart'; // AppColors + VendorRegistrationScreen
-import 'customer_dashboard.dart';
-import 'delivery_dashboard.dart';
+import 'auth/forgot_password_screen.dart';
+import 'customer/customer_shell.dart';
+import 'delivery/delivery_main.dart';
 import 'admin/admin_main.dart';
 import 'marketing/marketing_role_main.dart';
 
@@ -57,16 +58,16 @@ class _SignInScreenState extends State<SignInScreen> {
     // account's `role` from the response, then route on that. Until the login
     // endpoint exists, the role is derived from the identifier so each portal
     // can be reached for the demo (see _roleFor).
-    await Future<void>.delayed(const Duration(milliseconds: 900));
+    await Future<void>.delayed(const Duration(milliseconds: 500));
 
     if (!mounted) return;
     setState(() => _isSubmitting = false);
 
     final role = _roleFor(_identifierCtrl.text);
     final Widget nextScreen = switch (role) {
-      SignInRole.vendor => const CustomerDashboardScreen(),
+      SignInRole.vendor => const CustomerShell(),
       SignInRole.admin => const AdminRoleMain(),
-      SignInRole.delivery => const DeliveryDashboardScreen(),
+      SignInRole.delivery => const DeliveryMain(),
       SignInRole.marketing => const MarketingRoleMain(),
     };
 
@@ -223,7 +224,7 @@ class _SignInScreenState extends State<SignInScreen> {
                           color: AppColors.primary, size: 16),
                       SizedBox(width: 6),
                       Text(
-                        'MediCaPlus',
+                        'VS Arogya',
                         style: TextStyle(
                           color: AppColors.darkGreen,
                           fontSize: 14,
@@ -309,7 +310,9 @@ class _SignInScreenState extends State<SignInScreen> {
               icon: Icons.lock_outline,
               obscureText: _obscurePassword,
               suffix: IconButton(
-                onPressed: () =>
+                onPressed: ( 
+                  
+                ) =>
                     setState(() => _obscurePassword = !_obscurePassword),
                 icon: Icon(
                   _obscurePassword
@@ -331,9 +334,10 @@ class _SignInScreenState extends State<SignInScreen> {
             Align(
               alignment: Alignment.centerRight,
               child: TextButton(
-                onPressed: () {
-                  // TODO: navigate to forgot-password flow.
-                },
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                      builder: (_) => const ForgotPasswordScreen()),
+                ),
                 style: TextButton.styleFrom(
                   foregroundColor: AppColors.primary,
                   visualDensity: VisualDensity.compact,
@@ -710,12 +714,14 @@ class _SupportSheet extends StatelessWidget {
               icon: Icons.call_outlined,
               label: 'Phone',
               value: _phone,
+              copiedMessage: 'Phone number copied',
             ),
             const SizedBox(height: 12),
             const _SupportContactTile(
               icon: Icons.mail_outline,
               label: 'Email',
               value: _email,
+              copiedMessage: 'Email copied',
             ),
             const SizedBox(height: 16),
             const Center(
@@ -732,16 +738,31 @@ class _SupportSheet extends StatelessWidget {
 }
 
 /// One tap-to-copy support channel row (phone / email) inside [_SupportSheet].
+/// Tapping the row OR the trailing copy button writes [value] to the system
+/// clipboard and shows a confirmation toast.
 class _SupportContactTile extends StatelessWidget {
   const _SupportContactTile({
     required this.icon,
     required this.label,
     required this.value,
+    required this.copiedMessage,
   });
 
   final IconData icon;
   final String label;
   final String value;
+
+  /// Shown in the confirmation toast, e.g. "Phone number copied".
+  final String copiedMessage;
+
+  /// Writes [value] to the real device clipboard, then shows a toast that
+  /// floats ABOVE the bottom sheet (a SnackBar would render on the Scaffold
+  /// underneath the sheet and stay hidden).
+  Future<void> _copy(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!context.mounted) return;
+    _showCopiedToast(context, copiedMessage);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -749,19 +770,7 @@ class _SupportContactTile extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        onTap: () {
-          Clipboard.setData(ClipboardData(text: value));
-          ScaffoldMessenger.of(context)
-            ..hideCurrentSnackBar()
-            ..showSnackBar(
-              SnackBar(
-                content: Text('$label copied'),
-                backgroundColor: AppColors.darkGreen,
-                behavior: SnackBarBehavior.floating,
-                duration: const Duration(milliseconds: 1300),
-              ),
-            );
-        },
+        onTap: () => _copy(context),
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
@@ -802,11 +811,73 @@ class _SupportContactTile extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(Icons.copy_rounded, size: 18, color: AppColors.greyText),
+              IconButton(
+                onPressed: () => _copy(context),
+                icon: const Icon(Icons.copy_rounded, size: 18),
+                color: AppColors.greyText,
+                splashRadius: 20,
+                tooltip: 'Copy $label',
+              ),
             ],
           ),
         ),
       ),
     );
   }
+}
+
+/// Floating confirmation toast inserted into the ROOT overlay so it renders
+/// above modal bottom sheets / dialogs. Auto-dismisses after ~1.4s.
+void _showCopiedToast(BuildContext context, String message) {
+  final overlay = Overlay.of(context, rootOverlay: true);
+  late final OverlayEntry entry;
+  entry = OverlayEntry(
+    builder: (context) => Positioned(
+      left: 24,
+      right: 24,
+      bottom: MediaQuery.of(context).viewInsets.bottom + 40,
+      child: IgnorePointer(
+        child: Center(
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              decoration: BoxDecoration(
+                color: AppColors.darkGreen,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.2),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.check_circle,
+                      color: Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    message,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  overlay.insert(entry);
+  Future.delayed(const Duration(milliseconds: 1400), () {
+    if (entry.mounted) entry.remove();
+  });
 }

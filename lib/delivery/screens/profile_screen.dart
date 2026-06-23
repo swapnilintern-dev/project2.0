@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../../sign_in_screen.dart';
+import '../../account_deletion/account_deletion_controller.dart';
+import '../../account_deletion/privacy_security_screen.dart';
+import '../../auth/session.dart';
 import '../../vendor_registration_screen.dart' show AppColors;
 import '../../theme/app_theme.dart' show AppPalette, AppShadows;
 import '../delivery_mock_data.dart';
@@ -21,12 +23,7 @@ class DeliveryProfileScreen extends StatelessWidget {
       );
   }
 
-  void _logout(BuildContext context) {
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const SignInScreen()),
-      (route) => false,
-    );
-  }
+  void _logout(BuildContext context) => logout(context);
 
   @override
   Widget build(BuildContext context) {
@@ -72,6 +69,18 @@ class DeliveryProfileScreen extends StatelessWidget {
                 icon: Icons.headset_mic_outlined,
                 label: 'Help & Support',
                 onTap: () => _snack(context, 'Connecting to support'),
+              ),
+              _MenuItem(
+                icon: Icons.privacy_tip_outlined,
+                label: 'Privacy & Security',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => PrivacySecurityScreen(
+                      role: DeletionRole.delivery,
+                      userName: rider.name,
+                    ),
+                  ),
+                ),
               ),
               _MenuItem(
                 icon: Icons.settings_outlined,

@@ -7,6 +7,8 @@ import userRouter from "./routes/userRoute.js";
 import addProductRouter from "./routes/postRouter.js" ;
 import cardRouter from "./routes/cartRoute.js" ;
 import orderRouter from "./routes/orderRoute.js" ;
+import adminRouter from "./routes/adminRoute.js" ;
+import paymentRouter from "./routes/paymentRoute.js"
 
 const app = express() ;
 
@@ -34,6 +36,8 @@ app.use('/vsArogya', userRouter ) ;
 app.use('/vsArogya' , addProductRouter ) ;
 app.use('/vsArogya' , cardRouter  ) ;
 app.use('/vsArogya' , orderRouter ) ;
+app.use('/vsArogya' , adminRouter ) ;
+app.use('/vsArogya' , paymentRouter ) ;
 
 
 
@@ -41,10 +45,7 @@ app.get('/' , (req , res ) =>{
     res.send("<h1> This is from Client side </h1>") ;
 })
 
-
-app.listen(port , () =>{
-
-   
+app.listen(port , () =>{ 
     connectDb() ;
     console.log("Server is working " , port ) ;
 })

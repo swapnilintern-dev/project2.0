@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import '../../vendor_registration_screen.dart' show AppColors;
 import '../admin_common.dart';
 import '../admin_models.dart';
+import '../admin_users_controller.dart';
 import '../../theme/app_widgets.dart' show showAppActionSheet, AppSheetAction;
 
 class UserDetailScreen extends StatelessWidget {
@@ -250,8 +251,46 @@ class UserDetailScreen extends StatelessWidget {
             color: suspended ? AppColors.darkGreen : AdminColors.red,
           ),
         ),
+        AppSheetAction(
+          label: 'Delete Account',
+          icon: Icons.delete_outline,
+          destructive: true,
+          onSelected: () => _confirmDelete(context),
+        ),
       ],
     );
+  }
+
+  /// Admin-initiated deletion of a Vendor / Delivery Agent. Removes the user
+  /// from the directory and (with a backend) from MongoDB.
+  Future<void> _confirmDelete(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete account?'),
+        content: Text(
+          '${user.name}’s account will be permanently deleted. '
+          'This may not be reversible.',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AdminColors.red),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    // TODO(backend): DELETE /api/admin/users/:id — also deletes from MongoDB.
+    AdminUsersController.instance.remove(user);
+    if (context.mounted) {
+      Navigator.of(context).pop(); // close the detail screen
+      adminSnack(context, '${user.name} deleted', color: AdminColors.red);
+    }
   }
 }
 

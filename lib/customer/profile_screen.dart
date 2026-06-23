@@ -10,6 +10,8 @@ import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
+import '../account_deletion/account_deletion_controller.dart';
+import '../account_deletion/privacy_security_screen.dart';
 import 'customer_controllers.dart';
 import 'customer_widgets.dart';
 import 'orders_screen.dart';
@@ -61,6 +63,20 @@ class ProfileScreen extends StatelessWidget {
           
         ]),
         _group(context, [
+          _Tile(
+            icon: Icons.privacy_tip_outlined,
+            title: 'Privacy & Security',
+            subtitle: 'Account & data controls',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const PrivacySecurityScreen(
+                  role: DeletionRole.vendor,
+                  userName: 'Apollo Pharmacy',
+                  contact: '+91 98765 43210',
+                ),
+              ),
+            ),
+          ),
           _Tile(
             icon: Icons.notifications_none,
             title: 'Notifications',

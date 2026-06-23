@@ -213,6 +213,12 @@ class InventoryProduct {
     this.prescriptionRequired = false,
     this.inactiveReason,
     this.icon = Icons.medication_liquid_outlined,
+    // --- Customer-facing display fields (shown in the shopping app) ---
+    this.rating = 4.5,
+    this.reviewCount = 0,
+    this.badge,
+    this.packInfo = '',
+    this.imageUrl,
   });
 
   final String id;
@@ -236,10 +242,33 @@ class InventoryProduct {
   final String? inactiveReason;
   final IconData icon;
 
+  // Customer-facing display fields. These have no effect on the inventory
+  // workflow; they decorate the same record when it appears in the shop.
+  final double rating;
+  final int reviewCount;
+  final String? badge; // e.g. NEW / BEST SELLER / LOW STOCK
+  final String packInfo; // e.g. "Strip of 15 tablets"
+  final String? imageUrl;
+
   StockStatus get stockStatus {
     if (stock <= 0) return StockStatus.out;
     if (stock <= lowThreshold) return StockStatus.low;
     return StockStatus.inStock;
+  }
+
+  /// Maps the human category label the marketing head selects onto the
+  /// category id the customer catalogue filters by. Keeps the two roles in
+  /// sync without forcing them to share the exact same string.
+  String get categoryId {
+    switch (category) {
+      case 'Lifesaving Injections':
+        return 'injections';
+      case 'Vaccines':
+        return 'vaccines';
+      case 'Medicine':
+      default:
+        return 'medicine';
+    }
   }
 
   InventoryProduct copyWith({
@@ -263,6 +292,11 @@ class InventoryProduct {
     String? inactiveReason,
     bool clearInactiveReason = false,
     IconData? icon,
+    double? rating,
+    int? reviewCount,
+    String? badge,
+    String? packInfo,
+    String? imageUrl,
   }) {
     return InventoryProduct(
       id: id,
@@ -286,6 +320,11 @@ class InventoryProduct {
       inactiveReason:
           clearInactiveReason ? null : (inactiveReason ?? this.inactiveReason),
       icon: icon ?? this.icon,
+      rating: rating ?? this.rating,
+      reviewCount: reviewCount ?? this.reviewCount,
+      badge: badge ?? this.badge,
+      packInfo: packInfo ?? this.packInfo,
+      imageUrl: imageUrl ?? this.imageUrl,
     );
   }
 }

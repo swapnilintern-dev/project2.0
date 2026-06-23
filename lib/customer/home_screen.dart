@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
+import 'catalog.dart';
 import 'customer_api.dart';
 import 'customer_mock_data.dart';
 import 'customer_models.dart';
@@ -39,6 +40,20 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _load();
+    // Rebuild whenever the shared catalogue/stock changes (marketing adds a
+    // medicine, an order decrements stock, an item is deactivated, …).
+    Catalog.listenable.addListener(_onCatalogChanged);
+  }
+
+  @override
+  void dispose() {
+    Catalog.listenable.removeListener(_onCatalogChanged);
+    super.dispose();
+  }
+
+  void _onCatalogChanged() {
+    if (!mounted) return;
+    setState(() => _products = Catalog.all);
   }
 
   Future<void> _load() async {
@@ -224,7 +239,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _categories() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 20),

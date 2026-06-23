@@ -18,11 +18,11 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import 'catalog.dart';
 import 'customer_models.dart';
 import 'customer_mock_data.dart';
 
@@ -56,29 +56,13 @@ class CustomerApi {
   // PRODUCTS
   // ---------------------------------------------------------------------------
 
-  /// GET /vsArogya/all-products
-  /// Falls back to the local catalogue when the server is unreachable.
-  Future<List<Product>> getProducts() async {
-    try {
-      final res = await _client
-          .get(Uri.parse('$baseUrl/vsArogya/all-products'), headers: _headers)
-          .timeout(_timeout);
-      if (res.statusCode == 200) {
-        final body = jsonDecode(res.body) as Map<String, dynamic>;
-        final list = (body['products'] as List?) ?? const [];
-        final parsed =
-            list.whereType<Map<String, dynamic>>().map(Product.fromJson).toList();
-        if (parsed.isNotEmpty) return parsed;
-      }
-    } on TimeoutException {
-      // ignored — fall through to mock data
-    } on SocketException {
-      // ignored — server not running
-    } catch (_) {
-      // ignored — malformed response
-    }
-    return MockData.products;
-  }
+  /// The live in-app catalogue — a mapped view of the shared product/stock
+  /// store the Marketing Head edits (see [Catalog]). Reads synchronously today;
+  /// kept Future-typed so the call sites don't change when the backend lands.
+  ///
+  /// TODO(backend): GET /vsArogya/all-products and feed the result into the
+  /// shared store instead of seeding it locally, so stock is server-authoritative.
+  Future<List<Product>> getProducts() async => Catalog.all;
 
   /// Promotional banners for the home carousel.
   /// TODO backend: GET /vsArogya/promo-banners (managed by the marketing team).
@@ -103,15 +87,9 @@ class CustomerApi {
     return MockData.banners;
   }
 
-  /// GET /vsArogya/all-products then filter by id.
-  /// (The backend has no single-product route yet — TODO: GET /products/:id.)
-  Future<Product?> getProduct(String id) async {
-    final all = await getProducts();
-    for (final p in all) {
-      if (p.id == id) return p;
-    }
-    return null;
-  }
+  /// A single product from the shared catalogue by id.
+  /// TODO(backend): GET /vsArogya/products/:id.
+  Future<Product?> getProduct(String id) async => Catalog.byId(id);
 
   // ---------------------------------------------------------------------------
   // CART  (POST /vsArogya/add-cart/:id — requires the auth cookie)

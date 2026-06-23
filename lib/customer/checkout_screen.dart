@@ -11,6 +11,7 @@ import 'package:razorpay_flutter/razorpay_flutter.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
+import 'catalog.dart';
 import 'customer_api.dart';
 import 'customer_controllers.dart';
 import 'customer_mock_data.dart';
@@ -153,6 +154,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     if (!mounted) return;
 
     OrdersController.instance.addOrder(placed);
+    // Order confirmed → reduce stock in the shared catalogue store so the
+    // marketing inventory and every shop screen reflect the new quantity.
+    Catalog.decrementForOrder(cart.items);
     cart.clear();
     setState(() => _placing = false);
 

@@ -9,6 +9,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../auth/session.dart';
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_widgets.dart' show maybeExitApp;
 import 'customer_controllers.dart';
@@ -21,7 +22,9 @@ import 'profile_screen.dart';
 class CustomerShell extends StatefulWidget {
   const CustomerShell({super.key, this.onLogout});
 
-  /// Wired by the host to return to the sign-in screen.
+  /// Optional override for the logout action. When omitted, the shell falls
+  /// back to the shared [logout] helper (clears the session + returns to
+  /// sign-in), so it works as a standalone role entry point.
   final VoidCallback? onLogout;
 
   @override
@@ -40,7 +43,10 @@ class _CustomerShellState extends State<CustomerShell> {
       const ProductListScreen(embedded: true),
       CartScreen(embedded: true, onContinueShopping: () => _select(0)),
       const OrdersScreen(embedded: true),
-      ProfileScreen(embedded: true, onLogout: widget.onLogout),
+      ProfileScreen(
+        embedded: true,
+        onLogout: widget.onLogout ?? () => logout(context),
+      ),
     ];
 
     return PopScope(

@@ -10,8 +10,8 @@ import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
+import 'catalog.dart';
 import 'customer_controllers.dart';
-import 'customer_mock_data.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
 
@@ -29,7 +29,7 @@ class OrderDetailsScreen extends StatelessWidget {
 
   void _reorder(BuildContext context, Order order) {
     for (final item in order.items) {
-      final match = MockData.products.where((p) => p.title == item.title);
+      final match = Catalog.all.where((p) => p.title == item.title);
       if (match.isNotEmpty) {
         CartController.instance.add(match.first, quantity: item.quantity);
       }

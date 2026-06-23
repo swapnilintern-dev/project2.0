@@ -8,8 +8,8 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import 'catalog.dart';
 import 'customer_controllers.dart';
-import 'customer_mock_data.dart';
 import 'customer_widgets.dart';
 import 'product_card.dart';
 
@@ -28,10 +28,10 @@ class SavedItemsScreen extends StatelessWidget {
             style: TextStyle(fontWeight: FontWeight.w800)),
       ),
       body: ListenableBuilder(
-        listenable: WishlistController.instance,
+        listenable: Listenable.merge(
+            [WishlistController.instance, Catalog.listenable]),
         builder: (context, _) {
-          final saved =
-              WishlistController.instance.resolve(MockData.products);
+          final saved = WishlistController.instance.resolve(Catalog.all);
           if (saved.isEmpty) {
             return const EmptyState(
               icon: Icons.favorite_border,

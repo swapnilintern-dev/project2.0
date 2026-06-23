@@ -10,8 +10,8 @@ import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
+import 'catalog.dart';
 import 'customer_controllers.dart';
-import 'customer_mock_data.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
 import 'order_details_screen.dart';
@@ -37,7 +37,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   void _reorder(Order order) {
     for (final item in order.items) {
       // Resolve a catalogue product by title so the cart holds a real Product.
-      final match = MockData.products.where((p) => p.title == item.title);
+      final match = Catalog.all.where((p) => p.title == item.title);
       if (match.isNotEmpty) {
         CartController.instance.add(match.first, quantity: item.quantity);
       }

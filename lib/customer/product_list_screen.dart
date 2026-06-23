@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_widgets.dart';
+import 'catalog.dart';
 import 'customer_api.dart';
 import 'customer_mock_data.dart';
 import 'customer_models.dart';
@@ -63,13 +64,21 @@ class _ProductListScreenState extends State<ProductListScreen> {
     _query = widget.initialQuery ?? '';
     _searchCtrl.text = _query;
     _load();
+    // Keep results in sync with the shared catalogue/stock store.
+    Catalog.listenable.addListener(_onCatalogChanged);
   }
 
   @override
   void dispose() {
+    Catalog.listenable.removeListener(_onCatalogChanged);
     _searchCtrl.dispose();
     _searchDebouncer.dispose();
     super.dispose();
+  }
+
+  void _onCatalogChanged() {
+    if (!mounted) return;
+    setState(() => _all = Catalog.all);
   }
 
   Future<void> _load() async {

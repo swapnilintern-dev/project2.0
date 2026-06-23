@@ -10,7 +10,7 @@
 
 import 'package:flutter/material.dart';
 
-import '../sign_in_screen.dart';
+import '../auth/session.dart';
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_widgets.dart' show maybeExitApp, BrandStatusBar;
 import 'dashboard_screen.dart';
@@ -30,12 +30,7 @@ class _MarketingRoleMainState extends State<MarketingRoleMain> {
 
   void _select(int i) => setState(() => _index = i);
 
-  void _logout() {
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const SignInScreen()),
-      (route) => false,
-    );
-  }
+  void _logout() => logout(context);
 
   @override
   Widget build(BuildContext context) {
