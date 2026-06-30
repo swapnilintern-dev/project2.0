@@ -1,3 +1,8 @@
+import dns from "node:dns";
+// Render's network can't reach Gmail SMTP over IPv6 (ENETUNREACH on :465).
+// Prefer IPv4 so nodemailer connects. Must run before any DNS lookups.
+dns.setDefaultResultOrder("ipv4first");
+
 import express, { urlencoded } from "express";
 import dotenv  from "dotenv" ;
 import cookieParser from "cookie-parser";
@@ -9,6 +14,8 @@ import cardRouter from "./routes/cartRoute.js" ;
 import orderRouter from "./routes/orderRoute.js" ;
 import adminRouter from "./routes/adminRoute.js" ;
 import paymentRouter from "./routes/paymentRoute.js"
+import bannerRouter from "./routes/bannerRoute.js" ;
+import couponRouter from "./routes/couponRoute.js" ;
 
 const app = express() ;
 
@@ -38,11 +45,13 @@ app.use('/vsArogya' , cardRouter  ) ;
 app.use('/vsArogya' , orderRouter ) ;
 app.use('/vsArogya' , adminRouter ) ;
 app.use('/vsArogya' , paymentRouter ) ;
+app.use('/vsArogya' , bannerRouter ) ;
+app.use('/vsArogya' , couponRouter ) ;
 
 
 
 app.get('/' , (req , res ) =>{
-    res.send("<h1> This is from Client side </h1>") ;
+    res.send("<h1> This is from server side </h1>") ;
 })
 
 app.listen(port , () =>{ 
