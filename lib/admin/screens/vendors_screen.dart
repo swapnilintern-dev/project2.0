@@ -11,6 +11,7 @@
 import 'package:flutter/material.dart';
 
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../admin_api.dart';
 import '../admin_common.dart';
 import '../admin_main.dart';
 import '../admin_models.dart';
@@ -24,12 +25,36 @@ class AdminVendorsScreen extends StatefulWidget {
 }
 
 class _AdminVendorsScreenState extends State<AdminVendorsScreen> {
-  // TODO: GET /api/admin/vendors
-  final List<Vendor> _vendors = kVendors;
+  final AdminApi _api = AdminApi();
+
+  // Seeded demo vendors + live pending vendors loaded from the backend.
+  final List<Vendor> _vendors = List.of(kVendors);
   int _tab = 0;
   String _query = '';
+  bool _loading = false;
 
   static const _tabs = ['All', 'Active', 'Pending', 'Review', 'Suspended'];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPending();
+  }
+
+  /// Pulls vendors awaiting approval from the backend and adds them to the top.
+  Future<void> _loadPending() async {
+    setState(() => _loading = true);
+    final pending = await _api.getPendingVendors();
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      if (pending != null) {
+        // Drop any previously-loaded backend vendors, then re-add fresh.
+        _vendors.removeWhere((v) => v.id.isNotEmpty);
+        _vendors.insertAll(0, pending);
+      }
+    });
+  }
 
   List<Vendor> get _filtered {
     Iterable<Vendor> list = _vendors;
@@ -59,9 +84,49 @@ class _AdminVendorsScreenState extends State<AdminVendorsScreen> {
       context,
       VendorReviewScreen(vendor: v),
     );
-    if (result != null && mounted) {
-      setState(() => v.status = result);
+    if (result == null || !mounted) return;
+
+    // For a backend-sourced (pending) vendor, persist the decision to the
+    // server: approve emails their login credentials; reject marks them
+    // rejected and emails them.
+    if (v.id.isNotEmpty) {
+      if (result == VendorStatus.active) {
+        final ok = await _api.approveVendor(v.id);
+        if (!mounted) return;
+        if (ok) {
+          adminSnack(context, '${v.name} approved — credentials emailed');
+        } else {
+          adminSnack(context, 'Approval failed — try again',
+              color: AdminColors.red);
+          return; // keep it pending when the server call fails
+        }
+      } else if (result == VendorStatus.suspended) {
+        final ok = await _api.rejectVendor(v.id);
+        if (!mounted) return;
+        if (ok) {
+          adminSnack(context, '${v.name} rejected');
+        } else {
+          adminSnack(context, 'Reject failed — try again',
+              color: AdminColors.red);
+          return;
+        }
+      }
     }
+    setState(() => v.status = result);
+  }
+
+  /// Inline reject from a vendor card (also persists to the backend).
+  Future<void> _reject(Vendor v) async {
+    if (v.id.isNotEmpty) {
+      final ok = await _api.rejectVendor(v.id);
+      if (!mounted) return;
+      if (!ok) {
+        adminSnack(context, 'Reject failed — try again', color: AdminColors.red);
+        return;
+      }
+      adminSnack(context, '${v.name} rejected');
+    }
+    setState(() => v.status = VendorStatus.suspended);
   }
 
   @override
@@ -75,9 +140,27 @@ class _AdminVendorsScreenState extends State<AdminVendorsScreen> {
           children: [
             AdminScreenHeader(
               title: 'Vendors',
-              trailing: StatusBadge(
-                label: '$_pendingCount pending',
-                color: AdminColors.orange,
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  StatusBadge(
+                    label: '$_pendingCount pending',
+                    color: AdminColors.orange,
+                  ),
+                  const SizedBox(width: 6),
+                  _loading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : IconButton(
+                          icon: const Icon(Icons.refresh, size: 20),
+                          tooltip: 'Refresh',
+                          onPressed: _loadPending,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                ],
               ),
             ),
             Padding(
@@ -104,8 +187,7 @@ class _AdminVendorsScreenState extends State<AdminVendorsScreen> {
                       itemBuilder: (_, i) => _VendorCard(
                         vendor: list[i],
                         onOpen: () => _openReview(list[i]),
-                        onReject: () => setState(
-                            () => list[i].status = VendorStatus.suspended),
+                        onReject: () => _reject(list[i]),
                       ),
                     ),
             ),

@@ -6,6 +6,8 @@
 // Embedded as a tab inside the shell.
 // =============================================================================
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
@@ -32,6 +34,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
   void initState() {
     super.initState();
     OrdersController.instance.ensureSeeded();
+    // Pull the latest orders from the backend (falls back to the seed on fail).
+    unawaited(OrdersController.instance.refresh());
   }
 
   void _reorder(Order order) {

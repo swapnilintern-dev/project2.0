@@ -1,80 +1,58 @@
 // =============================================================================
-// MediCaPlus — Catalog Bridge (single source of truth for products/stock)
+// MediCaPlus — Catalog (single source of truth for the customer shop)
 //
-// The shopping app does NOT keep its own product list. It reads a live, mapped
-// view of the SAME store the Marketing Head edits
-// (MarketingProductsController). So:
+// The shop reads every product through this facade. The list is loaded from
+// the backend (GET /vsArogya/all-products) by CustomerApi.getProducts(), which
+// calls [setProducts] to fill this cache. Screens observe [listenable] and read
+// [all] / [byId], so they don't care where the data came from.
 //
-//   • A medicine the marketing team adds / activates appears in the shop the
-//     moment they save it.
-//   • When a customer order is confirmed, stock is decremented in that one
-//     store, and every screen observing it (shop + inventory) updates together.
-//
-// This file is the only place the customer layer reaches into the marketing
-// layer, so the dependency stays contained. When the backend lands, swap the
-// body of these methods to hit the server and keep the same signatures — the
-// screens won't need to change.
+// NOTE: This used to be a live view of the Marketing inventory store. The app
+// has been switched to make the BACKEND the product source of truth, so the
+// marketing dependency was removed. The backend product model has no per-item
+// stock field, so [decrementForOrder] is a no-op kept for API compatibility.
 // =============================================================================
 
 import 'package:flutter/foundation.dart';
 
-import '../marketing/marketing_controllers.dart';
-import '../marketing/marketing_models.dart';
 import 'customer_models.dart';
 
 class Catalog {
   Catalog._();
 
-  static final MarketingProductsController _store =
-      MarketingProductsController.instance;
+  /// Notifier the screens listen to so they rebuild when the list changes.
+  static final ChangeNotifier _notifier = _CatalogNotifier();
+  static Listenable get listenable => _notifier;
 
-  /// Screens listen to this to rebuild when products or stock change.
-  static Listenable get listenable => _store;
+  /// In-memory cache of products fetched from the backend.
+  static List<Product> _products = const [];
 
-  /// Every active product, as customer [Product]s. Out-of-stock-but-active
-  /// items stay in the list (shown as "Out of Stock") rather than vanishing.
-  static List<Product> get all =>
-      _store.activeProducts.map(_toProduct).toList();
+  /// Every product currently loaded from the backend.
+  static List<Product> get all => List.unmodifiable(_products);
 
-  /// The current shop record for [id], or null if it's gone / deactivated.
+  /// Replaces the cache and notifies listeners. Called by CustomerApi after a
+  /// successful GET /all-products (or with mock data as an offline fallback).
+  static void setProducts(List<Product> products) {
+    _products = List<Product>.from(products);
+    (_notifier as _CatalogNotifier).bump();
+  }
+
+  /// The product with [id] from the cache, or null if it isn't loaded.
   static Product? byId(String id) {
-    final inv = _store.byId(id);
-    if (inv == null || !inv.active) return null;
-    return _toProduct(inv);
-  }
-
-  /// Decrements stock for a confirmed order. Called from checkout once the
-  /// order is placed (COD) or payment succeeds (Razorpay).
-  static void decrementForOrder(List<CartItem> items) {
-    final quantities = <String, int>{};
-    for (final item in items) {
-      quantities.update(
-        item.product.id,
-        (q) => q + item.quantity,
-        ifAbsent: () => item.quantity,
-      );
+    for (final p in _products) {
+      if (p.id == id) return p;
     }
-    _store.decrementForOrder(quantities);
+    return null;
   }
 
-  /// Maps an inventory record onto the customer-facing product model.
-  static Product _toProduct(InventoryProduct p) {
-    return Product(
-      id: p.id,
-      title: p.name,
-      brand: p.brand,
-      description: p.description,
-      price: p.price,
-      mrp: p.mrp,
-      category: p.categoryId,
-      imageUrl: p.imageUrl,
-      icon: p.icon,
-      rating: p.rating,
-      reviewCount: p.reviewCount,
-      inStock: p.stock > 0,
-      stockCount: p.stock,
-      badge: p.badge,
-      packInfo: p.packInfo,
-    );
+  /// No-op: the backend product model does not track per-product stock, so
+  /// there is nothing to decrement. Kept so checkout can keep calling it
+  /// without change. (Stock management lives on the server when it's added.)
+  static void decrementForOrder(List<CartItem> items) {
+    // Intentionally empty — see file header.
   }
+}
+
+/// Tiny ChangeNotifier wrapper so [Catalog] can fire change notifications.
+class _CatalogNotifier extends ChangeNotifier {
+  void bump() => notifyListeners();
 }

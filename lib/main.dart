@@ -26,7 +26,7 @@ class MediCaPlusApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'MediCaPlus',
+      title: 'Vs Arogya',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       // Dark theme is fully built but kept staged: screens still hardcode

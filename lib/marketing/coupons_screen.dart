@@ -6,27 +6,51 @@
 // opens the Create Campaign screen. Uses the purple marketing accent.
 // =============================================================================
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
-import '../customer/customer_widgets.dart' show EmptyState;
+import '../customer/customer_widgets.dart' show EmptyState, showAppSnack;
 import 'marketing_controllers.dart';
 import 'marketing_models.dart';
 import 'create_campaign_screen.dart';
+import 'banners_screen.dart';
 
-class MarketingCouponsScreen extends StatelessWidget {
+class MarketingCouponsScreen extends StatefulWidget {
   const MarketingCouponsScreen({super.key});
 
+  @override
+  State<MarketingCouponsScreen> createState() => _MarketingCouponsScreenState();
+}
+
+class _MarketingCouponsScreenState extends State<MarketingCouponsScreen> {
   MarketingCouponsController get _controller =>
       MarketingCouponsController.instance;
 
   @override
+  void initState() {
+    super.initState();
+    unawaited(_controller.refresh());
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Column(
-        children: [
-          _header(context),
+    return Scaffold(
+      backgroundColor: AppColors.pageBg,
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _openCreateCoupon,
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add),
+        label: const Text('New Coupon',
+            style: TextStyle(fontWeight: FontWeight.w700)),
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            _header(context),
           Expanded(
             child: ListenableBuilder(
               listenable: _controller,
@@ -52,6 +76,7 @@ class MarketingCouponsScreen extends StatelessWidget {
             ),
           ),
         ],
+      ),
       ),
     );
   }
@@ -84,6 +109,14 @@ class MarketingCouponsScreen extends StatelessWidget {
               ],
             ),
           ),
+          IconButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const MarketingBannersScreen()),
+            ),
+            icon: const Icon(Icons.view_carousel_outlined, color: Colors.white),
+            tooltip: 'Manage Banners',
+          ),
+          const SizedBox(width: 2),
           ElevatedButton.icon(
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const CreateCampaignScreen()),
@@ -102,6 +135,135 @@ class MarketingCouponsScreen extends StatelessWidget {
       ),
     );
   }
+
+  /// Bottom-sheet form to create a coupon on the backend.
+  Future<void> _openCreateCoupon() async {
+    final codeCtrl = TextEditingController();
+    final descCtrl = TextEditingController();
+    final pctCtrl = TextEditingController();
+    final maxCtrl = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    bool saving = false;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheet) => Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(sheetCtx).viewInsets.bottom + 16,
+            left: 16,
+            right: 16,
+            top: 18,
+          ),
+          child: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('New Coupon',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: codeCtrl,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: _dec('Code (e.g. BULK20)'),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Code is required' : null,
+                ),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: pctCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: _dec('Discount %'),
+                  validator: (v) {
+                    final n = double.tryParse((v ?? '').trim());
+                    if (n == null || n <= 0 || n > 100) return 'Enter 1–100';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: maxCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: _dec('Max discount ₹ (optional)'),
+                ),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: descCtrl,
+                  decoration: _dec('Description (optional)'),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton(
+                    onPressed: saving
+                        ? null
+                        : () async {
+                            if (!(formKey.currentState?.validate() ?? false)) {
+                              return;
+                            }
+                            setSheet(() => saving = true);
+                            final err = await _controller.addRemote(
+                              code: codeCtrl.text.trim().toUpperCase(),
+                              description: descCtrl.text.trim(),
+                              percentOff: double.parse(pctCtrl.text.trim()),
+                              maxDiscount: maxCtrl.text.trim().isEmpty
+                                  ? null
+                                  : double.tryParse(maxCtrl.text.trim()),
+                            );
+                            if (!sheetCtx.mounted) return;
+                            setSheet(() => saving = false);
+                            if (err == null) {
+                              Navigator.pop(sheetCtx);
+                              if (mounted) showAppSnack(context, 'Coupon created');
+                            } else {
+                              showAppSnack(sheetCtx, err, success: false);
+                            }
+                          },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: Text(saving ? 'Creating…' : 'Create Coupon',
+                        style: const TextStyle(
+                            fontSize: 15, fontWeight: FontWeight.w700)),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  InputDecoration _dec(String hint) => InputDecoration(
+        hintText: hint,
+        filled: true,
+        fillColor: AppColors.pageBg,
+        isDense: true,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.border),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.primary),
+        ),
+      );
 }
 
 class _CouponCard extends StatelessWidget {

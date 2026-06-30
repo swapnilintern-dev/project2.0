@@ -7,6 +7,8 @@
 // inactive-reason banner. An "Add Medicine" FAB opens the Add Medicine form.
 // =============================================================================
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
@@ -33,6 +35,13 @@ class _MarketingProductsScreenState extends State<MarketingProductsScreen> {
 
   MarketingProductsController get _controller =>
       MarketingProductsController.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    // Load the live inventory from the backend (falls back to seed on failure).
+    unawaited(_controller.refresh());
+  }
 
   @override
   Widget build(BuildContext context) {

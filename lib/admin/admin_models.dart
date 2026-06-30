@@ -162,6 +162,7 @@ class VendorDoc {
 
 class Vendor {
   Vendor({
+    this.id = '',
     required this.name,
     required this.legalName,
     required this.city,
@@ -173,6 +174,8 @@ class Vendor {
     required this.docs,
   });
 
+  /// Backend _id (empty for the seeded demo vendors). Used to approve via API.
+  final String id;
   final String name;
   final String legalName;
   final String city;

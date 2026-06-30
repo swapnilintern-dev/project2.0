@@ -30,6 +30,12 @@ class _MarketingOrdersScreenState extends State<MarketingOrdersScreen> {
   MarketingOrdersController get _controller => MarketingOrdersController.instance;
 
   @override
+  void initState() {
+    super.initState();
+    _controller.refresh();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return SafeArea(
       child: Column(

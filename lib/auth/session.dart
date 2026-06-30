@@ -15,6 +15,7 @@
 import 'package:flutter/material.dart';
 
 import '../customer/customer_controllers.dart';
+import '../services/auth_service.dart';
 import '../sign_in_screen.dart';
 
 /// Logs the current user out of any role and returns to the sign-in screen.
@@ -23,6 +24,8 @@ void logout(BuildContext context) {
   // (Marketing/Admin data is global demo catalog seeded once, not per-user, so
   // it is intentionally left intact; Delivery re-seeds on next shell init.)
   resetCustomerSession();
+  // Drop the captured login cookie so the next account starts unauthenticated.
+  AuthService.clearSession();
 
   Navigator.of(context).pushAndRemoveUntil(
     MaterialPageRoute(builder: (_) => const SignInScreen()),

@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import '../auth/session.dart';
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_widgets.dart' show maybeExitApp, BrandStatusBar;
+import 'marketing_controllers.dart';
 import 'dashboard_screen.dart';
 import 'orders_screen.dart';
 import 'products_screen.dart';
@@ -27,6 +28,15 @@ class MarketingRoleMain extends StatefulWidget {
 
 class _MarketingRoleMainState extends State<MarketingRoleMain> {
   int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Warm all tabs (incl. the dashboard stats) with live backend data on login.
+    MarketingProductsController.instance.refresh();
+    MarketingCouponsController.instance.refresh();
+    MarketingOrdersController.instance.refresh();
+  }
 
   void _select(int i) => setState(() => _index = i);
 

@@ -137,8 +137,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
 
+    // Create the order on the backend (built from the synced server cart) and
+    // record the payment method. Falls back to a locally-generated id so the
+    // flow still works offline / on web / when not logged in.
+    String orderId = 'MCP-${DateTime.now().millisecondsSinceEpoch % 100000}';
+    final backendId = await _api.placeOrderFromCart(_address);
+    if (backendId != null) {
+      orderId = backendId;
+      await _api.payForOrder(backendId, method: _payment);
+    }
+
     final order = Order(
-      id: 'MCP-${DateTime.now().millisecondsSinceEpoch % 100000}',
+      id: orderId,
       placedAt: DateTime.now(),
       status: OrderStatus.placed,
       items: cart.items.map(OrderItem.fromCartItem).toList(),
@@ -150,12 +160,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       discount: cart.discount,
     );
 
-    final placed = await _api.placeOrder(order);
     if (!mounted) return;
 
-    OrdersController.instance.addOrder(placed);
-    // Order confirmed → reduce stock in the shared catalogue store so the
-    // marketing inventory and every shop screen reflect the new quantity.
+    OrdersController.instance.addOrder(order);
     Catalog.decrementForOrder(cart.items);
     cart.clear();
     setState(() => _placing = false);
@@ -163,7 +170,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     // Replace checkout + cart with a fresh order-details view.
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => OrderDetailsScreen(orderId: placed.id, justPlaced: true),
+        builder: (_) => OrderDetailsScreen(orderId: order.id, justPlaced: true),
       ),
     );
   }

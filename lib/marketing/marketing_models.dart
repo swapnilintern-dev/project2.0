@@ -351,6 +351,14 @@ class MarketingCoupon {
   final bool active;
   final bool expired;
 
+  factory MarketingCoupon.fromJson(Map<String, dynamic> j) => MarketingCoupon(
+        code: (j['code'] ?? '').toString(),
+        description: (j['description'] ?? '').toString(),
+        redemptions: (j['redemptions'] as num?)?.toInt() ?? 0,
+        active: j['active'] is bool ? j['active'] as bool : true,
+        expired: j['expired'] is bool ? j['expired'] as bool : false,
+      );
+
   MarketingCoupon copyWith({bool? active}) => MarketingCoupon(
         code: code,
         description: description,

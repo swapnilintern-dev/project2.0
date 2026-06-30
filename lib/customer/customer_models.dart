@@ -72,7 +72,7 @@ class Product {
       description: (json['description'] ?? '').toString(),
       price: _toDouble(json['price']),
       mrp: json['mrp'] == null ? null : _toDouble(json['mrp']),
-      category: (json['category'] ?? 'General').toString(),
+      category: _normalizeCategory(json['category']),
       imageUrl: image,
       rating: json['rating'] == null ? 4.5 : _toDouble(json['rating']),
       reviewCount: _toInt(json['reviewCount']),
@@ -455,6 +455,13 @@ class Coupon {
   final double percentOff;
   final double? maxDiscount;
 
+  factory Coupon.fromJson(Map<String, dynamic> j) => Coupon(
+        code: (j['code'] ?? '').toString(),
+        description: (j['description'] ?? '').toString(),
+        percentOff: _toDouble(j['percentOff']),
+        maxDiscount: j['maxDiscount'] == null ? null : _toDouble(j['maxDiscount']),
+      );
+
   /// Computes the rupee discount for a given [subtotal].
   double discountFor(double subtotal) {
     var value = subtotal * percentOff / 100;
@@ -476,6 +483,17 @@ int _toInt(Object? v) {
   if (v is num) return v.toInt();
   if (v is String) return int.tryParse(v) ?? 0;
   return 0;
+}
+
+/// Normalises a category (a human label like "Medicine" or an id like
+/// "medicine") to the canonical id the category filter chips use
+/// ('injections' / 'vaccines' / 'medicine').
+String _normalizeCategory(Object? v) {
+  final s = (v ?? '').toString().trim().toLowerCase();
+  if (s.contains('inject')) return 'injections';
+  if (s.contains('vaccin')) return 'vaccines';
+  if (s.contains('medic')) return 'medicine';
+  return s.isEmpty ? 'medicine' : s;
 }
 
 /// Parses a hex colour string ("#4CAF82", "4CAF82" or "0xFF4CAF82").

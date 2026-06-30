@@ -7,7 +7,10 @@
 // passed). Saving routes through MarketingProductsController.
 // =============================================================================
 
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
@@ -45,6 +48,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
 
   late String _category;
   late bool _active;
+
+  /// The picked product image (required when adding; optional when editing).
+  XFile? _image;
+  bool _saving = false;
 
   bool get _isEdit => widget.existing != null;
 
@@ -106,6 +113,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
           children: [
             _introCard(),
+            const SizedBox(height: 16),
+            _sectionHeader(Icons.image_outlined, 'Product Image'),
+            const SizedBox(height: 8),
+            _imageCard(),
             const SizedBox(height: 16),
             _sectionHeader(Icons.info_outline, 'Basic Details'),
             const SizedBox(height: 8),
@@ -299,10 +310,14 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   // Submit + validation
   // ---------------------------------------------------------------------------
 
-  void _submit() {
+  Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) {
       showAppSnack(context, 'Please fix the highlighted fields',
           success: false);
+      return;
+    }
+    if (!_isEdit && _image == null) {
+      showAppSnack(context, 'Please add a product image', success: false);
       return;
     }
     final existing = widget.existing;
@@ -331,14 +346,39 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     );
 
     final controller = MarketingProductsController.instance;
+    setState(() => _saving = true);
+
     if (_isEdit) {
-      controller.update(product);
-      showAppSnack(context, '${product.name} updated');
-    } else {
-      controller.add(product);
-      showAppSnack(context, '${product.name} added to inventory');
+      // Sync the edit to the backend (sends a new image only if one was picked).
+      final ok = await controller.updateRemote(product, image: _image);
+      if (!mounted) return;
+      setState(() => _saving = false);
+      if (ok) {
+        showAppSnack(context, '${product.name} updated');
+        Navigator.of(context).pop();
+      } else {
+        showAppSnack(
+          context,
+          'Could not update. Check your connection and try again.',
+          success: false,
+        );
+      }
+      return;
     }
-    Navigator.of(context).pop();
+
+    final ok = await controller.addRemote(product, _image!);
+    if (!mounted) return;
+    setState(() => _saving = false);
+    if (ok) {
+      showAppSnack(context, '${product.name} added to inventory');
+      Navigator.of(context).pop();
+    } else {
+      showAppSnack(
+        context,
+        'Could not add product. Check your connection and try again.',
+        success: false,
+      );
+    }
   }
 
   String _generateCode(String name) {
@@ -444,6 +484,100 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     );
   }
 
+  Widget _imageCard() {
+    final existingUrl = widget.existing?.imageUrl;
+    Widget preview;
+    if (_image != null) {
+      preview = FutureBuilder<Uint8List>(
+        future: _image!.readAsBytes(),
+        builder: (context, snap) => snap.hasData
+            ? Image.memory(snap.data!,
+                fit: BoxFit.cover, width: double.infinity, height: 160)
+            : const SizedBox(
+                height: 160,
+                child: Center(child: CircularProgressIndicator()),
+              ),
+      );
+    } else if (existingUrl != null && existingUrl.isNotEmpty) {
+      preview = Image.network(existingUrl,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: 160,
+          errorBuilder: (_, _, _) => _imagePlaceholder());
+    } else {
+      preview = _imagePlaceholder();
+    }
+
+    return _card(
+      child: Column(
+        children: [
+          ClipRRect(borderRadius: BorderRadius.circular(12), child: preview),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _pickImage(ImageSource.camera),
+                  icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                  label: const Text('Camera'),
+                  style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.darkGreen),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _pickImage(ImageSource.gallery),
+                  icon: const Icon(Icons.photo_library_outlined, size: 18),
+                  label: const Text('Gallery'),
+                  style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.darkGreen),
+                ),
+              ),
+            ],
+          ),
+          if (!_isEdit)
+            const Padding(
+              padding: EdgeInsets.only(top: 6, left: 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Image is required for a new medicine',
+                    style:
+                        TextStyle(fontSize: 11.5, color: AppColors.greyText)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _imagePlaceholder() => Container(
+        height: 160,
+        width: double.infinity,
+        color: AppColors.pageBg,
+        child: const Center(
+          child: Icon(Icons.add_photo_alternate_outlined,
+              size: 44, color: AppColors.greyText),
+        ),
+      );
+
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final picker = ImagePicker();
+      final file = await picker.pickImage(
+        source: source,
+        maxWidth: 1200,
+        maxHeight: 1200,
+        imageQuality: 85,
+      );
+      if (file != null) setState(() => _image = file);
+    } catch (e) {
+      if (mounted) {
+        showAppSnack(context, 'Could not open ${source.name}', success: false);
+      }
+    }
+  }
+
   Widget _sectionHeader(IconData icon, String title) {
     return Row(
       children: [
@@ -530,9 +664,18 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       width: double.infinity,
       height: 54,
       child: ElevatedButton.icon(
-        onPressed: _submit,
-        icon: Icon(_isEdit ? Icons.save_outlined : Icons.add),
-        label: Text(_isEdit ? 'Save Changes' : 'Add to Inventory',
+        onPressed: _saving ? null : _submit,
+        icon: _saving
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2.5, color: Colors.white))
+            : Icon(_isEdit ? Icons.save_outlined : Icons.add),
+        label: Text(
+            _saving
+                ? 'Saving…'
+                : (_isEdit ? 'Save Changes' : 'Add to Inventory'),
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primary,

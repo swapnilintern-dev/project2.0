@@ -7,8 +7,13 @@
 // without a backend; swap the seeds for an API repository later.
 // =============================================================================
 
-import 'package:flutter/material.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart' show XFile;
+
+import '../customer/customer_models.dart' show PromoBanner;
+import 'marketing_api.dart';
 import 'marketing_models.dart';
 
 /// Incoming orders + the fulfilment pipeline.
@@ -16,9 +21,23 @@ class MarketingOrdersController extends ChangeNotifier {
   MarketingOrdersController._();
   static final MarketingOrdersController instance = MarketingOrdersController._();
 
+  final MarketingOrdersApi _api = MarketingOrdersApi();
+
   final List<MarketingOrder> _orders = _seed();
 
   List<MarketingOrder> get orders => List.unmodifiable(_orders);
+
+  /// Loads incoming orders from the backend (GET /all-orders). Keeps the seed
+  /// on failure so the screen is never empty offline.
+  Future<void> refresh() async {
+    final backend = await _api.getOrders();
+    if (backend != null) {
+      _orders
+        ..clear()
+        ..addAll(backend);
+      notifyListeners();
+    }
+  }
 
   List<MarketingOrder> byStatus(MarketingOrderStatus status) =>
       _orders.where((o) => o.status == status).toList();
@@ -33,7 +52,9 @@ class MarketingOrdersController extends ChangeNotifier {
     return null;
   }
 
-  /// Advances an order to the next pipeline stage (Accept -> Packing, etc.).
+  /// Advances an order to the next pipeline stage (Accept -> Packing, etc.) and
+  /// persists it to the backend where a matching status update exists.
+  /// "Ready" (Pack) is a UI-only step with no backend equivalent.
   void advance(String id) {
     final i = _orders.indexWhere((o) => o.id == id);
     if (i < 0) return;
@@ -41,6 +62,19 @@ class MarketingOrdersController extends ChangeNotifier {
     if (next == null) return;
     _orders[i] = _orders[i].copyWith(status: next);
     notifyListeners();
+    switch (next) {
+      case MarketingOrderStatus.packing:
+        unawaited(_api.confirmOrder(id));
+        break;
+      case MarketingOrderStatus.shipped:
+        unawaited(_api.shipOrder(id));
+        break;
+      case MarketingOrderStatus.done:
+        unawaited(_api.deliverOrder(id));
+        break;
+      default:
+        break; // "ready" — no backend stage
+    }
   }
 
   static List<MarketingOrder> _seed() {
@@ -187,9 +221,52 @@ class MarketingProductsController extends ChangeNotifier {
   static final MarketingProductsController instance =
       MarketingProductsController._();
 
+  final MarketingApi _api = MarketingApi();
+
   final List<InventoryProduct> _products = _seed();
 
   List<InventoryProduct> get products => List.unmodifiable(_products);
+
+  /// Loads the live inventory from the backend (GET /all-products) and replaces
+  /// the local seed. On failure (offline) the seed is kept so the screen is
+  /// never empty. Call from the products screen on init / after adding.
+  Future<void> refresh() async {
+    final backend = await _api.getProducts();
+    if (backend != null) {
+      _products
+        ..clear()
+        ..addAll(backend);
+      notifyListeners();
+    }
+  }
+
+  /// Adds a product to the backend (with its image), then refreshes the list so
+  /// the new product (and its server id + image url) shows. Returns true on
+  /// success; false lets the caller surface an error.
+  Future<bool> addRemote(InventoryProduct product, XFile image) async {
+    final ok = await _api.addProduct(product, image);
+    if (ok) await refresh();
+    return ok;
+  }
+
+  /// Updates a product on the backend (optionally with a new image), then
+  /// refreshes. Falls back to a local update if the backend is unreachable.
+  Future<bool> updateRemote(InventoryProduct product, {XFile? image}) async {
+    final ok = await _api.updateProduct(product, image: image);
+    if (ok) {
+      await refresh();
+    } else {
+      update(product);
+    }
+    return ok;
+  }
+
+  /// Deletes a product on the backend, then refreshes. Offline-safe.
+  Future<bool> deleteRemote(String id) async {
+    final ok = await _api.deleteProduct(id);
+    if (ok) await refresh();
+    return ok;
+  }
 
   /// The products the customer shop should display: only those the marketing
   /// head has marked active. Out-of-stock-but-active items stay in the list so
@@ -223,6 +300,8 @@ class MarketingProductsController extends ChangeNotifier {
       clearInactiveReason: becomingActive,
     );
     notifyListeners();
+    // Persist the active flag to the backend (offline-safe).
+    unawaited(_api.setActive(id, becomingActive));
   }
 
   /// Adds a freshly created medicine to the top of the inventory.
@@ -456,20 +535,59 @@ class MarketingCouponsController extends ChangeNotifier {
   static final MarketingCouponsController instance =
       MarketingCouponsController._();
 
+  final CouponApi _api = CouponApi();
+
   final List<MarketingCoupon> _coupons = _seed();
 
   List<MarketingCoupon> get coupons => List.unmodifiable(_coupons);
 
   int get activeCount => _coupons.where((c) => c.active && !c.expired).length;
 
+  /// Loads coupons from the backend, replacing the local seed (kept on failure).
+  Future<void> refresh() async {
+    final backend = await _api.getCoupons();
+    if (backend != null) {
+      _coupons
+        ..clear()
+        ..addAll(backend);
+      notifyListeners();
+    }
+  }
+
   void toggleActive(String code) {
     final i = _coupons.indexWhere((c) => c.code == code);
     if (i < 0 || _coupons[i].expired) return;
     _coupons[i] = _coupons[i].copyWith(active: !_coupons[i].active);
     notifyListeners();
+    unawaited(_api.toggleCoupon(code)); // persist (offline-safe)
   }
 
-  /// Adds a coupon created from a campaign to the top of the list.
+  /// Creates a coupon on the backend, then refreshes. Returns null on success,
+  /// or a user-facing error message (e.g. "Coupon code already exists").
+  Future<String?> addRemote({
+    required String code,
+    String description = '',
+    required double percentOff,
+    double? maxDiscount,
+  }) async {
+    final err = await _api.addCoupon(
+      code: code,
+      description: description,
+      percentOff: percentOff,
+      maxDiscount: maxDiscount,
+    );
+    if (err == null) await refresh();
+    return err;
+  }
+
+  /// Deletes a coupon on the backend, then refreshes.
+  Future<bool> removeRemote(String code) async {
+    final ok = await _api.deleteCoupon(code);
+    if (ok) await refresh();
+    return ok;
+  }
+
+  /// Adds a coupon to the local list (used by the campaign flow / fallback).
   void add(MarketingCoupon coupon) {
     _coupons.insert(0, coupon);
     notifyListeners();
@@ -500,4 +618,44 @@ class MarketingCouponsController extends ChangeNotifier {
           expired: true,
         ),
       ];
+}
+
+/// Promo banners shown on the customer home carousel. Backed by the backend
+/// (GET/POST/DELETE /promo-banners) so marketing edits reach the shop.
+class MarketingBannersController extends ChangeNotifier {
+  MarketingBannersController._();
+  static final MarketingBannersController instance =
+      MarketingBannersController._();
+
+  final BannerApi _api = BannerApi();
+
+  List<PromoBanner> _banners = const [];
+  List<PromoBanner> get banners => List.unmodifiable(_banners);
+
+  bool _loading = false;
+  bool get loading => _loading;
+
+  /// Loads banners from the backend.
+  Future<void> refresh() async {
+    _loading = true;
+    notifyListeners();
+    final fetched = await _api.getBanners();
+    if (fetched != null) _banners = fetched;
+    _loading = false;
+    notifyListeners();
+  }
+
+  /// Creates a banner on the backend, then refreshes. Returns true on success.
+  Future<bool> add(PromoBanner banner) async {
+    final ok = await _api.addBanner(banner);
+    if (ok) await refresh();
+    return ok;
+  }
+
+  /// Deletes a banner on the backend, then refreshes.
+  Future<bool> remove(String id) async {
+    final ok = await _api.deleteBanner(id);
+    if (ok) await refresh();
+    return ok;
+  }
 }

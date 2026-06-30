@@ -9,23 +9,39 @@ const productSchema = new mongoose.Schema({
     } ,
     description : {
         type : String ,
-        required : true 
+        default : ""
     },
-
     price :{
         type : Number ,
         required : true 
     },
-    // stock:{
-    //     type : Number ,
-    //     required : true ,
-    //     default : 0 
-    // } ,
     category :{
         type : String ,
         required : true,
         // enum:[ "", "" , ""]
     },
+    cold_stored :{
+        type :String
+    },
+
+    // --- Inventory / display fields (managed by the marketing team) ---
+    mrp: { type: Number },
+    brand: { type: String, default: "" },
+    code: { type: String, default: "" },
+    manufacturer: { type: String, default: "" },
+    marketedBy: { type: String, default: "" },
+    stock: { type: Number, default: 0 },
+    active: { type: Boolean, default: true },
+    packOf: { type: Number, default: 1 },
+    hsnCode: { type: String, default: "" },
+    gstPercent: { type: Number, default: 0 },
+    discountPercent: { type: Number, default: 0 },
+    lowThreshold: { type: Number, default: 10 },
+    prescriptionRequired: { type: Boolean, default: false },
+    rating: { type: Number, default: 4.5 },
+    reviewCount: { type: Number, default: 0 },
+    badge: { type: String },
+    packInfo: { type: String, default: "" },
     image:[
         {
             url : String ,

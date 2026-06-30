@@ -4,9 +4,7 @@ import getDatauri from "../utils/datauri.js";
 import sharp from "sharp";
 import multer from "multer";
 import jwt from "jsonwebtoken";
-
-
-
+import nodmailer from "nodemailer"
 
 
 export const registerVendor = async (req, res) => {
@@ -70,7 +68,7 @@ export const registerVendor = async (req, res) => {
 
     // GST PDF Upload
     if (gst_pdf) {
-      const gstUri = getDatauri(gst_pdf); 
+      const gstUri = getDatauri(gst_pdf);
 
 
       gstUpload = await cloudinary.uploader.upload(gstUri, {
@@ -81,7 +79,7 @@ export const registerVendor = async (req, res) => {
       });
     }
 
-console.log("auto is :",gstUpload )
+    console.log("auto is :", gstUpload)
 
     // Drug License PDF Upload
     if (drug_lic_copy) {
@@ -95,11 +93,12 @@ console.log("auto is :",gstUpload )
       });
     }
 
-    console.log("raw is:" , drugUpload ) ;
+    console.log("raw is:", drugUpload);
 
     let autoPassword = Math.floor(1000 + Math.random() * 9000);
 
     console.log("auto generated password is :", autoPassword);
+    console.log("Creating vendor in MongoDB...");
 
     const vendor = await Vendor.create({
       vendor_type,
@@ -116,33 +115,73 @@ console.log("auto is :",gstUpload )
       drug_lic_no,
       drug_lic_ex_date,
       password: autoPassword,
+      role: "buyer",
 
       store_pic: {
         url: storeUpload.secure_url,
         publicId: storeUpload.public_id,
       },
 
-      gst_pdf: {
-        url: gstUpload.secure_url,
-        publicId: gstUpload.public_id,
-        fileName: gst_pdf.originalname,
-      },
+      // GST PDF is optional — only include it when one was actually uploaded.
+      ...(gstUpload && {
+        gst_pdf: {
+          url: gstUpload.secure_url,
+          publicId: gstUpload.public_id,
+          fileName: gst_pdf?.originalname,
+        },
+      }),
 
-      drug_lic_copy: {
-        url: drugUpload.secure_url,
-        publicId: drugUpload.public_id,
-        fileName: drug_lic_copy.originalname
+      ...(drugUpload && {
+        drug_lic_copy: {
+          url: drugUpload.secure_url,
+          publicId: drugUpload.public_id,
+          fileName: drug_lic_copy?.originalname,
+        },
+      }),
+    });
+    console.log("Vendor created successfully.");
+
+
+    console.log("Preparing email transporter...");
+    const transporter = nodmailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.EMAIL,
+        pass: process.env.E_PASS
       }
     });
+console.log("Sending registration email...");
+    // Email is best-effort: a mail failure must NOT fail the registration.
+    try {
+      const info = await transporter.sendMail({
+        from: process.env.EMAIL,
+        to: email,
+        subject: "Vendor Registration",
+        html: `
+
+          <h1>Hi ${contact_person_name} </h1>
+        <p>🎉 Your vendor registration has been successfully received.</p>
+        <p>Your application is currently under review.</p>
+        <p>We'll notify you via email once the verification process is complete.</p>
+        <p>Thank you for being part of our growing network🚀. 🎉 </p>
+         <p>Warm Regards,<br>
+         Team:VS Arogya </p>
+
+        `
+      });
+      console.log("email info is :", info);
+    } catch (mailErr) {
+      console.log("vendor registration email failed:", mailErr?.message);
+    }
 
     return res.status(201).json({
       success: true,
       message: "Registration submitted. Approval status will be sent to your email.",
-      pdf_url: gstUpload.secure_url
+      pdf_url: gstUpload ? gstUpload.secure_url : null
     });
   } catch (error) {
     console.log(error);
-
+console.log("Sending success response to Flutter...");
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -168,16 +207,6 @@ export const login = async (req, res) => {
 
     const user = await Vendor.findOne({ mobile_no });
 
-    // if( user.approvalStatus === "Pending" ){
-    //   return res.status(403)
-    //   .json({
-
-    //     message :"You can't  login ",
-    //     success : false 
-    //   }) ;
-    // }
-
-    // console.log(user);
     if (!user) {
       return res.status(401)
         .json({
@@ -199,6 +228,17 @@ export const login = async (req, res) => {
         });
     }
 
+    // Buyers/vendors can only log in once an admin approves them. Staff
+    // accounts (admin / marketing / delivery) skip this approval gate.
+    const staffRoles = ["admin", "marketing", "delivery"];
+    if (!staffRoles.includes((user.role || "").toLowerCase()) &&
+        user.approvalStatus !== "Approved") {
+      const msg = user.approvalStatus === "Rejected"
+        ? "Your registration was rejected. Please contact support."
+        : "Your account is pending admin approval. You'll get your login details by email once approved.";
+      return res.status(403).json({ success: false, message: msg });
+    }
+
     // token genrate
     const token = jwt.sign(
 
@@ -206,15 +246,6 @@ export const login = async (req, res) => {
       process.env.SECRET_KEY,
       { expiresIn: "1d" }
     );
-
-
-    // store cookie
-    //     res.cookie("token", token, {
-    //   httpOnly: true,
-    //   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    //   sameSite: "strict",
-    //   secure: process.env.NODE_ENV === "production"
-    // });
 
 
     res.cookie("token", token, {
@@ -229,7 +260,8 @@ export const login = async (req, res) => {
     return res.status(201)
       .json({
         message: "Login success ",
-        success: true
+        success: true,
+        role: user.role
       });
 
   }

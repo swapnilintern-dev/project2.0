@@ -28,6 +28,15 @@ class CartController extends ChangeNotifier {
   Coupon? _coupon;
   Coupon? get appliedCoupon => _coupon;
 
+  /// Coupons available to apply, loaded from the backend (mock as fallback).
+  List<Coupon> _availableCoupons = MockData.coupons;
+
+  /// Refreshes the available coupons from the backend. Call when the cart /
+  /// checkout opens so [applyCoupon] validates real, active codes.
+  Future<void> loadCoupons() async {
+    _availableCoupons = await _api.getCoupons();
+  }
+
   bool get isEmpty => _items.isEmpty;
   int get itemCount => _items.fold(0, (sum, i) => sum + i.quantity);
   int get distinctCount => _items.length;
@@ -57,12 +66,23 @@ class CartController extends ChangeNotifier {
   void setQuantity(String productId, int quantity) {
     final index = _items.indexWhere((i) => i.product.id == productId);
     if (index < 0) return;
+    final oldQty = _items[index].quantity;
     if (quantity <= 0) {
       _items.removeAt(index);
-    } else {
-      _items[index] = _items[index].copyWith(quantity: quantity);
+      notifyListeners();
+      unawaited(_api.removeFromCart(productId));
+      return;
     }
+    _items[index] = _items[index].copyWith(quantity: quantity);
     notifyListeners();
+    // Mirror the change to the backend one step at a time (offline-safe).
+    final delta = quantity - oldQty;
+    for (var i = 0; i < delta; i++) {
+      unawaited(_api.increaseCartItem(productId));
+    }
+    for (var i = 0; i < -delta; i++) {
+      unawaited(_api.decreaseCartItem(productId));
+    }
   }
 
   void increment(String productId) =>
@@ -74,8 +94,12 @@ class CartController extends ChangeNotifier {
   void remove(String productId) {
     _items.removeWhere((i) => i.product.id == productId);
     notifyListeners();
+    unawaited(_api.removeFromCart(productId));
   }
 
+  /// Clears the LOCAL cart only. We deliberately do NOT mirror this to the
+  /// backend: clear() runs on logout (via resetCustomerSession) and after an
+  /// order, and we don't want to wipe the server-side cart in those flows.
   void clear() {
     _items.clear();
     _coupon = null;
@@ -84,7 +108,7 @@ class CartController extends ChangeNotifier {
 
   /// Returns null when applied, or an error string when the coupon is invalid.
   String? applyCoupon(String code) {
-    final match = MockData.coupons
+    final match = _availableCoupons
         .where((c) => c.code.toUpperCase() == code.trim().toUpperCase());
     if (match.isEmpty) return 'Invalid coupon code';
     _coupon = match.first;
@@ -154,6 +178,8 @@ class OrdersController extends ChangeNotifier {
   OrdersController._();
   static final OrdersController instance = OrdersController._();
 
+  final CustomerApi _api = CustomerApi();
+
   List<Order>? _orders;
   List<Order> get orders => List.unmodifiable(_orders ?? const []);
 
@@ -161,6 +187,19 @@ class OrdersController extends ChangeNotifier {
 
   void ensureSeeded() {
     _orders ??= MockData.seedOrders();
+  }
+
+  /// Loads orders from the backend (GET /get-order). Replaces the list on
+  /// success; on failure (offline / not logged in) keeps the local/mock seed so
+  /// the screen is never empty.
+  Future<void> refresh() async {
+    final backend = await _api.getOrders();
+    if (backend != null) {
+      _orders = backend;
+    } else {
+      ensureSeeded();
+    }
+    notifyListeners();
   }
 
   List<Order> byFilter(OrderFilter filter) {
@@ -195,6 +234,8 @@ class OrdersController extends ChangeNotifier {
     if (i < 0) return;
     _orders![i] = _orders![i].copyWith(status: OrderStatus.cancelled);
     notifyListeners();
+    // Mirror to the backend (offline-safe; ignored if not logged in).
+    unawaited(_api.cancelOrder(id));
   }
 
   /// Drops cached orders so the next access reseeds (or refetches from the API

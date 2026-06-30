@@ -16,7 +16,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
+import 'package:image_picker/image_picker.dart' show XFile;
 
+import 'api_config.dart';
 import '../vendor_registration_screen.dart' show VendorRegistrationModel;
 
 /// Outcome of a registration attempt — success flag, a user-facing message and
@@ -37,24 +39,11 @@ class VendorApiService {
   const VendorApiService();
 
   /// How long to wait before giving up on the request.
-  static const Duration _timeout = Duration(seconds: 30);
+  static const Duration _timeout = Duration(seconds: 90);
 
-  /// Resolves the backend base URL for the current platform.
-  ///
-  /// - Android emulator cannot reach the host machine via `localhost`; it maps
-  ///   the host to the special address `10.0.2.2`.
-  /// - iOS simulator / desktop can use `localhost` directly.
-  /// - On a physical device, neither works — pass your machine's LAN IP at
-  ///   build time:  `flutter run --dart-define=API_BASE_URL=http://192.168.1.5:3000`
-  ///
-  /// NOTE: This is plain HTTP for local development only. In production point
-  /// API_BASE_URL at an HTTPS endpoint.
-  static String get baseUrl {
-  const override = String.fromEnvironment('API_BASE_URL');
-  if (override.isNotEmpty) return override;
-
-  return 'https://vs-arogya-backend-test.onrender.com';
-}
+  /// Shared base URL — see [ApiConfig]. Override with
+  /// `--dart-define=API_BASE_URL=...` at run time.
+  static String get baseUrl => ApiConfig.baseUrl;
 
   static Uri get _registerVendorUri =>
       Uri.parse('$baseUrl/vsArogya/register-vendor');
@@ -83,13 +72,18 @@ class VendorApiService {
     });
 
     // --- File fields (multer keys: store_pic, gst_pdf, drug_lic_copy) ---
-    await _attachFile(request, 'store_pic', model.storePhotoPath);
-    await _attachFile(request, 'gst_pdf', model.gstCertificatePath);
-    await _attachFile(request, 'drug_lic_copy', model.drugLicenseCopyPath);
+    await _attachFile(request, 'store_pic', model.storePhotoFile);
+    await _attachFile(request, 'gst_pdf', model.gstCertificateFile);
+    await _attachFile(request, 'drug_lic_copy', model.drugLicenseCopyFile);
 
     try {
       final streamed = await request.send().timeout(_timeout);
       final response = await http.Response.fromStream(streamed);
+      print("=========================");
+      print("REGISTER API RESPONSE");
+      print("STATUS CODE : ${response.statusCode}");
+      print("BODY : ${response.body}");
+      print("=========================");
       return _parseResponse(response);
     } on TimeoutException {
       return const VendorApiResult(
@@ -119,13 +113,15 @@ class VendorApiService {
       // Non-JSON body (e.g. an HTML error page) — fall back to status code.
     }
 
-    final ok = response.statusCode >= 200 &&
+    final ok =
+        response.statusCode >= 200 &&
         response.statusCode < 300 &&
         body['success'] == true;
 
     return VendorApiResult(
       success: ok,
-      message: (body['message'] as String?) ??
+      message:
+          (body['message'] as String?) ??
           (ok
               ? 'Vendor registered successfully'
               : 'Registration failed (HTTP ${response.statusCode})'),
@@ -137,26 +133,44 @@ class VendorApiService {
 
   /// Adds a file part with the correct Content-Type. The backend's multer
   /// fileFilter only accepts jpeg/png/webp images and PDFs.
+  ///
+  /// Reads the picked file via [XFile.readAsBytes], so it works on every
+  /// platform: on mobile/desktop it reads from disk, and on Flutter Web it
+  /// fetches the picker's `blob:` URL and returns its bytes (dart:io `File`
+  /// is unsupported on web). We attach the raw bytes — never the blob URL
+  /// string, which is meaningless to the server.
   static Future<void> _attachFile(
     http.MultipartRequest request,
     String field,
-    String? path,
+    XFile? file,
   ) async {
-    if (path == null || path.isEmpty) return;
-    // `dart:io` File is unavailable on Flutter Web (it throws
-    // "Unsupported operation: _Namespace"). Skip path-based attachment there;
-    // web uploads would need the picker's bytes (XFile) instead.
-    // TODO(web): attach via http.MultipartFile.fromBytes using XFile bytes.
-    if (kIsWeb) return;
-    final file = File(path);
-    if (!file.existsSync()) return;
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    if (bytes.isEmpty) return;
+    final filename = _safeName(file);
     request.files.add(
-      await http.MultipartFile.fromPath(
+      http.MultipartFile.fromBytes(
         field,
-        path,
-        contentType: _contentTypeFor(path),
+        bytes,
+        filename: filename,
+        contentType: _contentTypeFor(filename),
       ),
     );
+  }
+
+  /// Ensures the multipart filename carries an extension. The backend derives
+  /// the data-URI mime type from the extension (server/utils/datauri.js), so a
+  /// name without one (can happen on web) would break the Cloudinary upload.
+  static String _safeName(XFile file) {
+    final name = file.name;
+    if (name.contains('.')) return name;
+    final ext = switch (file.mimeType) {
+      'image/png' => 'png',
+      'image/webp' => 'webp',
+      'application/pdf' => 'pdf',
+      _ => 'jpg',
+    };
+    return '$name.$ext';
   }
 
   static MediaType _contentTypeFor(String path) {

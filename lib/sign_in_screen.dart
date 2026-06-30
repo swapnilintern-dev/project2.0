@@ -1,15 +1,5 @@
-// =============================================================================
-// MediCaPlus — B2B Medicine Delivery
-// Sign In Screen (Frontend only — no backend wired yet)
-//
-// TODO: POST /api/auth/login
-//
-// Self-contained sign-in UI: gradient hero, role tab selector with a sliding
-// indicator, credential form with validation, OTP / vendor-registration entry
-// points. Colours are reused from `AppColors` (defined in
-// vendor_registration_screen.dart) so the whole app shares one palette.
-// =============================================================================
-
+// ============================================================================
+import 'services/auth_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // Clipboard (tap-to-copy support details)
 
@@ -47,50 +37,70 @@ class _SignInScreenState extends State<SignInScreen> {
     _passwordCtrl.dispose();
     super.dispose();
   }
+Future<void> _onSignIn() async {
 
-  Future<void> _onSignIn() async {
-    FocusScope.of(context).unfocus();
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+  FocusScope.of(context).unfocus();
 
-    setState(() => _isSubmitting = true);
+  if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    // TODO(backend): POST /vsArogya/login — verify the credentials and read the
-    // account's `role` from the response, then route on that. Until the login
-    // endpoint exists, the role is derived from the identifier so each portal
-    // can be reached for the demo (see _roleFor).
-    await Future<void>.delayed(const Duration(milliseconds: 500));
+  setState(() => _isSubmitting = true);
+
+  try {
+    final response = await AuthService.login(
+      mobileNo: _identifierCtrl.text.trim(),
+      password: _passwordCtrl.text.trim(),
+    );
 
     if (!mounted) return;
+
     setState(() => _isSubmitting = false);
 
-    final role = _roleFor(_identifierCtrl.text);
-    final Widget nextScreen = switch (role) {
-      SignInRole.vendor => const CustomerShell(),
-      SignInRole.admin => const AdminRoleMain(),
-      SignInRole.delivery => const DeliveryMain(),
-      SignInRole.marketing => const MarketingRoleMain(),
-    };
+    if (response['success'] != true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            response['message'] ?? 'Login Failed',
+          ),
+        ),
+      );
+      return;
+    }
 
+    // Route to the portal for the account's role. The backend MUST return
+    // `role` in the login response (server: userController.login -> add
+    // `role: user.role`). Matching is keyword-based so values like "admin",
+    // "Admin", "marketing head", "delivery boy" all route correctly. Anything
+    // missing / unrecognised falls back to the vendor/buyer shopping app.
+    final role = (response['role'] ?? '').toString().toLowerCase();
+    final Widget nextScreen;
+    if (role.contains('admin')) {
+      nextScreen = const AdminRoleMain();
+    } else if (role.contains('marketing')) {
+      nextScreen = const MarketingRoleMain();
+    } else if (role.contains('delivery')) {
+      nextScreen = const DeliveryMain();
+    } else {
+      nextScreen = const CustomerShell();
+    }
+/////////////////////////////////////////
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => nextScreen),
+      MaterialPageRoute(
+        builder: (_) => nextScreen,
+      ),
+    );
+  } catch (e) {
+    if (!mounted) return;
+
+    setState(() => _isSubmitting = false);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Error: $e'),
+      ),
     );
   }
+}
 
-  /// DEMO role resolution (frontend-only). Replace with the backend's `role`
-  /// from the login response once `/vsArogya/login` exists. A login containing
-  /// "admin", "delivery"/"rider" or "marketing" opens that portal; anything
-  /// else is treated as a vendor/buyer and opens the shopping app.
-  SignInRole _roleFor(String identifier) {
-    final id = identifier.toLowerCase();
-    if (id.contains('admin')) return SignInRole.admin;
-    if (id.contains('delivery') || id.contains('rider')) {
-      return SignInRole.delivery;
-    }
-    if (id.contains('marketing') || id.contains('mkt')) {
-      return SignInRole.marketing;
-    }
-    return SignInRole.vendor;
-  }
 
   void _openVendorRegistration() {
     Navigator.of(context).push(
@@ -311,7 +321,7 @@ class _SignInScreenState extends State<SignInScreen> {
               obscureText: _obscurePassword,
               suffix: IconButton(
                 onPressed: ( 
-                  
+
                 ) =>
                     setState(() => _obscurePassword = !_obscurePassword),
                 icon: Icon(

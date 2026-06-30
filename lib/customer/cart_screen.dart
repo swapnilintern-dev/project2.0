@@ -216,6 +216,13 @@ class _CouponFieldState extends State<_CouponField> {
   final _controller = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    // Load active coupons from the backend so applyCoupon validates real codes.
+    CartController.instance.loadCoupons();
+  }
+
+  @override
   void dispose() {
     _controller.dispose();
     super.dispose();

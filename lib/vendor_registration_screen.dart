@@ -7,13 +7,12 @@
 // network call lives in lib/services/vendor_api_service.dart.
 // =============================================================================
 
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'services/vendor_api_service.dart';
+
 
 // =============================================================================
 // THEME
@@ -70,10 +69,13 @@ class VendorRegistrationModel {
   String drugLicenseNumber;
   DateTime? drugLicenseExpiry;
 
-  // --- Step 3: Documents (local file paths; real upload handled by the API) ---
-  String? storePhotoPath;
-  String? drugLicenseCopyPath;
-  String? gstCertificatePath;
+  // --- Step 3: Documents (picked files; real upload handled by the API) ---
+  // Stored as XFile (not a path String) so the same object works on mobile AND
+  // web: XFile.readAsBytes() reads from disk on mobile and fetches the
+  // browser's blob: URL on web. A blob URL string alone is useless to the API.
+  XFile? storePhotoFile;
+  XFile? drugLicenseCopyFile;
+  XFile? gstCertificateFile;
   bool declarationAccepted;
 
   VendorRegistrationModel({
@@ -91,9 +93,9 @@ class VendorRegistrationModel {
     this.gstNumber = '',
     this.drugLicenseNumber = '',
     this.drugLicenseExpiry,
-    this.storePhotoPath,
-    this.drugLicenseCopyPath,
-    this.gstCertificatePath,
+    this.storePhotoFile,
+    this.drugLicenseCopyFile,
+    this.gstCertificateFile,
     this.declarationAccepted = false,
   });
 
@@ -120,11 +122,12 @@ class VendorRegistrationModel {
         'drugLicenseNumber': drugLicenseNumber,
         'drugLicenseExpiry': drugLicenseExpiry?.toIso8601String(),
       },
+      // File names only (for debug/preview); the API sends the real bytes as
+      // multipart files, not this JSON. See VendorApiService.registerVendor.
       'documents': {
-        // These are local paths for now; the API will receive multipart files.
-        'storePhoto': storePhotoPath,
-        'drugLicenseCopy': drugLicenseCopyPath,
-        'gstCertificate': gstCertificatePath,
+        'storePhoto': storePhotoFile?.name,
+        'drugLicenseCopy': drugLicenseCopyFile?.name,
+        'gstCertificate': gstCertificateFile?.name,
       },
       'declarationAccepted': declarationAccepted,
     };
@@ -135,11 +138,7 @@ class VendorRegistrationModel {
 // STATIC OPTION LISTS
 // =============================================================================
 
-const List<String> _vendorTypes = [
-  'Shop / Pharmacy',
-  'Hospital / Clinic',
-  
-];
+const List<String> _vendorTypes = ['Shop / Pharmacy', 'Hospital / Clinic'];
 
 const List<String> _shopTypes = [
   'Retail Pharmacy',
@@ -176,7 +175,8 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
 
   // Current step index: 0 = Basic, 1 = Business, 2 = Docs, 3 = Review.
   int _currentStep = 0;
-  bool _isSubmitting = false;
+  bool _isSubmitting =
+      false; //////////////////////////////////////////////////////////////////////////////////
 
   // Fade animation driven between step transitions.
   late final AnimationController _fadeController;
@@ -300,11 +300,11 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
   // Documents step isn't a normal Form, so validate manually.
   bool _validateDocuments() {
     // Backend hard-requires the store photo (multer field `store_pic`).
-    if (_model.storePhotoPath == null) {
+    if (_model.storePhotoFile == null) {
       _showSnack('Please upload a Store Photo (required).');
       return false;
     }
-    if (_model.drugLicenseCopyPath == null) {
+    if (_model.drugLicenseCopyFile == null) {
       _showSnack('Please upload the Drug License Copy (required).');
       return false;
     }
@@ -335,8 +335,8 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
     setState(() => _isSubmitting = true);
 
     // POST /vsArogya/register-vendor (multipart) via the API service.
-    final VendorApiResult result =
-        await const VendorApiService().registerVendor(_model);
+    final VendorApiResult result = await const VendorApiService()
+        .registerVendor(_model);
 
     if (!mounted) return;
     setState(() => _isSubmitting = false);
@@ -348,19 +348,19 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
       return;
     }
 
-    // Prefer the real MongoDB id as the application reference; fall back to a
-    // generated one if the server didn't echo the vendor document.
-    final id = result.vendor?['_id']?.toString();
-    final ref = (id != null && id.length >= 6)
-        ? 'VND-${id.substring(id.length - 6).toUpperCase()}'
-        : 'VND-2024-MP-${(1000 + Random().nextInt(9000))}';
-
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (_) => RegistrationSuccessScreen(referenceId: ref),
-      ),
+      MaterialPageRoute(builder: (_) => const RegistrationSuccessScreen()),
     );
   }
+
+  // api call register Handle
+
+  // void registerHandle() async {
+  //   print(' registration btn called ');
+
+
+  //   if( shop_type)
+  // }
 
   // ---------------------------------------------------------------------------
   // Build
@@ -529,9 +529,7 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
                       hint: '10-digit number',
                       keyboardType: TextInputType.phone,
                       maxLength: 10,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                      ],
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                       validator: (v) {
                         if (v == null || v.trim().isEmpty) {
                           return 'Mobile number is required';
@@ -694,8 +692,8 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
     final now = DateTime.now();
     final picked = await showDatePicker(
       context: context,
-      initialDate: _model.drugLicenseExpiry ??
-          now.add(const Duration(days: 365)),
+      initialDate:
+          _model.drugLicenseExpiry ?? now.add(const Duration(days: 365)),
       firstDate: now.add(const Duration(days: 1)), // future dates only
       lastDate: DateTime(now.year + 30),
       helpText: 'Select Drug License Expiry Date',
@@ -709,9 +707,7 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
               onSurface: AppColors.darkText,
             ),
             textButtonTheme: TextButtonThemeData(
-              style: TextButton.styleFrom(
-                foregroundColor: AppColors.darkGreen,
-              ),
+              style: TextButton.styleFrom(foregroundColor: AppColors.darkGreen),
             ),
           ),
           child: child!,
@@ -743,8 +739,11 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
             ),
             child: Row(
               children: const [
-                Icon(Icons.warning_amber_rounded,
-                    color: Color(0xFFF9A825), size: 20),
+                Icon(
+                  Icons.warning_amber_rounded,
+                  color: Color(0xFFF9A825),
+                  size: 20,
+                ),
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -768,36 +767,47 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
                 title: 'Store Photo',
                 subtitle: 'Upload a clear photo of your store',
                 required: true,
-                fileName: _fileName(_model.storePhotoPath),
-                onCamera: () =>
-                    _pickDoc(ImageSource.camera, (p) => _model.storePhotoPath = p),
+                fileName: _model.storePhotoFile?.name,
+                onCamera: () => _pickDoc(
+                  ImageSource.camera,
+                  (f) => _model.storePhotoFile = f,
+                ),
                 onGallery: () => _pickDoc(
-                    ImageSource.gallery, (p) => _model.storePhotoPath = p),
-                onRemove: () =>
-                    setState(() => _model.storePhotoPath = null),
+                  ImageSource.gallery,
+                  (f) => _model.storePhotoFile = f,
+                ),
+                onRemove: () => setState(() => _model.storePhotoFile = null),
               ),
               _DocumentUploadTile(
                 title: 'Drug License Copy',
                 subtitle: 'Mandatory document',
                 required: true,
-                fileName: _fileName(_model.drugLicenseCopyPath),
+                fileName: _model.drugLicenseCopyFile?.name,
                 onCamera: () => _pickDoc(
-                    ImageSource.camera, (p) => _model.drugLicenseCopyPath = p),
+                  ImageSource.camera,
+                  (f) => _model.drugLicenseCopyFile = f,
+                ),
                 onGallery: () => _pickDoc(
-                    ImageSource.gallery, (p) => _model.drugLicenseCopyPath = p),
+                  ImageSource.gallery,
+                  (f) => _model.drugLicenseCopyFile = f,
+                ),
                 onRemove: () =>
-                    setState(() => _model.drugLicenseCopyPath = null),
+                    setState(() => _model.drugLicenseCopyFile = null),
               ),
               _DocumentUploadTile(
                 title: 'GST Certificate',
                 subtitle: 'GST registration certificate (optional)',
-                fileName: _fileName(_model.gstCertificatePath),
+                fileName: _model.gstCertificateFile?.name,
                 onCamera: () => _pickDoc(
-                    ImageSource.camera, (p) => _model.gstCertificatePath = p),
+                  ImageSource.camera,
+                  (f) => _model.gstCertificateFile = f,
+                ),
                 onGallery: () => _pickDoc(
-                    ImageSource.gallery, (p) => _model.gstCertificatePath = p),
+                  ImageSource.gallery,
+                  (f) => _model.gstCertificateFile = f,
+                ),
                 onRemove: () =>
-                    setState(() => _model.gstCertificatePath = null),
+                    setState(() => _model.gstCertificateFile = null),
                 isLast: true,
               ),
             ],
@@ -821,13 +831,18 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
     );
   }
 
-  /// Picks an image from camera/gallery and stores its path via [assign].
+  /// Picks an image from camera/gallery and stores the [XFile] via [assign].
+  ///
+  /// We keep the whole XFile (not just its path) because the API reads its
+  /// bytes via XFile.readAsBytes(), which works on both mobile and web.
   ///
   /// Images are downscaled and recompressed at capture so uploads stay well
   /// under the backend's 10 MB-per-file limit (raw phone-camera photos are
   /// often 10–20 MB, which would abort the multipart request).
   Future<void> _pickDoc(
-      ImageSource source, void Function(String path) assign) async {
+    ImageSource source,
+    void Function(XFile file) assign,
+  ) async {
     try {
       final picker = ImagePicker();
       final XFile? file = await picker.pickImage(
@@ -837,17 +852,12 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
         imageQuality: 85,
       );
       if (file != null) {
-        setState(() => assign(file.path));
+        setState(() => assign(file));
       }
     } catch (e) {
       // Camera/gallery may be unavailable (e.g. on desktop / no permission).
       if (mounted) _showSnack('Could not open ${source.name}. ($e)');
     }
-  }
-
-  String? _fileName(String? path) {
-    if (path == null) return null;
-    return path.split(RegExp(r'[/\\]')).last;
   }
 
   // ---------------------------------------------------------------------------
@@ -910,8 +920,10 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
             _ReviewRow('Mobile', dash(_model.mobile)),
             _ReviewRow('Email', dash(_model.email)),
             _ReviewRow('Address', dash(_model.fullAddress)),
-            _ReviewRow('City / State',
-                '${dash(_model.city)}, ${dash(_model.state)}'),
+            _ReviewRow(
+              'City / State',
+              '${dash(_model.city)}, ${dash(_model.state)}',
+            ),
             _ReviewRow('Pin Code', dash(_model.pinCode)),
           ],
         ),
@@ -938,10 +950,15 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
           title: 'Documents',
           onEdit: () => _editStep(2),
           rows: [
-            _ReviewRow.doc('Store Photo', _model.storePhotoPath != null),
+            _ReviewRow.doc('Store Photo', _model.storePhotoFile != null),
             _ReviewRow.doc(
-                'Drug License Copy', _model.drugLicenseCopyPath != null),
-            _ReviewRow.doc('GST Certificate', _model.gstCertificatePath != null),
+              'Drug License Copy',
+              _model.drugLicenseCopyFile != null,
+            ),
+            _ReviewRow.doc(
+              'GST Certificate',
+              _model.gstCertificateFile != null,
+            ),
           ],
         ),
 
@@ -1013,10 +1030,7 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
                     loading: _isSubmitting,
                     onPressed: _isSubmitting ? null : _submit,
                   )
-                : _GradientButton(
-                    label: 'Continue →',
-                    onPressed: _onContinue,
-                  ),
+                : _GradientButton(label: 'Continue →', onPressed: _onContinue),
           ),
         ],
       ),
@@ -1025,8 +1039,7 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
 
   // Shared "required" validator factory.
   String? Function(String?) _requiredValidator(String field) {
-    return (v) =>
-        (v == null || v.trim().isEmpty) ? '$field is required' : null;
+    return (v) => (v == null || v.trim().isEmpty) ? '$field is required' : null;
   }
 }
 
@@ -1035,9 +1048,7 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
 // =============================================================================
 
 class RegistrationSuccessScreen extends StatelessWidget {
-  const RegistrationSuccessScreen({super.key, required this.referenceId});
-
-  final String referenceId;
+  const RegistrationSuccessScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -1068,8 +1079,11 @@ class RegistrationSuccessScreen extends StatelessWidget {
                       color: Colors.white.withValues(alpha: 0.2),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.check_rounded,
-                        color: AppColors.white, size: 60),
+                    child: const Icon(
+                      Icons.check_rounded,
+                      color: AppColors.white,
+                      size: 60,
+                    ),
                   ),
                   const SizedBox(height: 20),
                   const Text(
@@ -1136,61 +1150,6 @@ class RegistrationSuccessScreen extends StatelessWidget {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 16),
-
-                    // Application reference with copy button.
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: _cardDecoration(),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Application Reference',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: AppColors.greyText,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  '#$referenceId',
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.darkGreen,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          TextButton.icon(
-                            onPressed: () {
-                              Clipboard.setData(
-                                  ClipboardData(text: '#$referenceId'));
-                              ScaffoldMessenger.of(context)
-                                ..hideCurrentSnackBar()
-                                ..showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Reference copied'),
-                                    backgroundColor: AppColors.darkGreen,
-                                    behavior: SnackBarBehavior.floating,
-                                  ),
-                                );
-                            },
-                            icon: const Icon(Icons.copy, size: 16),
-                            label: const Text('Copy'),
-                            style: TextButton.styleFrom(
-                              foregroundColor: AppColors.primary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -1204,9 +1163,9 @@ class RegistrationSuccessScreen extends StatelessWidget {
                 children: [
                   _GradientButton(
                     label: 'Go to Home',
-                    onPressed: () => Navigator.of(context).popUntil(
-                      (route) => route.isFirst,
-                    ),
+                    onPressed: () => Navigator.of(
+                      context,
+                    ).popUntil((route) => route.isFirst),
                   ),
                   const SizedBox(height: 10),
                   SizedBox(
@@ -1271,9 +1230,7 @@ class _NextStepItem extends StatelessWidget {
                 child: Icon(icon, size: 18, color: AppColors.darkGreen),
               ),
               if (!isLast)
-                Expanded(
-                  child: Container(width: 2, color: AppColors.border),
-                ),
+                Expanded(child: Container(width: 2, color: AppColors.border)),
             ],
           ),
           const SizedBox(width: 12),
@@ -1315,17 +1272,17 @@ class _NextStepItem extends StatelessWidget {
 // =============================================================================
 
 BoxDecoration _cardDecoration() => BoxDecoration(
-      color: AppColors.white,
-      borderRadius: BorderRadius.circular(16),
-      border: Border.all(color: AppColors.border),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.03),
-          blurRadius: 8,
-          offset: const Offset(0, 2),
-        ),
-      ],
-    );
+  color: AppColors.white,
+  borderRadius: BorderRadius.circular(16),
+  border: Border.all(color: AppColors.border),
+  boxShadow: [
+    BoxShadow(
+      color: Colors.black.withValues(alpha: 0.03),
+      blurRadius: 8,
+      offset: const Offset(0, 2),
+    ),
+  ],
+);
 
 /// A titled white card with an icon header — the building block of every step.
 class _SectionCard extends StatelessWidget {
@@ -1406,9 +1363,9 @@ class _FieldLabel extends StatelessWidget {
 /// Shared input border styling so every field looks identical.
 InputDecoration _inputDecoration(String hint) {
   OutlineInputBorder border(Color color) => OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: color),
-      );
+    borderRadius: BorderRadius.circular(12),
+    borderSide: BorderSide(color: color),
+  );
 
   return InputDecoration(
     hintText: hint,
@@ -1513,7 +1470,10 @@ class _AppDropdown extends StatelessWidget {
         DropdownButtonFormField<String>(
           initialValue: value,
           isExpanded: true,
-          icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.greyText),
+          icon: const Icon(
+            Icons.keyboard_arrow_down,
+            color: AppColors.greyText,
+          ),
           hint: Text(
             hint,
             style: const TextStyle(color: AppColors.greyText, fontSize: 13),
@@ -1563,11 +1523,17 @@ class _DatePickerField extends StatelessWidget {
             decoration: _inputDecoration(hint).copyWith(
               prefixIcon: const Padding(
                 padding: EdgeInsets.only(left: 12, right: 8),
-                child: Icon(Icons.calendar_today_outlined,
-                    size: 16, color: AppColors.primary),
+                child: Icon(
+                  Icons.calendar_today_outlined,
+                  size: 16,
+                  color: AppColors.primary,
+                ),
               ),
-              suffixIcon: const Icon(Icons.edit_calendar_outlined,
-                  size: 18, color: AppColors.greyText),
+              suffixIcon: const Icon(
+                Icons.edit_calendar_outlined,
+                size: 18,
+                color: AppColors.greyText,
+              ),
             ),
             child: Text(
               hasValue ? _formatDate(value!) : hint,
@@ -1629,9 +1595,7 @@ class _DocumentUploadTile extends StatelessWidget {
                 width: 38,
                 height: 38,
                 decoration: BoxDecoration(
-                  color: uploaded
-                      ? AppColors.primary
-                      : AppColors.lightGreenBg,
+                  color: uploaded ? AppColors.primary : AppColors.lightGreenBg,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(
@@ -1735,9 +1699,7 @@ class _UploadButton extends StatelessWidget {
         backgroundColor: AppColors.lighterGreen,
         side: const BorderSide(color: AppColors.border),
         padding: const EdgeInsets.symmetric(vertical: 10),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }
@@ -1781,8 +1743,11 @@ class _AnimatedCheckTile extends StatelessWidget {
               child: AnimatedScale(
                 duration: const Duration(milliseconds: 200),
                 scale: value ? 1 : 0,
-                child: const Icon(Icons.check,
-                    size: 16, color: AppColors.white),
+                child: const Icon(
+                  Icons.check,
+                  size: 16,
+                  color: AppColors.white,
+                ),
               ),
             ),
             const SizedBox(width: 12),
@@ -1835,9 +1800,7 @@ class _StepperBar extends StatelessWidget {
                 height: 3,
                 margin: const EdgeInsets.symmetric(horizontal: 4),
                 decoration: BoxDecoration(
-                  color: i < currentStep
-                      ? AppColors.primary
-                      : AppColors.border,
+                  color: i < currentStep ? AppColors.primary : AppColors.border,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -1850,10 +1813,7 @@ class _StepperBar extends StatelessWidget {
     return Container(
       color: AppColors.white,
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: row,
-      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: row),
     );
   }
 }
@@ -2023,13 +1983,9 @@ class _ReviewSectionState extends State<_ReviewSection> {
 
 /// One label/value row with a divider. Use `_ReviewRow.doc` for ✅/❌ documents.
 class _ReviewRow extends StatelessWidget {
-  const _ReviewRow(this.label, this.value)
-      : isDoc = false,
-        present = false;
+  const _ReviewRow(this.label, this.value) : isDoc = false, present = false;
 
-  const _ReviewRow.doc(this.label, this.present)
-      : value = '',
-        isDoc = true;
+  const _ReviewRow.doc(this.label, this.present) : value = '', isDoc = true;
 
   final String label;
   final String value;
@@ -2062,8 +2018,10 @@ class _ReviewRow extends StatelessWidget {
                 child: isDoc
                     ? Row(
                         children: [
-                          Text(present ? '✅' : '❌',
-                              style: const TextStyle(fontSize: 13)),
+                          Text(
+                            present ? '✅' : '❌',
+                            style: const TextStyle(fontSize: 13),
+                          ),
                           const SizedBox(width: 6),
                           Text(
                             present ? 'Uploaded' : 'Missing',
@@ -2134,8 +2092,9 @@ class _GradientButton extends StatelessWidget {
                       height: 22,
                       child: CircularProgressIndicator(
                         strokeWidth: 2.5,
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(AppColors.white),
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          AppColors.white,
+                        ),
                       ),
                     )
                   : Text(
