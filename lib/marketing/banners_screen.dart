@@ -1,44 +1,36 @@
 // =============================================================================
 // MediCaPlus — Marketing Head · Promo Banners
 //
-// Create / delete the promotional banners shown on the customer home carousel.
-// Backed by the backend (GET/POST/DELETE /promo-banners) via
-// MarketingBannersController, so changes appear in the customer app.
+// Upload / delete the promotional banners shown on the customer home carousel.
+// Banners are IMAGE-first: the marketing team picks a creative which is uploaded
+// to the backend (POST /promo-banners, Cloudinary) and appears live on the
+// customer app. Older image-less (gradient) banners still render in the list.
+// Live via MarketingBannersController (GET/POST/DELETE /promo-banners).
 // =============================================================================
 
-import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
+import '../services/live_refresh.dart';
 import '../customer/customer_models.dart' show PromoBanner;
 import '../customer/customer_widgets.dart' show showAppSnack, EmptyState;
 import 'marketing_controllers.dart';
 
-/// A selectable gradient preset (start -> end) for a banner.
-class _Gradient {
-  const _Gradient(this.name, this.start, this.end);
-  final String name;
-  final Color start;
-  final Color end;
-}
-
-const List<_Gradient> _presets = [
-  _Gradient('Green', Color(0xFF4CAF82), Color(0xFF2E7D5E)),
-  _Gradient('Blue', Color(0xFF3B82F6), Color(0xFF1D4ED8)),
-  _Gradient('Purple', Color(0xFF8B5CF6), Color(0xFF6D28D9)),
-  _Gradient('Amber', Color(0xFFF59E0B), Color(0xFFD97706)),
-  _Gradient('Red', Color(0xFFEF4444), Color(0xFFB91C1C)),
-];
-
-/// Category options (label -> id); null id = no deep link ("All").
+/// Optional deep-link target for a banner (label -> category id; null = no link).
 const Map<String, String?> _bannerCategories = {
-  'All': null,
+  'No link': null,
   'Medicine': 'medicine',
   'Vaccines': 'vaccines',
   'Lifesaving Injections': 'injections',
 };
+
+/// The aspect ratio the customer carousel crops to. Kept here so the marketing
+/// preview shows the EXACT crop the customer will see (works on iOS + Android).
+const double _bannerAspect = 1080 / 450;
 
 class MarketingBannersScreen extends StatefulWidget {
   const MarketingBannersScreen({super.key});
@@ -47,14 +39,14 @@ class MarketingBannersScreen extends StatefulWidget {
   State<MarketingBannersScreen> createState() => _MarketingBannersScreenState();
 }
 
-class _MarketingBannersScreenState extends State<MarketingBannersScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final _title = TextEditingController();
-  final _tag = TextEditingController(text: 'OFFER');
-  final _cta = TextEditingController(text: 'Shop Now');
+class _MarketingBannersScreenState extends State<MarketingBannersScreen>
+    with LiveRefreshMixin {
+  final ImagePicker _picker = ImagePicker();
+  final _nameCtrl = TextEditingController();
 
-  int _preset = 0;
-  String _category = 'All';
+  XFile? _image;
+  Uint8List? _preview; // decoded bytes for the on-screen preview (web + mobile)
+  String _category = _bannerCategories.keys.first;
   bool _saving = false;
 
   MarketingBannersController get _controller =>
@@ -63,38 +55,71 @@ class _MarketingBannersScreenState extends State<MarketingBannersScreen> {
   @override
   void initState() {
     super.initState();
-    unawaited(_controller.refresh());
+    // Fetch on open + keep the live list in sync (poll + app-resume).
+    startLiveRefresh();
   }
 
   @override
   void dispose() {
-    _title.dispose();
-    _tag.dispose();
-    _cta.dispose();
+    stopLiveRefresh();
+    _nameCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _add() async {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+  @override
+  Future<void> onLiveRefresh() => _controller.refresh();
+
+  /// Picks a banner creative from the gallery and decodes a preview.
+  Future<void> _pickImage() async {
+    try {
+      final picked = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 2000,
+        imageQuality: 90,
+      );
+      if (picked == null) return;
+      final bytes = await picked.readAsBytes();
+      if (!mounted) return;
+      setState(() {
+        _image = picked;
+        _preview = bytes;
+      });
+    } catch (_) {
+      if (mounted) {
+        showAppSnack(context, 'Could not open the gallery. Try again.',
+            success: false);
+      }
+    }
+  }
+
+  Future<void> _publish() async {
+    if (_image == null) {
+      showAppSnack(context, 'Pick a banner image first', success: false);
+      return;
+    }
     setState(() => _saving = true);
-    final g = _presets[_preset];
     final banner = PromoBanner(
       id: '',
-      tag: _tag.text.trim().isEmpty ? 'OFFER' : _tag.text.trim(),
-      title: _title.text.trim(),
-      ctaLabel: _cta.text.trim().isEmpty ? 'Shop Now' : _cta.text.trim(),
-      startColor: g.start,
-      endColor: g.end,
+      tag: 'OFFER',
+      // Stored for identification in the list / delete dialog (not shown on the
+      // full-image banner). Falls back to a generic name.
+      title: _nameCtrl.text.trim().isEmpty ? 'Banner' : _nameCtrl.text.trim(),
       categoryId: _bannerCategories[_category],
     );
-    final ok = await _controller.add(banner);
+    final ok = await _controller.add(banner, _image!);
     if (!mounted) return;
     setState(() => _saving = false);
     if (ok) {
-      _title.clear();
-      showAppSnack(context, 'Banner published');
+      setState(() {
+        _image = null;
+        _preview = null;
+        _nameCtrl.clear();
+        _category = _bannerCategories.keys.first;
+      });
+      showAppSnack(context, 'Banner published — live on the app 🎉');
     } else {
-      showAppSnack(context, 'Could not publish banner. Try again.',
+      showAppSnack(context,
+          'Could not publish banner. Check your connection and try again.',
           success: false);
     }
   }
@@ -114,198 +139,202 @@ class _MarketingBannersScreenState extends State<MarketingBannersScreen> {
         listenable: _controller,
         builder: (context, _) {
           final banners = _controller.banners;
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-            children: [
-              _previewCard(),
-              const SizedBox(height: 16),
-              _formCard(),
-              const SizedBox(height: 22),
-              Row(
-                children: [
-                  const Text('Live Banners',
-                      style: TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.w800)),
-                  const SizedBox(width: 8),
-                  if (_controller.loading)
-                    const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2)),
-                ],
-              ),
-              const SizedBox(height: 10),
-              if (banners.isEmpty && !_controller.loading)
-                const Padding(
-                  padding: EdgeInsets.only(top: 24),
-                  child: EmptyState(
-                    icon: Icons.view_carousel_outlined,
-                    title: 'No banners yet',
-                    message: 'Publish a banner above to show it on the '
-                        'customer home screen.',
-                  ),
-                )
-              else
-                for (final b in banners) _liveBanner(b),
-            ],
+          return RefreshIndicator(
+            color: AppColors.primary,
+            onRefresh: _controller.refresh,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+              children: [
+                _uploadCard(),
+                const SizedBox(height: 22),
+                Row(
+                  children: [
+                    const Text('Live Banners',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w800)),
+                    const SizedBox(width: 8),
+                    if (_controller.loading)
+                      const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2)),
+                    const Spacer(),
+                    Text('${banners.length} live',
+                        style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.greyText)),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                if (banners.isEmpty && !_controller.loading)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 24),
+                    child: EmptyState(
+                      icon: Icons.view_carousel_outlined,
+                      title: 'No banners yet',
+                      message: 'Upload a creative above to show it on the '
+                          'customer home screen.',
+                    ),
+                  )
+                else
+                  for (final b in banners) _liveBanner(b),
+              ],
+            ),
           );
         },
       ),
     );
   }
 
-  /// Live preview of what the form will produce.
-  Widget _previewCard() {
-    final g = _presets[_preset];
-    return _bannerVisual(
-      tag: _tag.text.trim().isEmpty ? 'OFFER' : _tag.text.trim(),
-      title: _title.text.trim().isEmpty ? 'Your banner title' : _title.text.trim(),
-      cta: _cta.text.trim().isEmpty ? 'Shop Now' : _cta.text.trim(),
-      start: g.start,
-      end: g.end,
-    );
-  }
+  // --- upload form ---------------------------------------------------------
 
-  Widget _formCard() {
-    return Form(
-      key: _formKey,
-      autovalidateMode: AutovalidateMode.onUserInteraction,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.border),
-          boxShadow: AppShadows.card,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('New Banner',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _title,
-              onChanged: (_) => setState(() {}),
-              validator: (v) =>
-                  (v == null || v.trim().isEmpty) ? 'Title is required' : null,
-              decoration: _dec('Banner title', 'e.g. Flat 20% OFF above ₹5,000'),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    controller: _tag,
-                    onChanged: (_) => setState(() {}),
-                    decoration: _dec('Tag', 'BULK OFFER'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextFormField(
-                    controller: _cta,
-                    onChanged: (_) => setState(() {}),
-                    decoration: _dec('Button label', 'Shop Now'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            const Text('Colour',
-                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 10,
-              children: [
-                for (int i = 0; i < _presets.length; i++) _swatch(i),
-              ],
-            ),
-            const SizedBox(height: 14),
-            const Text('Links to category (optional)',
-                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 6),
-            DropdownButtonFormField<String>(
-              initialValue: _category,
-              isExpanded: true,
-              items: [
-                for (final c in _bannerCategories.keys)
-                  DropdownMenuItem(value: c, child: Text(c)),
-              ],
-              onChanged: (v) => setState(() => _category = v ?? _category),
-              decoration: _dec(null, null),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton.icon(
-                onPressed: _saving ? null : _add,
-                icon: _saving
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2.5, color: Colors.white))
-                    : const Icon(Icons.publish_outlined),
-                label: Text(_saving ? 'Publishing…' : 'Publish Banner',
-                    style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w700)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
+  Widget _uploadCard() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+        boxShadow: AppShadows.card,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('New Banner',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          const Text('Upload a custom creative — it appears on the customer '
+              'home carousel.',
+              style: TextStyle(fontSize: 12, color: AppColors.greyText)),
+          const SizedBox(height: 12),
+          _imagePicker(),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _nameCtrl,
+            decoration: _dec('Banner name (optional)', 'e.g. Diwali Sale'),
+          ),
+          const SizedBox(height: 12),
+          const Text('Links to category (optional)',
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          DropdownButtonFormField<String>(
+            initialValue: _category,
+            isExpanded: true,
+            items: [
+              for (final c in _bannerCategories.keys)
+                DropdownMenuItem(value: c, child: Text(c)),
+            ],
+            onChanged: (v) => setState(() => _category = v ?? _category),
+            decoration: _dec(null, null),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: (_saving || _image == null) ? null : _publish,
+              icon: _saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2.5, color: Colors.white))
+                  : const Icon(Icons.publish_outlined),
+              label: Text(_saving ? 'Publishing…' : 'Publish Banner',
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w700)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: AppColors.border,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
             ),
-          ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Tap-to-pick creative card that previews the EXACT customer crop.
+  Widget _imagePicker() {
+    return GestureDetector(
+      onTap: _saving ? null : _pickImage,
+      child: AspectRatio(
+        aspectRatio: _bannerAspect,
+        child: Container(
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: AppColors.lightGreenBg,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: _preview == null
+              ? const Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.add_photo_alternate_outlined,
+                        size: 30, color: AppColors.greyText),
+                    SizedBox(height: 8),
+                    Text('Tap to upload banner creative',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.darkText)),
+                    SizedBox(height: 2),
+                    Text('Recommended 1080×450 · JPG / PNG',
+                        style:
+                            TextStyle(fontSize: 11, color: AppColors.greyText)),
+                  ],
+                )
+              : Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.memory(_preview!, fit: BoxFit.cover),
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: Material(
+                        color: Colors.black54,
+                        shape: const CircleBorder(),
+                        clipBehavior: Clip.antiAlias,
+                        child: InkWell(
+                          onTap: _saving ? null : _pickImage,
+                          child: const Padding(
+                            padding: EdgeInsets.all(6),
+                            child:
+                                Icon(Icons.edit, size: 16, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
         ),
       ),
     );
   }
 
-  Widget _swatch(int i) {
-    final g = _presets[i];
-    final selected = _preset == i;
-    return GestureDetector(
-      onTap: () => setState(() => _preset = i),
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [g.start, g.end]),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: selected ? AppColors.darkText : Colors.transparent,
-            width: 2.5,
-          ),
-        ),
-        child: selected
-            ? const Icon(Icons.check, color: Colors.white, size: 20)
-            : null,
-      ),
-    );
-  }
+  // --- live list -----------------------------------------------------------
 
   Widget _liveBanner(PromoBanner b) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Stack(
         children: [
-          _bannerVisual(
-            tag: b.tag,
-            title: b.title,
-            cta: b.ctaLabel,
-            start: b.startColor,
-            end: b.endColor,
-          ),
+          if (b.hasImage)
+            _bannerImageVisual(b)
+          else
+            _bannerVisual(b),
           Positioned(
             top: 6,
             right: 6,
             child: Material(
-              color: Colors.black.withValues(alpha: 0.25),
+              color: Colors.black.withValues(alpha: 0.35),
               shape: const CircleBorder(),
               clipBehavior: Clip.antiAlias,
               child: IconButton(
@@ -326,7 +355,8 @@ class _MarketingBannersScreenState extends State<MarketingBannersScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Delete banner?'),
-        content: Text('"${b.title}" will be removed from the customer app.'),
+        content: Text(
+            '"${b.title.isEmpty ? 'This banner' : b.title}" will be removed from the customer app.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -345,19 +375,46 @@ class _MarketingBannersScreenState extends State<MarketingBannersScreen> {
         success: done);
   }
 
-  Widget _bannerVisual({
-    required String tag,
-    required String title,
-    required String cta,
-    required Color start,
-    required Color end,
-  }) {
+  /// Image-backed banner preview (same crop the customer sees).
+  Widget _bannerImageVisual(PromoBanner b) {
+    return AspectRatio(
+      aspectRatio: _bannerAspect,
+      child: Container(
+        width: double.infinity,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: b.startColor,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Image.network(
+          b.imageUrl!,
+          fit: BoxFit.cover,
+          loadingBuilder: (context, child, progress) => progress == null
+              ? child
+              : const Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+          errorBuilder: (context, error, stack) => const Center(
+            child: Icon(Icons.image_not_supported_outlined,
+                color: Colors.white70, size: 36),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Fallback render for legacy image-less (gradient + text) banners.
+  Widget _bannerVisual(PromoBanner b) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [start, end],
+          colors: [b.startColor, b.endColor],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -372,7 +429,7 @@ class _MarketingBannersScreenState extends State<MarketingBannersScreen> {
               color: Colors.white.withValues(alpha: 0.25),
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Text(tag,
+            child: Text(b.tag,
                 style: const TextStyle(
                     color: Colors.white,
                     fontSize: 10,
@@ -380,7 +437,7 @@ class _MarketingBannersScreenState extends State<MarketingBannersScreen> {
                     letterSpacing: 0.5)),
           ),
           const SizedBox(height: 8),
-          Text(title,
+          Text(b.title,
               style: const TextStyle(
                   color: Colors.white,
                   fontSize: 18,
@@ -392,7 +449,7 @@ class _MarketingBannersScreenState extends State<MarketingBannersScreen> {
               color: Colors.white,
               borderRadius: BorderRadius.circular(20),
             ),
-            child: Text(cta,
+            child: Text(b.ctaLabel,
                 style: const TextStyle(
                     color: AppColors.darkGreen,
                     fontSize: 12,
@@ -421,9 +478,6 @@ class _MarketingBannersScreenState extends State<MarketingBannersScreen> {
           const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
       enabledBorder: border(AppColors.border),
       focusedBorder: border(AppColors.primary),
-      errorBorder: border(AppColors.error),
-      focusedErrorBorder: border(AppColors.error),
-      errorStyle: const TextStyle(color: AppColors.error, fontSize: 11.5),
     );
   }
 }

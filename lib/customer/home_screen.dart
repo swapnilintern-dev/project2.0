@@ -7,12 +7,17 @@
 // categories push a filtered listing.
 // =============================================================================
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../services/auth_service.dart';
 import '../theme/app_theme.dart' show AppShadows;
+import '../services/live_refresh.dart';
 import 'catalog.dart';
 import 'customer_api.dart';
+import 'customer_controllers.dart';
 import 'customer_mock_data.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
@@ -30,16 +35,22 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with LiveRefreshMixin {
   final CustomerApi _api = CustomerApi();
   List<Product> _products = [];
   List<PromoBanner> _banners = [];
   bool _loading = true;
 
+  // Banners + catalogue are polled so a marketing publish appears on its own.
+  // 30s keeps it fresh without hammering the API on the home tab.
+  @override
+  Duration get liveRefreshInterval => const Duration(seconds: 30);
+
   @override
   void initState() {
     super.initState();
-    _load();
+    // Initial load + poll + refresh-on-resume (keeps promo banners live).
+    startLiveRefresh();
     // Rebuild whenever the shared catalogue/stock changes (marketing adds a
     // medicine, an order decrements stock, an item is deactivated, …).
     Catalog.listenable.addListener(_onCatalogChanged);
@@ -47,9 +58,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    stopLiveRefresh();
     Catalog.listenable.removeListener(_onCatalogChanged);
     super.dispose();
   }
+
+  @override
+  Future<void> onLiveRefresh() => _load();
 
   void _onCatalogChanged() {
     if (!mounted) return;
@@ -57,6 +72,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _load() async {
+    // Pull the user's saved products from the backend so the wishlist heart is
+    // in sync everywhere (fire-and-forget; offline-safe).
+    unawaited(WishlistController.instance.refresh());
     final results = await Future.wait([
       _api.getProducts(),
       _api.getPromoBanners(),
@@ -115,6 +133,15 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Time-of-day greeting (real, based on the device clock — not a fixed
+  /// "Good Morning").
+  String get _greeting {
+    final h = DateTime.now().hour;
+    if (h < 12) return 'Good Morning';
+    if (h < 17) return 'Good Afternoon';
+    return 'Good Evening';
+  }
+
   Widget _header() {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
@@ -125,15 +152,17 @@ class _HomeScreenState extends State<HomeScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Column(
+              Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Good Morning,',
-                      style:
-                          TextStyle(fontSize: 14, color: AppColors.darkText)),
-                  SizedBox(height: 2),
-                  Text('Apollo Pharmacy 👋',
-                      style: TextStyle(
+                  Text('$_greeting,',
+                      style: const TextStyle(
+                          fontSize: 14, color: AppColors.darkText)),
+                  const SizedBox(height: 2),
+                  // Real store name when the backend provides it; a neutral,
+                  // non-fake greeting otherwise.
+                  Text('${AuthService.storeName ?? 'Welcome back'} 👋',
+                      style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w800,
                           color: AppColors.darkText)),
@@ -196,23 +225,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
-          child: Stack(
-            children: [
-              const Icon(Icons.notifications_none, color: AppColors.darkText),
-              Positioned(
-                top: 0,
-                right: 0,
-                child: Container(
-                  width: 8,
-                  height: 8,
-                  decoration: const BoxDecoration(
-                    color: AppColors.error,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-            ],
-          ),
+          // No fake unread dot — there's no notifications backend yet, so the
+          // bell shows no unread indicator.
+          child: const Icon(Icons.notifications_none, color: AppColors.darkText),
         ),
       ),
     );
@@ -238,6 +253,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _categories() {
+    final cats = MockData.categories;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -246,55 +262,59 @@ class _HomeScreenState extends State<HomeScreen> {
           child: SectionHeader(title: 'Categories'),
         ),
         const SizedBox(height: 12),
-        SizedBox(
-          height: 96,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            itemCount: MockData.categories.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 12),
-            itemBuilder: (context, i) {
-              final c = MockData.categories[i];
-              return InkWell(
-                onTap: () => _openCategory(c.id),
-                borderRadius: BorderRadius.circular(14),
-                child: Container(
-                  width: 76,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: AppColors.border),
-                    boxShadow: AppShadows.card,
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: c.color.withValues(alpha: 0.12),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(c.icon, color: c.color, size: 22),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(c.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.darkText)),
-                    ],
-                  ),
-                ),
-              );
-            },
+        // Only 3 categories exist, so spread them evenly across the full width
+        // instead of a left-aligned scroll list.
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              for (int i = 0; i < cats.length; i++) ...[
+                if (i > 0) const SizedBox(width: 12),
+                Expanded(child: _categoryTile(cats[i])),
+              ],
+            ],
           ),
         ),
       ],
+    );
+  }
+
+  Widget _categoryTile(Category c) {
+    return InkWell(
+      onTap: () => _openCategory(c.id),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.border),
+          boxShadow: AppShadows.card,
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: c.color.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(c.icon, color: c.color, size: 22),
+            ),
+            const SizedBox(height: 8),
+            Text(c.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.darkText)),
+          ],
+        ),
+      ),
     );
   }
 

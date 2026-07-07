@@ -1,174 +1,81 @@
 import order from "../model/orderModel.js";
 import product from "../model/productModel.js";
 // import product from "../model/productModel.js";
-import Vendor from "../model/userModel.js" ;
+import Vendor from "../model/userModel.js";
+import converter from "number-to-words"
+import { generateInvoiceHTML } from "../templates/invoiceTemplate.js";
+import invoice from "../model/invoiceModel.js";
+import { generatePDF } from "../utils/generatePdf.js";
+import cloudinary from "../utils/cloudinary.js";
 
-export const placeOrder = async( req , res ) => {
 
-    try{
-        const userId = req.id ;
+export const placeOrder = async (req, res) => {
+
+    try {
+        const userId = req.id;
 
         const {
-            address ,
-            city ,
-            state ,
-            pincode ,
+            address,
+            city,
+            state,
+            pincode,
             country,
             phoneNo
-        } = req.body ;
+        } = req.body;
 
-         
-        const user = await Vendor.findById(userId ).populate("cart.product");
 
-        console.log("populated cart is :" , user.cart) ;
+        const user = await Vendor.findById(userId).populate("cart.product");
 
-        if( !user ) {
+        console.log("populated cart is :", user.cart);
+
+        if (!user) {
 
             return res.status(401)
-            .json({
+                .json({
 
-                message :"invalid User " ,
-                success : false 
-            }) ;
+                    message: "invalid User ",
+                    success: false
+                });
         }
 
-        if( user.cart.length === 0 ) {
+        if (user.cart.length === 0) {
             return res.status(401)
-            .json({
-                message :"Cart is empty !! Plz add product " ,
-                success : false
-            }) ;
+                .json({
+                    message: "Cart is empty !! Plz add product ",
+                    success: false
+                });
         }
-        
-       const orderItems = user.cart.map( item => ({
 
-        product : item.product._id ,
-        quantity : item.quantity ,
-        orderPrice : item.product.price 
+        const orderNo =
+            "ORD-" +
+            new Date().getFullYear() +
+            Math.floor(100000 + Math.random() * 900000);
 
-       })) ;
+        const orderItems = user.cart.map(item => ({
 
-       const totalAmount = user.cart.reduce( (total , item ) => 
+            product: item.product._id,
+            quantity: item.quantity,
+            orderPrice: item.product.price
 
-        total + item.product.price * item.quantity , 0 
-    )
-       
-      const Order = await order.create({
+        }));
 
-        user : userId ,
-        orderItems,
-        shippingAddress:{
-            address,
-            city ,
-            state ,
-            pincode ,
-            country ,
-            phoneNo 
-        },
-        totalAmount,
-      }) ;
+        const total_qty = user.cart.reduce(
+            (qty, item) => qty + item.quantity,
+            0
+        );
 
-      user.cart =[] ;
-      await user.save() ;
+        const totalAmount = user.cart.reduce((total, item) =>
 
-       return res.status(201)
-        .json({
-           message :"Order places successfully ",
-           success : true ,
-           Order 
-        }) ;
-        
-    }
-    catch(er) {
-        console.log("error is :" , er ) ;
-
-        return res.status(500)
-        .json({
-
-            message :"Internal server error ",
-            success : false 
-        }) ;
-    }
-}
-
-export default placeOrder ;
+            total + item.product.price * item.quantity, 0
+        )
 
 
-export const getOrders = async( req, res ) =>{
+        const amountWord = converter.toWords(totalAmount);
+        const Order = await order.create({
 
-  try{
-        
-        const userId  = req.id ;
-         
-        const orders = await order.find({
-            user :userId
-        }).populate("orderItems.product") ;
-
-        return res.status(201)
-        .json({ 
-            message :"all orderes are here ",
-            success : true ,
-            orders : orders
-
-        });
-    }
-    catch(er) {
-
-        console.log("error is :" , er ) ;
-
-        return res.status(500)
-        .json({
-
-            message :"Internal server error ",
-            success : false 
-        });
-    }
-}
-
-export const placeSingleOrder = async(req , res ) =>{
-
-    try{
-
-        const userId = req.id ;
-        const product_id = req.params.id ;
-
-
-        const { address , city, state , pincode , country , phoneNo  } = req.body ;
-
-        const Product = await product.findById(product_id ) ;
-
-        if( !Product ) 
-            return res.status( 404 )
-            .json({
-
-                message :"Product not found ",
-                success : false 
-            }) ;
-        
-
-       if( !userId )
-        return res.status(401)
-        .json({ 
-            message :"Invalid user",
-            success : false 
-        });
-
-
-        const orderItems = [{
-               
-            product : Product._id ,
-            quantity : 1 ,
-            orderPrice : Product.price 
-
-        }];
-
-        // console.log("orderitems array ", orderItems ) ;
-
-        const singleOrder = await order.create({
-
-            user : userId ,
-            orderItems ,
-            shippingAddress :{
+            user: userId,
+            orderItems,
+            shippingAddress: {
                 address,
                 city,
                 state,
@@ -176,91 +83,331 @@ export const placeSingleOrder = async(req , res ) =>{
                 country,
                 phoneNo
             },
-            totalAmount : Product.price ,
+            totalAmount,
+            orderNo,
+            amountWord
+        });
+
+        // Order ban chuka hai — cart snapshot rakh ke abhi clear kar do, taaki
+        // niche invoice/PDF fail ho jaye (e.g. Render pe Chrome missing) toh
+        // bhi order 201 return ho. Order ab KABHI invoice ki wajah se fail
+        // nahi hoga.
+        const cartSnapshot = [...user.cart];
+        user.cart = [];
+        await user.save();
+
+        let createdInvoice = null;
+
+        // Response yahin bhejo — par 'return' MAT lagao, warna function yahin
+        // ruk jaata hai aur niche ka invoice/PDF code kabhi chalta hi nahi.
+        // res.json() ke baad bhi function aage chalta rehta hai — PDF
+        // background me ban ke order se link ho jayega.
+        res.status(201)
+            .json({
+                message: "Order placed successfully",
+                success: true,
+                Order
+            });
+
+        try {
+
+        const invoiceNumber = `INV-${Date.now()}`;
+
+        // GST slab summary (prices GST-inclusive hain — embedded tax nikala).
+        const slabs = { 5: 0, 12: 0, 18: 0, 28: 0 };
+        for (const item of cartSnapshot) {
+            const pct = Number(item.product.gstPercent) || 0;
+            const amt = item.product.price * item.quantity;
+            if (slabs[pct] !== undefined) slabs[pct] += amt - amt / (1 + pct / 100);
+        }
+        const gstTotal = slabs[5] + slabs[12] + slabs[18] + slabs[28];
+
+        const invoiceData = {
+            shop_name: user.store_name,
+            shop_address: user.full_address,
+            gst_in: user.gst_no,
+            dl_no: user.drug_lic_no,
+
+            order_no: orderNo,
+            order_date: new Date().toLocaleDateString("en-IN", {
+                day: "2-digit",
+                month: "long",
+                year: "numeric"
+            }),
+
+            invoice_no: invoiceNumber,
+            invoice_date: new Date().toLocaleDateString("en-IN", {
+                day: "2-digit",
+                month: "long",
+                year: "numeric"
+            })
+            ,
+
+            items: cartSnapshot.map(item => ({
+                title: item.product.title,
+                hsnCode: item.product.hsnCode || "N/A",
+                mrp: item.product.mrp,
+                gstPercent: item.product.gstPercent,
+                disPercent: item.product.discountPercent || "N/A",
+                manufacturer: item.product.manufacturer || "N/A",
+                marketedBy: item.product.marketedBy || "N/A",
+                batch_no: item.product.batch_no || "N/A",
+                exp_date: item.product.exp_date || "N/A",
+                quantity: item.quantity,
+                price: item.product.price,
+                amount: item.product.price * item.quantity
+            })),
+
+            total_item: cartSnapshot.length,
+            total_qty,
+            gross_total: totalAmount,
+
+            amount_words: amountWord,
+            amount: totalAmount,
+
+            // GST summary table ke placeholders (invoice.html)
+            gst5: slabs[5].toFixed(2),
+            gst12: slabs[12].toFixed(2),
+            gst18: slabs[18].toFixed(2),
+            gst28: slabs[28].toFixed(2),
+            gst_total: gstTotal.toFixed(2),
+            total_sgst: (gstTotal / 2).toFixed(2),
+            total_cgst: (gstTotal / 2).toFixed(2)
+        };
+
+        // console.log("invoice data is:", invoiceData)
+
+
+        const html = generateInvoiceHTML(invoiceData);
+
+        const pdfBuffer = await generatePDF(html);
+
+
+        // PDF buffer SEEDHA Cloudinary pe — local "uploads/invoices" folder ki
+        // zaroorat nahi (wo folder exist nahi karta tha, fs.writeFileSync
+        // yahin crash karta tha).
+        const result = await new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+                {
+                    resource_type: "auto",
+                    folder: "invoices"
+                },
+                (err, uploaded) => (err ? reject(err) : resolve(uploaded))
+            );
+            stream.end(pdfBuffer);
+        });
+
+        const pdfUrl = result.secure_url;
+        // NOTE: model ka import "invoice" (lowercase) hai — pehle yahan
+        // "Invoice.create" tha jo defined hi nahi tha (ReferenceError → 500).
+        createdInvoice = await invoice.create({
+            invoiceNumber,
+            order: Order._id,
+            vendor: user._id,
+            pdfUrl
+        });
+        console.log("invoice id is :", createdInvoice._id)
+
+        Order.invoice = createdInvoice._id;
+        await Order.save();
+
+        return;
+
+        } catch (invErr) {
+            // Invoice/PDF ka fail hona order ko kabhi fail nahi karega —
+            // order pehle hi ban chuka hai, 201 hi jayega.
+            console.log("invoice generation failed (non-fatal):", invErr.message);
+        }
+    }
+    catch (er) {
+        console.log("error is :", er);
+
+        return res.status(500)
+            .json({
+
+                message: "Internal server error ",
+                success: false
+            });
+    }
+}
+
+export default placeOrder;
+
+
+
+
+
+
+export const getOrders = async (req, res) => {
+
+    try {
+
+        const userId = req.id;
+
+        const orders = await order.find({
+            user: userId
+        }).populate("orderItems.product");
+
+        return res.status(201)
+            .json({
+                message: "all orderes are here ",
+                success: true,
+                orders: orders
+
+            });
+    }
+    catch (er) {
+
+        console.log("error is :", er);
+
+        return res.status(500)
+            .json({
+
+                message: "Internal server error ",
+                success: false
+            });
+    }
+}
+
+export const placeSingleOrder = async (req, res) => {
+
+    try {
+
+        const userId = req.id;
+        const product_id = req.params.id;
+
+
+        const { address, city, state, pincode, country, phoneNo } = req.body;
+
+        const Product = await product.findById(product_id);
+
+        if (!Product)
+            return res.status(404)
+                .json({
+
+                    message: "Product not found ",
+                    success: false
+                });
+
+
+        if (!userId)
+            return res.status(401)
+                .json({
+                    message: "Invalid user",
+                    success: false
+                });
+
+
+        const orderItems = [{
+
+            product: Product._id,
+            quantity: 1,
+            orderPrice: Product.price
+
+        }];
+
+        // console.log("orderitems array ", orderItems ) ;
+
+        const singleOrder = await order.create({
+
+            user: userId,
+            orderItems,
+            shippingAddress: {
+                address,
+                city,
+                state,
+                pincode,
+                country,
+                phoneNo
+            },
+            totalAmount: Product.price,
+            // orderModel me amountWord required hai — iske bina yahan
+            // ValidationError se order 500 ho jata tha.
+            amountWord: converter.toWords(Product.price),
 
         });
 
         // await order.save() ;
 
         return res.status(200)
-        .json({
-             message :"Product ordered successfully ",
-            success : true ,
-            singleOrder 
-        });
+            .json({
+                message: "Product ordered successfully ",
+                success: true,
+                singleOrder
+            });
 
 
     }
-    catch(er) {
+    catch (er) {
 
-        console.log("error from singleOrder " , er ) ;
+        console.log("error from singleOrder ", er);
 
         return res.status(500)
-        .json({
+            .json({
 
-            message :"Internal server error from singleOrder ",
-            success : false 
-        })
+                message: "Internal server error from singleOrder ",
+                success: false
+            })
     }
 };
 
 
-export const cancelOrder = async(req , res ) =>{
+export const cancelOrder = async (req, res) => {
 
-    try{
+    try {
 
-        const userId = req.id ;
-        
-        const product_id = req.params.id ;
+        const userId = req.id;
 
-        const existingOrder = await order.findById( product_id ) ;
+        const product_id = req.params.id;
 
-        if( !existingOrder ){
+        const existingOrder = await order.findById(product_id);
+
+        if (!existingOrder) {
             return res.status(404)
-            .json({ 
-                message :"Order not found ",
-                success : false 
-            });
+                .json({
+                    message: "Order not found ",
+                    success: false
+                });
         }
 
-        if( existingOrder.orderStatus === "Delivered" ){
+        if (existingOrder.orderStatus === "Delivered") {
 
             return res.status(401)
-            .json({
-                message : "Delivered Product can't be cancelled ",
-                success : false 
-            });
+                .json({
+                    message: "Delivered Product can't be cancelled ",
+                    success: false
+                });
         }
 
-        console.log("exiting order is :" , typeof(existingOrder.user.toString() ), "and " ,typeof(userId) ) ;
+        console.log("exiting order is :", typeof (existingOrder.user.toString()), "and ", typeof (userId));
 
-        if( existingOrder.user.toString() !== userId ) {
+        if (existingOrder.user.toString() !== userId) {
             return res.status(403)
-            .json({
-                message :"unauthorized user ",
-                success : false 
-            });
+                .json({
+                    message: "unauthorized user ",
+                    success: false
+                });
         }
 
-        existingOrder.orderStatus ="Cancelled";
+        existingOrder.orderStatus = "Cancelled";
 
         await existingOrder.save();
 
         return res.status(200)
-        .json({
-            message : "order cancel successfully ",
-            success : true 
-        });
+            .json({
+                message: "order cancel successfully ",
+                success: true
+            });
 
     }
-    catch(er) {
-        console.log("error is :" , er ) ;
+    catch (er) {
+        console.log("error is :", er);
 
         return res.status(500)
-        .json({
-            message :"Internal server error ",
-            success : false 
-        })
+            .json({
+                message: "Internal server error ",
+                success: false
+            })
     }
 }
 

@@ -9,12 +9,10 @@ class TaskCard extends StatelessWidget {
   const TaskCard({
     super.key,
     required this.task,
-    required this.onNavigate,
     required this.onStartDelivery,
   });
 
   final DeliveryTask task;
-  final VoidCallback onNavigate;
   final VoidCallback? onStartDelivery;
 
   @override
@@ -121,45 +119,24 @@ class TaskCard extends StatelessWidget {
           ),
           if (isActive) ...[
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: onNavigate,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: const BorderSide(color: Colors.white70),
-                      minimumSize: const Size(0, 44),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      'Navigate',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: onStartDelivery,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: AppColors.darkGreen,
+                  elevation: 0,
+                  minimumSize: const Size(0, 44),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: onStartDelivery,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: AppColors.darkGreen,
-                      elevation: 0,
-                      minimumSize: const Size(0, 44),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      'Start Delivery',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ),
+                child: const Text(
+                  'Start Delivery',
+                  style: TextStyle(fontWeight: FontWeight.w800),
                 ),
-              ],
+              ),
             ),
           ],
         ],

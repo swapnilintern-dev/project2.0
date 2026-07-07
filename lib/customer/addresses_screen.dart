@@ -14,11 +14,27 @@ import 'customer_controllers.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
 
-class AddressesScreen extends StatelessWidget {
+class AddressesScreen extends StatefulWidget {
   const AddressesScreen({super.key, this.selectMode = false});
 
   /// When true, tapping a card returns it to the previous route.
   final bool selectMode;
+
+  @override
+  State<AddressesScreen> createState() => _AddressesScreenState();
+}
+
+class _AddressesScreenState extends State<AddressesScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // The address book is built from the user's REAL past-order addresses, so
+    // make sure the orders are loaded (this feeds AddressController via
+    // syncFromOrders). Session-added addresses show immediately regardless.
+    if (!OrdersController.instance.isLoaded) {
+      OrdersController.instance.refresh();
+    }
+  }
 
   Future<void> _openForm(BuildContext context, {Address? existing}) async {
     final result = await showModalBottomSheet<Address>(
@@ -37,6 +53,7 @@ class AddressesScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final selectMode = widget.selectMode;
     return Scaffold(
       backgroundColor: AppColors.pageBg,
       appBar: AppBar(

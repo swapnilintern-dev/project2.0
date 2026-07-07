@@ -23,20 +23,31 @@ class MarketingOrdersController extends ChangeNotifier {
 
   final MarketingOrdersApi _api = MarketingOrdersApi();
 
-  final List<MarketingOrder> _orders = _seed();
+  final List<MarketingOrder> _orders = [];
+  bool _loaded = false;
+
+  // Which delivery agent an order was assigned to (by order id -> agent name).
+  // The backend has no field to persist this yet, so it's remembered in memory
+  // for the session and survives refreshes (the map isn't cleared on reload).
+  final Map<String, String> _assignedAgents = {};
 
   List<MarketingOrder> get orders => List.unmodifiable(_orders);
+  bool get isLoaded => _loaded;
 
-  /// Loads incoming orders from the backend (GET /all-orders). Keeps the seed
-  /// on failure so the screen is never empty offline.
+  /// The delivery agent this order was assigned to, or null if none yet.
+  String? assignedAgentFor(String orderId) => _assignedAgents[orderId];
+
+  /// Loads incoming orders from the backend (GET /all-orders). On failure the
+  /// current list is kept — NO mock/dummy data is ever shown.
   Future<void> refresh() async {
     final backend = await _api.getOrders();
     if (backend != null) {
       _orders
         ..clear()
         ..addAll(backend);
-      notifyListeners();
     }
+    _loaded = true;
+    notifyListeners();
   }
 
   List<MarketingOrder> byStatus(MarketingOrderStatus status) =>
@@ -52,9 +63,15 @@ class MarketingOrdersController extends ChangeNotifier {
     return null;
   }
 
-  /// Advances an order to the next pipeline stage (Accept -> Packing, etc.) and
-  /// persists it to the backend where a matching status update exists.
-  /// "Ready" (Pack) is a UI-only step with no backend equivalent.
+  /// Advances an order to the next pipeline stage and persists the new status
+  /// to the backend (which drives the enum
+  /// Pending -> Confirm Order -> Shipped -> Out for Delivery -> Delivered).
+  ///
+  /// The local status is bumped optimistically for instant feedback, the
+  /// matching backend endpoint is awaited, and then the list is re-fetched so
+  /// this screen reflects the authoritative server state (and self-heals if the
+  /// write failed). Because the customer + delivery screens poll the same
+  /// backend, the change reaches them within a poll interval.
   void advance(String id) {
     final i = _orders.indexWhere((o) => o.id == id);
     if (i < 0) return;
@@ -62,156 +79,32 @@ class MarketingOrdersController extends ChangeNotifier {
     if (next == null) return;
     _orders[i] = _orders[i].copyWith(status: next);
     notifyListeners();
-    switch (next) {
-      case MarketingOrderStatus.packing:
-        unawaited(_api.confirmOrder(id));
-        break;
-      case MarketingOrderStatus.shipped:
-        unawaited(_api.shipOrder(id));
-        break;
-      case MarketingOrderStatus.done:
-        unawaited(_api.deliverOrder(id));
-        break;
-      default:
-        break; // "ready" — no backend stage
-    }
+    unawaited(_persistStatus(id, next));
   }
 
-  static List<MarketingOrder> _seed() {
-    final now = DateTime.now();
-    return [
-      MarketingOrder(
-        id: 'MCP-48210',
-        buyer: 'Apollo Pharmacy',
-        placedAt: now.subtract(const Duration(minutes: 5)),
-        amount: 1519,
-        status: MarketingOrderStatus.pending,
-        urgent: true,
-        isNew: true,
-        phone: '+91 98200 11223',
-        address: 'Shop 14, MG Road, Bengaluru, KA 560001',
-        items: const [
-          MarketingOrderLine(
-              name: 'Paracetamol 650mg', brand: 'Medico', quantity: 10, price: 36),
-          MarketingOrderLine(
-              name: 'ORS Powder', brand: 'Health Inc', quantity: 12, price: 22.23),
-          MarketingOrderLine(
-              name: 'Digital Thermometer',
-              brand: 'CarePlus',
-              quantity: 4,
-              price: 199,
-              icon: Icons.device_thermostat_outlined),
-          MarketingOrderLine(
-              name: 'Zincovit Tablets',
-              brand: 'Wellness Labs',
-              quantity: 5,
-              price: 110),
-        ],
-      ),
-      MarketingOrder(
-        id: 'MCP-48198',
-        buyer: 'HealthFirst Dist.',
-        placedAt: now.subtract(const Duration(minutes: 22)),
-        amount: 14280,
-        status: MarketingOrderStatus.pending,
-        isNew: true,
-        phone: '+91 99300 44556',
-        address: 'Plot 8, Industrial Area, Pune, MH 411019',
-        items: const [
-          MarketingOrderLine(
-              name: 'Amoxicillin 500mg',
-              brand: 'Cipla',
-              quantity: 40,
-              price: 84,
-              icon: Icons.medication_outlined),
-          MarketingOrderLine(
-              name: 'Insulin Glargine',
-              brand: 'NovoMed',
-              quantity: 6,
-              price: 845,
-              icon: Icons.vaccines_outlined),
-          MarketingOrderLine(
-              name: 'Surgical Gloves (L)',
-              brand: 'SafeHands',
-              quantity: 30,
-              price: 320,
-              icon: Icons.shield_outlined),
-        ],
-      ),
-      MarketingOrder(
-        id: 'MCP-48180',
-        buyer: 'CarePlus Wholesale',
-        placedAt: now.subtract(const Duration(hours: 1)),
-        amount: 8400,
-        status: MarketingOrderStatus.packing,
-        phone: '+91 90040 77889',
-        address: 'No 5, Anna Salai, Chennai, TN 600002',
-        items: const [
-          MarketingOrderLine(
-              name: 'Cough Syrup', brand: 'CarePlus', quantity: 30, price: 95),
-          MarketingOrderLine(
-              name: 'Burnol Cream',
-              brand: 'Life Co.',
-              quantity: 20,
-              price: 75,
-              icon: Icons.healing_outlined),
-          MarketingOrderLine(
-              name: 'Vitamin C 1000', brand: 'Wellness Labs', quantity: 10, price: 150),
-        ],
-      ),
-      MarketingOrder(
-        id: 'MCP-48155',
-        buyer: 'MediTrust Stores',
-        placedAt: now.subtract(const Duration(hours: 2)),
-        amount: 6750,
-        status: MarketingOrderStatus.ready,
-        phone: '+91 98765 22110',
-        address: '22 Park Street, Kolkata, WB 700016',
-        items: const [
-          MarketingOrderLine(
-              name: 'Paracetamol 650mg', brand: 'Medico', quantity: 60, price: 36),
-          MarketingOrderLine(
-              name: 'ORS Powder', brand: 'Health Inc', quantity: 35, price: 22.23),
-        ],
-      ),
-      MarketingOrder(
-        id: 'MCP-48130',
-        buyer: 'Wellness Mart',
-        placedAt: now.subtract(const Duration(hours: 5)),
-        amount: 3990,
-        status: MarketingOrderStatus.shipped,
-        phone: '+91 97000 55443',
-        address: '11 Residency Rd, Hyderabad, TS 500003',
-        items: const [
-          MarketingOrderLine(
-              name: 'Zincovit Tablets',
-              brand: 'Wellness Labs',
-              quantity: 24,
-              price: 110),
-          MarketingOrderLine(
-              name: 'Vitamin C 1000', brand: 'Wellness Labs', quantity: 8, price: 150),
-        ],
-      ),
-      MarketingOrder(
-        id: 'MCP-48090',
-        buyer: 'City Medicos',
-        placedAt: now.subtract(const Duration(days: 1)),
-        amount: 2120,
-        status: MarketingOrderStatus.done,
-        phone: '+91 96500 33221',
-        address: '7 Civil Lines, Jaipur, RJ 302006',
-        items: const [
-          MarketingOrderLine(
-              name: 'Digital Thermometer',
-              brand: 'CarePlus',
-              quantity: 8,
-              price: 199,
-              icon: Icons.device_thermostat_outlined),
-          MarketingOrderLine(
-              name: 'ORS Powder', brand: 'Health Inc', quantity: 24, price: 22.23),
-        ],
-      ),
-    ];
+  /// Assigns [agent] to the order and advances it to Out for Delivery. The
+  /// status change persists to the backend (PUT /outof-delivery/:id); the agent
+  /// choice is remembered locally (no server field for it yet).
+  void assignAgent(String orderId, DeliveryAgent agent) {
+    _assignedAgents[orderId] = agent.name;
+    advance(orderId); // Shipped -> Out for Delivery (persisted)
+  }
+
+  /// Fires the backend status endpoint for [next], then reconciles the list
+  /// with the server. Offline-safe: on failure the optimistic status stays.
+  Future<void> _persistStatus(String id, MarketingOrderStatus next) async {
+    final ok = switch (next) {
+      MarketingOrderStatus.confirmed => await _api.confirmOrder(id),
+      MarketingOrderStatus.shipped => await _api.shipOrder(id),
+      MarketingOrderStatus.outForDelivery =>
+        await _api.outForDeliveryOrder(id),
+      MarketingOrderStatus.delivered => await _api.deliverOrder(id),
+      _ => false,
+    };
+    // Reconcile with the backend once the write lands so the pipeline shows the
+    // real server status. Skip on a failed/no-op write to avoid clobbering the
+    // optimistic value when offline.
+    if (ok) await refresh();
   }
 }
 
@@ -223,21 +116,33 @@ class MarketingProductsController extends ChangeNotifier {
 
   final MarketingApi _api = MarketingApi();
 
-  final List<InventoryProduct> _products = _seed();
+  // Starts empty — the inventory is ALWAYS the live backend list. No seed /
+  // dummy products are ever shown; an empty list means "nothing loaded yet"
+  // (spinner) or "backend has none" (empty state), never fake data.
+  final List<InventoryProduct> _products = [];
+  bool _loading = false;
+  bool _loaded = false;
 
   List<InventoryProduct> get products => List.unmodifiable(_products);
 
-  /// Loads the live inventory from the backend (GET /all-products) and replaces
-  /// the local seed. On failure (offline) the seed is kept so the screen is
-  /// never empty. Call from the products screen on init / after adding.
+  /// True while a fetch is in flight; true once at least one fetch has returned.
+  bool get isLoading => _loading;
+  bool get isLoaded => _loaded;
+
+  /// Loads the live inventory from the backend (GET /all-products). On failure
+  /// (offline) the current list is kept as-is — NO mock/dummy data is shown.
   Future<void> refresh() async {
+    _loading = true;
+    notifyListeners();
     final backend = await _api.getProducts();
     if (backend != null) {
       _products
         ..clear()
         ..addAll(backend);
-      notifyListeners();
     }
+    _loading = false;
+    _loaded = true;
+    notifyListeners();
   }
 
   /// Adds a product to the backend (with its image), then refreshes the list so
@@ -341,192 +246,6 @@ class MarketingProductsController extends ChangeNotifier {
     if (changed) notifyListeners();
   }
 
-  // Single source of truth for the whole app's catalogue. The marketing head
-  // edits these records; the customer shop reads a live, mapped view of the
-  // active ones (see lib/customer/catalog.dart). Stock decrements here when a
-  // customer order is confirmed, so every screen reflects the same number.
-  //
-  // NOTE: this MUST be a modifiable (non-const) list — add / update / toggle /
-  // decrement all mutate it in place. A `const [...]` here throws at runtime.
-  static List<InventoryProduct> _seed() => [
-        InventoryProduct(
-          id: 'p1',
-          name: 'Paracetamol 650mg',
-          brand: 'Calpol · Strip of 15',
-          code: 'PCM-650-15',
-          category: 'Medicine',
-          description:
-              'Effective relief from fever and mild-to-moderate pain. Each '
-              'tablet contains 650mg paracetamol IP.',
-          price: 36,
-          mrp: 42,
-          stock: 500,
-          active: true,
-          packOf: 15,
-          icon: Icons.medication,
-          rating: 4.6,
-          reviewCount: 1240,
-          badge: 'BEST SELLER',
-          packInfo: 'Strip of 15 tablets',
-        ),
-        InventoryProduct(
-          id: 'p2',
-          name: 'Amoxicillin 500mg',
-          brand: 'Mox · 10 caps',
-          code: 'AMX-500-10',
-          category: 'Medicine',
-          description:
-              'Broad-spectrum antibiotic used to treat a wide range of '
-              'bacterial infections. Take only as prescribed.',
-          price: 84,
-          mrp: 96,
-          stock: 320,
-          active: true,
-          prescriptionRequired: true,
-          packOf: 10,
-          icon: Icons.medical_services,
-          rating: 4.4,
-          reviewCount: 860,
-          badge: 'NEW',
-          packInfo: 'Strip of 10 capsules',
-        ),
-        InventoryProduct(
-          id: 'p3',
-          name: 'Insulin Glargine',
-          brand: 'Lantus · 3ml pen',
-          code: 'INS-GLR-3',
-          category: 'Lifesaving Injections',
-          description:
-              'Long-acting insulin for the management of diabetes mellitus. '
-              'Refrigerate between 2°C and 8°C. Do not freeze.',
-          price: 845,
-          mrp: 980,
-          stock: 8,
-          active: true,
-          prescriptionRequired: true,
-          lowThreshold: 10,
-          icon: Icons.vaccines,
-          rating: 4.8,
-          reviewCount: 410,
-          badge: 'LOW STOCK',
-          packInfo: '3ml prefilled pen',
-        ),
-        InventoryProduct(
-          id: 'p4',
-          name: 'Cough Syrup 100ml',
-          brand: 'Benadryl',
-          code: 'CGH-SYP-10',
-          category: 'Medicine',
-          description:
-              'Soothes dry cough and throat irritation. Non-drowsy formula '
-              'suitable for adults and children above 6 years.',
-          price: 118,
-          mrp: 135,
-          stock: 0,
-          active: false,
-          inactiveReason: 'Expired batch withdrawn',
-          icon: Icons.science,
-          rating: 4.3,
-          reviewCount: 690,
-          packInfo: '100ml bottle',
-        ),
-        InventoryProduct(
-          id: 'p5',
-          name: 'Azithromycin 250mg',
-          brand: 'Azee · 6 caps',
-          code: 'AZI-250-6',
-          category: 'Medicine',
-          description:
-              'Macrolide antibiotic capsule used for respiratory, skin and ENT '
-              'infections. Complete the full course as prescribed.',
-          price: 112,
-          mrp: 130,
-          stock: 260,
-          active: true,
-          prescriptionRequired: true,
-          packOf: 6,
-          icon: Icons.medication_outlined,
-          rating: 4.5,
-          reviewCount: 740,
-          badge: 'BEST SELLER',
-          packInfo: 'Strip of 6 capsules',
-        ),
-        InventoryProduct(
-          id: 'p6',
-          name: 'Omeprazole 20mg',
-          brand: 'Omez · 15 caps',
-          code: 'OMP-20-15',
-          category: 'Medicine',
-          description:
-              'Proton-pump inhibitor capsule for acidity, heartburn and acid '
-              'reflux. Take before meals or as advised.',
-          price: 58,
-          mrp: 72,
-          stock: 340,
-          active: true,
-          packOf: 15,
-          icon: Icons.medication_outlined,
-          rating: 4.4,
-          reviewCount: 530,
-          packInfo: 'Strip of 15 capsules',
-        ),
-        InventoryProduct(
-          id: 'p7',
-          name: 'Antiseptic Cream 20g',
-          brand: 'Burnol · Tube',
-          code: 'BRN-CRM-20',
-          category: 'Medicine',
-          description:
-              'Soothing antiseptic ointment for minor burns, cuts and '
-              'abrasions. For external use only.',
-          price: 75,
-          mrp: 90,
-          stock: 180,
-          active: true,
-          icon: Icons.healing,
-          rating: 4.6,
-          reviewCount: 910,
-          badge: 'NEW',
-          packInfo: '20g tube',
-        ),
-        InventoryProduct(
-          id: 'p8',
-          name: 'Pain Relief Gel 30g',
-          brand: 'Volini · Tube',
-          code: 'VOL-GEL-30',
-          category: 'Medicine',
-          description:
-              'Fast-acting topical gel for muscle, joint and back pain relief. '
-              'Apply gently up to thrice daily.',
-          price: 145,
-          mrp: 170,
-          stock: 220,
-          active: true,
-          icon: Icons.healing,
-          rating: 4.5,
-          reviewCount: 1320,
-          packInfo: '30g tube',
-        ),
-        InventoryProduct(
-          id: 'p9',
-          name: 'Covishield Vaccine',
-          brand: 'Serum Inst · 0.5ml',
-          code: 'COV-VAC-1',
-          category: 'Vaccines',
-          description:
-              'COVID-19 viral vector vaccine, 0.5ml single dose. Stored and '
-              'administered under cold-chain conditions.',
-          price: 280,
-          mrp: 320,
-          stock: 60,
-          active: true,
-          prescriptionRequired: true,
-          icon: Icons.vaccines,
-          rating: 4.7,
-          reviewCount: 205,
-          packInfo: '0.5ml single dose',
-        ),
-      ];
 }
 
 /// The promo coupons / campaigns.
@@ -537,21 +256,33 @@ class MarketingCouponsController extends ChangeNotifier {
 
   final CouponApi _api = CouponApi();
 
-  final List<MarketingCoupon> _coupons = _seed();
+  // Starts empty — coupons are ALWAYS the live backend list; no seed/dummy
+  // coupons are ever shown.
+  final List<MarketingCoupon> _coupons = [];
+  bool _loading = false;
+  bool _loaded = false;
 
   List<MarketingCoupon> get coupons => List.unmodifiable(_coupons);
 
+  bool get isLoading => _loading;
+  bool get isLoaded => _loaded;
+
   int get activeCount => _coupons.where((c) => c.active && !c.expired).length;
 
-  /// Loads coupons from the backend, replacing the local seed (kept on failure).
+  /// Loads coupons from the backend. On failure the current list is kept as-is
+  /// — NO mock/dummy data is shown.
   Future<void> refresh() async {
+    _loading = true;
+    notifyListeners();
     final backend = await _api.getCoupons();
     if (backend != null) {
       _coupons
         ..clear()
         ..addAll(backend);
-      notifyListeners();
     }
+    _loading = false;
+    _loaded = true;
+    notifyListeners();
   }
 
   void toggleActive(String code) {
@@ -587,37 +318,11 @@ class MarketingCouponsController extends ChangeNotifier {
     return ok;
   }
 
-  /// Adds a coupon to the local list (used by the campaign flow / fallback).
+  /// Adds a coupon to the local list (used as an optimistic/offline fallback).
   void add(MarketingCoupon coupon) {
     _coupons.insert(0, coupon);
     notifyListeners();
   }
-
-  // Modifiable (non-const) — add / toggleActive mutate it in place.
-  static List<MarketingCoupon> _seed() => [
-        MarketingCoupon(
-          code: 'BULK20',
-          description: '20% off above ₹5,000',
-          redemptions: 3840,
-        ),
-        MarketingCoupon(
-          code: 'FIRST100',
-          description: '₹100 off first order',
-          redemptions: 1204,
-        ),
-        MarketingCoupon(
-          code: 'MONSOON15',
-          description: '15% off health range',
-          redemptions: 890,
-        ),
-        MarketingCoupon(
-          code: 'WELCOME50',
-          description: '₹50 off · expired',
-          redemptions: 5210,
-          active: false,
-          expired: true,
-        ),
-      ];
 }
 
 /// Promo banners shown on the customer home carousel. Backed by the backend
@@ -645,9 +350,11 @@ class MarketingBannersController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Creates a banner on the backend, then refreshes. Returns true on success.
-  Future<bool> add(PromoBanner banner) async {
-    final ok = await _api.addBanner(banner);
+  /// Creates a banner on the backend, then refreshes so it appears on the
+  /// customer home carousel. Pass an [image] for a full-image creative, or omit
+  /// it for a text/gradient banner. Returns true on success.
+  Future<bool> add(PromoBanner banner, [XFile? image]) async {
+    final ok = await _api.addBanner(banner, image);
     if (ok) await refresh();
     return ok;
   }
@@ -657,5 +364,42 @@ class MarketingBannersController extends ChangeNotifier {
     final ok = await _api.deleteBanner(id);
     if (ok) await refresh();
     return ok;
+  }
+}
+
+/// The real delivery-partner directory, fetched live from the backend
+/// (role == "delivery"). Used by the "assign agent" picker — never dummy data.
+class MarketingAgentsController extends ChangeNotifier {
+  MarketingAgentsController._();
+  static final MarketingAgentsController instance =
+      MarketingAgentsController._();
+
+  final MarketingOrdersApi _api = MarketingOrdersApi();
+
+  List<DeliveryAgent> _agents = const [];
+  bool _loading = false;
+  bool _loaded = false;
+  String? _error;
+
+  List<DeliveryAgent> get agents => List.unmodifiable(_agents);
+  bool get isLoading => _loading;
+  bool get isLoaded => _loaded;
+  String? get error => _error;
+
+  /// Loads (or reloads) the delivery agents from the backend. Keeps the current
+  /// list on failure and exposes [error] so the picker can offer a retry.
+  Future<void> refresh() async {
+    _loading = true;
+    _error = null;
+    notifyListeners();
+    final res = await _api.getDeliveryAgents();
+    if (res == null) {
+      _error = 'Could not load delivery agents. Check your connection.';
+    } else {
+      _agents = res;
+      _loaded = true;
+    }
+    _loading = false;
+    notifyListeners();
   }
 }

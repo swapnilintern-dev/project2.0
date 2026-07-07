@@ -141,7 +141,7 @@ On success → `RegistrationSuccessScreen`. On failure → snackbar with `messag
 ## 7. Changing the server URL
 
 `ApiConfig.baseUrl` / `VendorApiService.baseUrl` =
-`https://backend-new-0ady.onrender.com`.
+`http://localhost:3000`.
 
 Override at run time without editing code:
 ```bash

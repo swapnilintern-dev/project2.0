@@ -11,6 +11,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../services/auth_service.dart';
 import '../theme/app_theme.dart' show AppShadows;
 import '../customer/customer_widgets.dart'
     show formatRupees, SectionHeader;
@@ -58,7 +59,8 @@ class MarketingDashboardScreen extends StatelessWidget {
                     ),
                     _StatCard(
                       icon: Icons.local_shipping_outlined,
-                      value: '${orders.countByStatus(MarketingOrderStatus.ready)}',
+                      value:
+                          '${orders.countByStatus(MarketingOrderStatus.confirmed)}',
                       label: 'Ready to Ship',
                       color: MarketingColors.blue,
                       onTap: () => onOpenTab(1),
@@ -129,17 +131,21 @@ class MarketingDashboardScreen extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [
-          Text('MedSupply Co.',
-              style: TextStyle(color: Colors.white70, fontSize: 12)),
-          SizedBox(height: 2),
-          Text('Marketing Head',
+        children: [
+          // Real logged-in store/company name; the line is hidden entirely when
+          // the backend hasn't provided one (no fake company shown).
+          if (AuthService.storeName != null) ...[
+            Text(AuthService.storeName!,
+                style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            const SizedBox(height: 2),
+          ],
+          const Text('Marketing Head',
               style: TextStyle(
                   color: Colors.white,
                   fontSize: 24,
                   fontWeight: FontWeight.w800)),
-          SizedBox(height: 4),
-          Text('Manage orders, stock & promotions',
+          const SizedBox(height: 4),
+          const Text('Manage orders, stock & promotions',
               style: TextStyle(color: Colors.white70, fontSize: 13)),
         ],
       ),

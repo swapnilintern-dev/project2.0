@@ -1,4 +1,6 @@
 // ============================================================================
+import 'dart:math' as math;
+
 import 'services/auth_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // Clipboard (tap-to-copy support details)
@@ -125,10 +127,10 @@ Future<void> _onSignIn() async {
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     // Hero is sized off screen height but clamped so it works on small phones.
-    final heroHeight = (size.height * 0.34).clamp(220.0, 320.0);
+    final heroHeight = (size.height * 0.32).clamp(230.0, 300.0);
 
     return Scaffold(
-      backgroundColor: AppColors.pageBg,
+      backgroundColor: AppColors.lighterGreen,
       body: SafeArea(
         bottom: false,
         child: SingleChildScrollView(
@@ -136,11 +138,17 @@ Future<void> _onSignIn() async {
           child: Column(
             children: [
               _buildHero(heroHeight),
-              // Pull the card up so it overlaps the hero by 32px.
+              // Pull the card up so it overlaps the hero's wave by 32px.
               Transform.translate(
                 offset: const Offset(0, -32),
                 child: _buildCard(context),
               ),
+              // Trust badges strip (sits just under the card).
+              Transform.translate(
+                offset: const Offset(0, -20),
+                child: _trustBadges(),
+              ),
+              const SizedBox(height: 8),
             ],
           ),
         ),
@@ -159,88 +167,103 @@ Future<void> _onSignIn() async {
       child: Stack(
         clipBehavior: Clip.hardEdge,
         children: [
-          // Gradient background.
+          // Soft light-green backdrop.
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
-                colors: [AppColors.darkGreen, AppColors.primary],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+                colors: [AppColors.lighterGreen, AppColors.lightGreenBg],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
               ),
             ),
           ),
-          // Decorative translucent circles.
+          // Faint decorative circles.
           Positioned(
-            top: -40,
-            right: -30,
-            child: _circle(140, Colors.white.withValues(alpha: 0.12)),
+            top: -30,
+            right: -24,
+            child: _circle(130, AppColors.primary.withValues(alpha: 0.08)),
           ),
           Positioned(
-            top: 60,
-            left: -50,
-            child: _circle(120, Colors.white.withValues(alpha: 0.10)),
+            top: 30,
+            left: -44,
+            child: _circle(120, AppColors.primary.withValues(alpha: 0.06)),
           ),
+          // Subtle floating medical accents.
+          ..._heroFloatingIcons(),
+          // Curved green wave anchored to the bottom (the card overlaps it).
           Positioned(
-            bottom: 10,
-            right: 40,
-            child: _circle(60, Colors.white.withValues(alpha: 0.10)),
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: ClipPath(
+              clipper: _HeroWaveClipper(),
+              child: Container(
+                height: 92,
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [AppColors.darkGreen, AppColors.primary],
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                  ),
+                ),
+              ),
+            ),
           ),
-          // Hero content.
+          // Brand lockup: logo + tagline on the left (matches the mock), with a
+          // soft medical accent on the right.
           Padding(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+            padding: const EdgeInsets.fromLTRB(22, 20, 22, 44),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // White medicine-cross icon.
-                Container(
-                  width: 72,
-                  height: 72,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.18),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.5),
-                      width: 1.5,
-                    ),
-                  ),
-                  child: const Icon(
-                    Icons.local_pharmacy_rounded,
-                    color: AppColors.white,
-                    size: 38,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                const Text(
-                  'Welcome Back!',
-                  style: TextStyle(
-                    color: AppColors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                // Logo pill.
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: AppColors.white,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(Icons.local_pharmacy,
-                          color: AppColors.primary, size: 16),
-                      SizedBox(width: 6),
-                      Text(
-                        'VS Arogya',
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _brandLogo(96),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AppColors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withValues(alpha: 0.12),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: const Text(
+                        'SWASTHYA HI JEEVAN HAI',
                         style: TextStyle(
                           color: AppColors.darkGreen,
-                          fontSize: 14,
+                          fontSize: 10.5,
                           fontWeight: FontWeight.w800,
-                          letterSpacing: 0.2,
+                          letterSpacing: 1.1,
                         ),
+                      ),
+                    ),
+                  ],
+                ),
+                const Spacer(),
+                // Soft product/medical motif on the right (like the mock's vial).
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Icon(Icons.medical_services_rounded,
+                          size: 62,
+                          color: AppColors.primary.withValues(alpha: 0.22)),
+                      Positioned(
+                        right: -6,
+                        top: -6,
+                        child: Icon(Icons.eco_rounded,
+                            size: 26,
+                            color: AppColors.darkGreen.withValues(alpha: 0.35)),
                       ),
                     ],
                   ),
@@ -258,6 +281,103 @@ Future<void> _onSignIn() async {
         height: size,
         decoration: BoxDecoration(color: color, shape: BoxShape.circle),
       );
+
+  /// The FULL VS Arogya logo on a soft white plate — BoxFit.contain so the whole
+  /// badge + text stay visible (no oval crop), high filter quality for sharpness.
+  Widget _brandLogo(double size) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.20),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(10),
+      child: Image.asset(
+        'assets/icon/app_icon.png',
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.high,
+        errorBuilder: (_, _, _) => const Icon(Icons.local_pharmacy_rounded,
+            color: AppColors.darkGreen, size: 44),
+      ),
+    );
+  }
+
+  /// A few low-opacity medical icons scattered across the hero for texture.
+  List<Widget> _heroFloatingIcons() {
+    const specs = <(IconData, double, double, double)>[
+      (Icons.vaccines_rounded, 0.10, 0.30, 26),
+      (Icons.medication_rounded, 0.86, 0.22, 24),
+      (Icons.eco_rounded, 0.80, 0.52, 22),
+      (Icons.healing_rounded, 0.16, 0.58, 22),
+    ];
+    return [
+      for (final s in specs)
+        Positioned(
+          left: math.max(0, s.$2) * 360,
+          top: s.$3 * 200,
+          child: Opacity(
+            opacity: 0.10,
+            child: Icon(s.$1, color: AppColors.darkGreen, size: s.$4),
+          ),
+        ),
+    ];
+  }
+
+  /// Trust badges strip shown under the sign-in card.
+  Widget _trustBadges() {
+    Widget badge(IconData icon, String title, String sub) => Expanded(
+          child: Column(
+            children: [
+              Icon(icon, color: AppColors.darkGreen, size: 22),
+              const SizedBox(height: 6),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.darkText,
+                ),
+              ),
+              const SizedBox(height: 1),
+              Text(
+                sub,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 10, color: AppColors.greyText),
+              ),
+            ],
+          ),
+        );
+
+    Widget sep() => Container(
+          width: 1,
+          height: 34,
+          color: AppColors.border,
+        );
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          badge(Icons.verified_user_rounded, 'Trusted Quality', '100% Genuine'),
+          sep(),
+          badge(Icons.local_shipping_rounded, 'Timely Delivery', 'Pan India'),
+          sep(),
+          badge(Icons.handshake_rounded, 'Strong Partnership',
+              'For a Better Tomorrow'),
+        ],
+      ),
+    );
+  }
 
   // ---------------------------------------------------------------------------
   // CARD
@@ -280,9 +400,9 @@ Future<void> _onSignIn() async {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Sign In',
+              'Welcome Back! 👋',
               style: TextStyle(
-                fontSize: 22,
+                fontSize: 23,
                 fontWeight: FontWeight.w800,
                 color: AppColors.darkText,
               ),
@@ -890,4 +1010,33 @@ void _showCopiedToast(BuildContext context, String message) {
   Future.delayed(const Duration(milliseconds: 1400), () {
     if (entry.mounted) entry.remove();
   });
+}
+
+/// A gentle double-wave used for the green accent band at the bottom of the
+/// sign-in hero. The white card overlaps its top edge for a layered look.
+class _HeroWaveClipper extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    final path = Path();
+    path.moveTo(0, size.height * 0.55);
+    path.quadraticBezierTo(
+      size.width * 0.22,
+      0,
+      size.width * 0.52,
+      size.height * 0.28,
+    );
+    path.quadraticBezierTo(
+      size.width * 0.82,
+      size.height * 0.58,
+      size.width,
+      size.height * 0.12,
+    );
+    path.lineTo(size.width, size.height);
+    path.lineTo(0, size.height);
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }

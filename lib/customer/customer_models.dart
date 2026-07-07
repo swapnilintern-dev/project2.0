@@ -76,8 +76,14 @@ class Product {
       imageUrl: image,
       rating: json['rating'] == null ? 4.5 : _toDouble(json['rating']),
       reviewCount: _toInt(json['reviewCount']),
-      inStock: json['inStock'] is bool ? json['inStock'] as bool : true,
-      stockCount: _toInt(json['stockCount']),
+      // Backend sends `stock` (number). Derive availability from it so the
+      // server-side decrement (oversell fix) is reflected in the shop.
+      inStock: json['inStock'] is bool
+          ? json['inStock'] as bool
+          : (json['stock'] == null ? true : _toInt(json['stock']) > 0),
+      stockCount: json['stockCount'] != null
+          ? _toInt(json['stockCount'])
+          : _toInt(json['stock']),
       badge: json['badge'] as String?,
       packInfo: (json['packInfo'] ?? '').toString(),
     );
@@ -150,17 +156,25 @@ class PromoBanner {
     this.startColor = const Color(0xFF4CAF82),
     this.endColor = const Color(0xFF2E7D5E),
     this.categoryId,
+    this.imageUrl,
   });
 
   final String id;
-  final String tag; // e.g. "BULK OFFER"
-  final String title; // e.g. "Flat 20% OFF on orders above ₹5,000"
+  final String tag; // e.g. "BULK OFFER" (fallback text for image-less banners)
+  final String title; // e.g. "Flat 20% OFF on orders above ₹5,000" (fallback)
   final String ctaLabel;
   final Color startColor;
   final Color endColor;
 
   /// Optional deep-link target — when set, tapping opens this category.
   final String? categoryId;
+
+  /// Uploaded creative URL (Cloudinary). When present the app renders the image
+  /// edge-to-edge; otherwise it falls back to the gradient + text banner.
+  final String? imageUrl;
+
+  /// True when this banner is backed by an uploaded image creative.
+  bool get hasImage => imageUrl != null && imageUrl!.isNotEmpty;
 
   factory PromoBanner.fromJson(Map<String, dynamic> json) => PromoBanner(
         id: (json['id'] ?? json['_id'] ?? '').toString(),
@@ -170,6 +184,7 @@ class PromoBanner {
         startColor: _toColor(json['startColor']) ?? const Color(0xFF4CAF82),
         endColor: _toColor(json['endColor']) ?? const Color(0xFF2E7D5E),
         categoryId: json['categoryId'] as String?,
+        imageUrl: _bannerImageUrl(json['image']),
       );
 
   Map<String, dynamic> toJson() => {
@@ -180,7 +195,19 @@ class PromoBanner {
         'startColor': '#${startColor.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}',
         'endColor': '#${endColor.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}',
         'categoryId': categoryId,
+        'imageUrl': imageUrl,
       };
+}
+
+/// Extracts a banner image URL from the backend's `image` field, which is a
+/// `{ url, publicId }` object (tolerates a plain string too).
+String? _bannerImageUrl(Object? raw) {
+  if (raw is Map && raw['url'] is String) {
+    final url = raw['url'] as String;
+    return url.isEmpty ? null : url;
+  }
+  if (raw is String && raw.isNotEmpty) return raw;
+  return null;
 }
 
 /// A product category chip on the home / listing screens.
@@ -316,14 +343,16 @@ extension PaymentMethodX on PaymentMethod {
       };
 }
 
-/// Lifecycle of an order, in display order.
-enum OrderStatus { placed, confirmed, packed, outForDelivery, delivered, cancelled }
+/// Lifecycle of an order, in display order. Mirrors the backend order status
+/// enum: Pending, Confirm Order, Shipped, Out for Delivery, Delivered,
+/// Cancelled.
+enum OrderStatus { placed, confirmed, shipped, outForDelivery, delivered, cancelled }
 
 extension OrderStatusX on OrderStatus {
   String get label => switch (this) {
         OrderStatus.placed => 'Order Placed',
         OrderStatus.confirmed => 'Order Confirmed',
-        OrderStatus.packed => 'Packed',
+        OrderStatus.shipped => 'Shipped',
         OrderStatus.outForDelivery => 'Out for Delivery',
         OrderStatus.delivered => 'Delivered',
         OrderStatus.cancelled => 'Cancelled',
@@ -389,6 +418,7 @@ class Order {
     required this.deliveryFee,
     required this.gst,
     required this.discount,
+    this.invoiceUrl,
   });
 
   final String id;
@@ -401,6 +431,10 @@ class Order {
   final double deliveryFee;
   final double gst;
   final double discount;
+
+  /// Server-hosted invoice PDF (Cloudinary URL from the backend), when the
+  /// backend generated one. Null → the app builds the invoice on-device.
+  final String? invoiceUrl;
 
   double get total => subtotal + deliveryFee + gst - discount;
 

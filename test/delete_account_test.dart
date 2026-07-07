@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:self/account_deletion/account_deletion_controller.dart';
 import 'package:self/account_deletion/delete_account_screen.dart';
+import 'package:self/admin/admin_models.dart';
 import 'package:self/admin/admin_users_controller.dart';
 
 void main() {
@@ -56,6 +57,14 @@ void main() {
 
   test('Admin approval deletes the user from the directory', () {
     final users = AdminUsersController.instance;
+    // The directory is now backend-driven; seed a known user for the test.
+    users.debugSeed(const [
+      PlatformUser(
+        name: 'Apollo Pharmacy',
+        kind: UserKind.customer,
+        meta: 'Mumbai · Approved',
+      ),
+    ]);
     expect(users.users.any((u) => u.name == 'Apollo Pharmacy'), isTrue);
 
     final req = AccountDeletionController.instance.submit(

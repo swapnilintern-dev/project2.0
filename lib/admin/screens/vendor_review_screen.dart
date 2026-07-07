@@ -44,11 +44,44 @@ class VendorReviewScreen extends StatelessWidget {
                 for (int i = 0; i < vendor.docs.length; i++) ...[
                   _DocRow(
                     doc: vendor.docs[i],
-                    onTap: () => adminSnack(context, 'Preview ${vendor.docs[i].name}'),
+                    onTap: () => _previewDoc(context, vendor.docs[i]),
                   ),
                   if (i != vendor.docs.length - 1)
                     const Divider(height: 1, indent: 56, color: AppColors.border),
                 ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          const AdminGroupLabel('Contact Details'),
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
+            decoration: adminCard(),
+            child: Column(
+              children: [
+                AdminInfoRow(
+                    label: 'Contact Person', value: _v(vendor.legalName)),
+                const Divider(height: 14, color: AppColors.border),
+                AdminInfoRow(label: 'Mobile', value: _v(vendor.mobile)),
+                const Divider(height: 14, color: AppColors.border),
+                AdminInfoRow(label: 'Email', value: _v(vendor.email)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          const AdminGroupLabel('Address'),
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
+            decoration: adminCard(),
+            child: Column(
+              children: [
+                AdminInfoRow(label: 'Address', value: _v(vendor.fullAddress)),
+                const Divider(height: 14, color: AppColors.border),
+                AdminInfoRow(label: 'City', value: _v(vendor.city)),
+                const Divider(height: 14, color: AppColors.border),
+                AdminInfoRow(label: 'State', value: _v(vendor.state)),
+                const Divider(height: 14, color: AppColors.border),
+                AdminInfoRow(label: 'Pincode', value: _v(vendor.pincode)),
               ],
             ),
           ),
@@ -59,50 +92,138 @@ class VendorReviewScreen extends StatelessWidget {
             decoration: adminCard(),
             child: Column(
               children: [
-                AdminInfoRow(label: 'Legal Name', value: vendor.legalName),
+                AdminInfoRow(
+                    label: 'Vendor Type', value: _v(vendor.vendorType)),
                 const Divider(height: 14, color: AppColors.border),
-                AdminInfoRow(label: 'GSTIN', value: vendor.gstin),
+                AdminInfoRow(label: 'Shop Type', value: _v(vendor.shopType)),
                 const Divider(height: 14, color: AppColors.border),
-                AdminInfoRow(label: 'City', value: vendor.city),
+                AdminInfoRow(
+                    label: 'Drug License No.', value: _v(vendor.gstin)),
                 const Divider(height: 14, color: AppColors.border),
-                AdminInfoRow(label: 'Applied On', value: vendor.appliedOn),
+                AdminInfoRow(label: 'Applied On', value: _v(vendor.appliedOn)),
               ],
             ),
           ),
           const SizedBox(height: 24),
-          Row(
-            children: [
-              Expanded(
-                child: AdminButton(
-                  label: 'Reject',
-                  icon: Icons.close,
-                  color: AdminColors.red,
-                  outlined: true,
-                  onPressed: () {
-                    adminSnack(context, '${vendor.name} rejected',
-                        color: AdminColors.red);
-                    Navigator.of(context).pop(VendorStatus.suspended);
-                  },
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: AdminButton(
-                  label: 'Approve Vendor',
-                  icon: Icons.check_circle_outline,
-                  onPressed: () {
-                    adminSnack(context, '${vendor.name} approved');
-                    Navigator.of(context).pop(VendorStatus.active);
-                  },
-                ),
-              ),
-            ],
-          ),
+          _actionButtons(context),
         ],
       ),
     );
   }
+
+  /// Opens the actual uploaded document (Cloudinary image) full-screen with
+  /// pinch-to-zoom. Shows a message when the document has no image URL.
+  void _previewDoc(BuildContext context, VendorDoc doc) {
+    final url = doc.url;
+    if (url == null || url.isEmpty) {
+      adminSnack(context, '${doc.name} not available', color: AdminColors.red);
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(doc.name,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700)),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Flexible(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: InteractiveViewer(
+                  maxScale: 5,
+                  child: Image.network(
+                    url,
+                    fit: BoxFit.contain,
+                    loadingBuilder: (context, child, progress) =>
+                        progress == null
+                            ? child
+                            : const Padding(
+                                padding: EdgeInsets.all(40),
+                                child: CircularProgressIndicator(
+                                    color: Colors.white),
+                              ),
+                    errorBuilder: (context, error, stack) => const Padding(
+                      padding: EdgeInsets.all(40),
+                      child: Text(
+                        'Could not load document',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Approve/Reject buttons shown based on the vendor's current status:
+  /// Approved -> only Reject, Rejected -> only Approve, Pending -> both.
+  Widget _actionButtons(BuildContext context) {
+    final canApprove = vendor.status != VendorStatus.active;
+    final canReject = vendor.status != VendorStatus.suspended;
+    return Row(
+      children: [
+        if (canReject)
+          Expanded(
+            child: AdminButton(
+              label: 'Reject',
+              icon: Icons.close,
+              color: AdminColors.red,
+              outlined: true,
+              onPressed: () {
+                adminSnack(context, '${vendor.name} rejected',
+                    color: AdminColors.red);
+                Navigator.of(context).pop(VendorStatus.suspended);
+              },
+            ),
+          ),
+        if (canReject && canApprove) const SizedBox(width: 12),
+        if (canApprove)
+          Expanded(
+            flex: canReject ? 2 : 1,
+            child: AdminButton(
+              label: 'Approve Vendor',
+              icon: Icons.check_circle_outline,
+              onPressed: () {
+                adminSnack(context, '${vendor.name} approved');
+                Navigator.of(context).pop(VendorStatus.active);
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _avatarFallback() => Container(
+        width: 54,
+        height: 54,
+        color: AppColors.lightGreenBg,
+        child: const Icon(Icons.storefront, color: AppColors.darkGreen, size: 26),
+      );
+
+  /// Shows a dash for empty values so rows never look blank.
+  static String _v(String s) => s.trim().isEmpty ? '—' : s;
 
   Widget _header() {
     return Container(
@@ -110,14 +231,22 @@ class VendorReviewScreen extends StatelessWidget {
       decoration: adminCard(),
       child: Row(
         children: [
-          Container(
-            width: 54,
-            height: 54,
-            decoration: BoxDecoration(
-              color: AppColors.lightGreenBg,
-              borderRadius: BorderRadius.circular(14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: SizedBox(
+              width: 54,
+              height: 54,
+              child: (vendor.storePhotoUrl != null &&
+                      vendor.storePhotoUrl!.isNotEmpty)
+                  ? Image.network(
+                      vendor.storePhotoUrl!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => _avatarFallback(),
+                      loadingBuilder: (context, child, progress) =>
+                          progress == null ? child : _avatarFallback(),
+                    )
+                  : _avatarFallback(),
             ),
-            child: const Icon(Icons.storefront, color: AppColors.darkGreen, size: 26),
           ),
           const SizedBox(width: 14),
           Expanded(

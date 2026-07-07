@@ -8,8 +8,10 @@
 // =============================================================================
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../admin_api.dart';
 import '../admin_common.dart';
 import '../admin_models.dart';
 import '../admin_users_controller.dart';
@@ -45,8 +47,11 @@ class UserDetailScreen extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
         children: [
           _header(accent),
-          const SizedBox(height: 16),
-          _contactBar(context, accent),
+          if (_hasContactRows) ...[
+            const SizedBox(height: 22),
+            const AdminGroupLabel('Contact'),
+            _contactCard(context),
+          ],
           if (user.stats.isNotEmpty) ...[
             const SizedBox(height: 20),
             _statsRow(),
@@ -55,6 +60,11 @@ class UserDetailScreen extends StatelessWidget {
             const SizedBox(height: 22),
             const AdminGroupLabel('Information'),
             _infoCard(),
+          ],
+          if (user.documents.isNotEmpty) ...[
+            const SizedBox(height: 22),
+            const AdminGroupLabel('Verification Documents'),
+            _documentsCard(context),
           ],
           if (user.timeline.isNotEmpty) ...[
             const SizedBox(height: 20),
@@ -77,7 +87,7 @@ class UserDetailScreen extends StatelessWidget {
         children: [
           Row(
             children: [
-              AdminAvatar(label: initialsOf(user.name), size: 60, color: accent),
+              _avatar(accent),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
@@ -150,38 +160,139 @@ class UserDetailScreen extends StatelessWidget {
     );
   }
 
-  // ---- Contact actions -----------------------------------------------------
+  /// Header avatar: the real store/profile photo when available, otherwise the
+  /// coloured initials circle.
+  Widget _avatar(Color accent) {
+    final url = user.photoUrl;
+    if (url == null || url.isEmpty) {
+      return AdminAvatar(label: initialsOf(user.name), size: 60, color: accent);
+    }
+    return ClipOval(
+      child: Image.network(
+        url,
+        width: 60,
+        height: 60,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, progress) => progress == null
+            ? child
+            : AdminAvatar(
+                label: initialsOf(user.name), size: 60, color: accent),
+        errorBuilder: (_, _, _) =>
+            AdminAvatar(label: initialsOf(user.name), size: 60, color: accent),
+      ),
+    );
+  }
 
-  Widget _contactBar(BuildContext context, Color accent) {
-    return Row(
-      children: [
-        Expanded(
-          child: _ContactButton(
-            icon: Icons.call_outlined,
-            label: 'Call',
-            accent: accent,
-            onTap: () => adminSnack(context, 'Calling ${user.phone}'),
-          ),
+  // ---- Contact -------------------------------------------------------------
+
+  static bool _real(String v) => v.trim().isNotEmpty && v.trim() != '—';
+
+  bool get _hasContactRows =>
+      _real(user.phone) || _real(user.email) || _real(user.location);
+
+  /// Phone / email / full address as readable, copy-on-tap rows.
+  Widget _contactCard(BuildContext context) {
+    final rows = <Widget>[];
+    void add(IconData icon, String label, String value) {
+      if (!_real(value)) return;
+      if (rows.isNotEmpty) {
+        rows.add(const Divider(height: 14, color: AppColors.border));
+      }
+      rows.add(_CopyRow(icon: icon, label: label, value: value));
+    }
+
+    add(Icons.phone_outlined, 'Phone', user.phone);
+    add(Icons.mail_outline, 'Email', user.email);
+    add(Icons.location_on_outlined, 'Address', user.location);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+      decoration: adminCard(),
+      child: Column(children: rows),
+    );
+  }
+
+  // ---- Verification documents ----------------------------------------------
+
+  Widget _documentsCard(BuildContext context) {
+    return Container(
+      decoration: adminCard(),
+      child: Column(
+        children: [
+          for (int i = 0; i < user.documents.length; i++) ...[
+            _DocRow(
+              doc: user.documents[i],
+              onTap: () => _previewDoc(context, user.documents[i]),
+            ),
+            if (i != user.documents.length - 1)
+              const Divider(height: 1, indent: 56, color: AppColors.border),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Opens the uploaded document (Cloudinary image) full-screen with
+  /// pinch-to-zoom. Mirrors the vendor-review preview for a consistent feel.
+  void _previewDoc(BuildContext context, VendorDoc doc) {
+    final url = doc.url;
+    if (url == null || url.isEmpty) {
+      adminSnack(context, '${doc.name} not available', color: AdminColors.red);
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(doc.name,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700)),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Flexible(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: InteractiveViewer(
+                  maxScale: 5,
+                  child: Image.network(
+                    url,
+                    fit: BoxFit.contain,
+                    loadingBuilder: (context, child, progress) =>
+                        progress == null
+                            ? child
+                            : const Padding(
+                                padding: EdgeInsets.all(40),
+                                child: CircularProgressIndicator(
+                                    color: Colors.white),
+                              ),
+                    errorBuilder: (context, error, stack) => const Padding(
+                      padding: EdgeInsets.all(40),
+                      child: Text('Could not load document',
+                          style: TextStyle(color: Colors.white)),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _ContactButton(
-            icon: Icons.mail_outline,
-            label: 'Email',
-            accent: accent,
-            onTap: () => adminSnack(context, user.email),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _ContactButton(
-            icon: Icons.chat_bubble_outline,
-            label: 'Message',
-            accent: accent,
-            onTap: () => adminSnack(context, 'Messaging ${user.name}'),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -225,52 +336,31 @@ class UserDetailScreen extends StatelessWidget {
   // ---- Overflow actions ----------------------------------------------------
 
   void _moreSheet(BuildContext context, Color accent) {
-    final suspended = user.tag == UserTag.flagged ||
-        user.tag == UserTag.suspended;
     showAppActionSheet(
       context,
       title: user.name,
       actions: [
         AppSheetAction(
-          label: 'Edit ${user.kind.label}',
-          icon: Icons.edit_outlined,
-          onSelected: () => adminSnack(context, 'Edit ${user.name}'),
-        ),
-        AppSheetAction(
-          label: 'Reset Login',
-          icon: Icons.lock_reset,
-          onSelected: () => adminSnack(context, 'Login reset for ${user.name}'),
-        ),
-        AppSheetAction(
-          label: suspended ? 'Reactivate Account' : 'Suspend Account',
-          icon: suspended ? Icons.lock_open_outlined : Icons.block,
-          destructive: !suspended,
-          onSelected: () => adminSnack(
-            context,
-            suspended ? '${user.name} reactivated' : '${user.name} suspended',
-            color: suspended ? AppColors.darkGreen : AdminColors.red,
-          ),
-        ),
-        AppSheetAction(
-          label: 'Delete Account',
-          icon: Icons.delete_outline,
+          label: 'Suspend Account',
+          icon: Icons.block,
           destructive: true,
-          onSelected: () => _confirmDelete(context),
+          onSelected: () => _suspend(context),
         ),
       ],
     );
   }
 
-  /// Admin-initiated deletion of a Vendor / Delivery Agent. Removes the user
-  /// from the directory and (with a backend) from MongoDB.
-  Future<void> _confirmDelete(BuildContext context) async {
+  /// Suspends the vendor by rejecting them on the backend
+  /// (PUT /vsArogya/reject-vendor/:id). On success it re-syncs the directory so
+  /// the user's card shows the true (suspended) status, then closes this screen.
+  Future<void> _suspend(BuildContext context) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Delete account?'),
+        title: const Text('Suspend account?'),
         content: Text(
-          '${user.name}’s account will be permanently deleted. '
-          'This may not be reversible.',
+          '${user.name} will be suspended and notified by email. '
+          'They lose access until reactivated.',
         ),
         actions: [
           TextButton(
@@ -279,55 +369,119 @@ class UserDetailScreen extends StatelessWidget {
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AdminColors.red),
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Delete'),
+            child: const Text('Suspend'),
           ),
         ],
       ),
     );
-    if (ok != true) return;
-    // TODO(backend): DELETE /api/admin/users/:id — also deletes from MongoDB.
-    AdminUsersController.instance.remove(user);
-    if (context.mounted) {
+    if (ok != true || !context.mounted) return;
+
+    final success = await AdminApi().rejectVendor(user.id);
+    if (!context.mounted) return;
+    if (success) {
+      // Re-fetch the directory so the card reflects the suspended state.
+      AdminUsersController.instance.load(force: true);
+      adminSnack(context, '${user.name} suspended', color: AdminColors.red);
       Navigator.of(context).pop(); // close the detail screen
-      adminSnack(context, '${user.name} deleted', color: AdminColors.red);
+    } else {
+      adminSnack(context, 'Suspend failed — try again', color: AdminColors.red);
     }
   }
 }
 
-class _ContactButton extends StatelessWidget {
-  const _ContactButton({
+/// A label → value row that copies its value to the clipboard on tap.
+class _CopyRow extends StatelessWidget {
+  const _CopyRow({
     required this.icon,
     required this.label,
-    required this.accent,
-    required this.onTap,
+    required this.value,
   });
 
   final IconData icon;
   final String label;
-  final Color accent;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () {
+        Clipboard.setData(ClipboardData(text: value));
+        adminSnack(context, '$label copied');
+      },
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 16, color: AppColors.greyText),
+            const SizedBox(width: 8),
+            Text(label,
+                style: const TextStyle(
+                    fontSize: 12.5, color: AppColors.greyText)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                value,
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.darkText),
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.copy_rounded, size: 14, color: AppColors.greyText),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A tappable verification-document row (icon · name · "Tap to view").
+class _DocRow extends StatelessWidget {
+  const _DocRow({required this.doc, required this.onTap});
+  final VendorDoc doc;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: accent.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: accent.withValues(alpha: 0.25)),
-        ),
-        child: Column(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
           children: [
-            Icon(icon, color: accent, size: 22),
-            const SizedBox(height: 5),
-            Text(label,
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: accent)),
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: AppColors.lightGreenBg,
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: const Icon(Icons.description_outlined,
+                  size: 17, color: AppColors.darkGreen),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(doc.name,
+                      style: const TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.darkText)),
+                  const SizedBox(height: 1),
+                  const Text('Tap to view',
+                      style:
+                          TextStyle(fontSize: 11, color: AppColors.greyText)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right,
+                size: 20, color: AppColors.greyText),
           ],
         ),
       ),

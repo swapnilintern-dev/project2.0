@@ -3,19 +3,27 @@
 //
 // Replaces the live-map tracking screen. Shows a status timeline, order info,
 // delivery address, payment method, ordered items and an invoice summary, plus
-// Reorder / Cancel actions. Reads from OrdersController by id.
+// Reorder / Cancel actions.
+//
+// LIVE STATUS: the screen re-fetches the order from the backend (GET
+// /get-order) on open, on pull-to-refresh, and on a short poll timer, so when
+// the marketing/delivery team advances the order (Confirmed -> Shipped -> Out
+// for Delivery -> Delivered) the customer's timeline updates without leaving
+// the screen. All state still flows through OrdersController.byId(orderId).
 // =============================================================================
 
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
+import '../services/live_refresh.dart';
 import 'catalog.dart';
 import 'customer_controllers.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
+import 'invoice_card.dart';
 
-class OrderDetailsScreen extends StatelessWidget {
+class OrderDetailsScreen extends StatefulWidget {
   const OrderDetailsScreen({
     super.key,
     required this.orderId,
@@ -26,6 +34,30 @@ class OrderDetailsScreen extends StatelessWidget {
 
   /// When arriving straight from checkout we show a success banner.
   final bool justPlaced;
+
+  @override
+  State<OrderDetailsScreen> createState() => _OrderDetailsScreenState();
+}
+
+class _OrderDetailsScreenState extends State<OrderDetailsScreen>
+    with LiveRefreshMixin {
+  @override
+  void initState() {
+    super.initState();
+    // Pull the freshest order state on open, then keep it live via a short poll
+    // and on app-resume. When the marketing/delivery team advances the order,
+    // this screen's timeline updates on its own — no manual refresh needed.
+    startLiveRefresh();
+  }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => OrdersController.instance.refresh();
 
   void _reorder(BuildContext context, Order order) {
     for (final item in order.items) {
@@ -48,39 +80,60 @@ class OrderDetailsScreen extends StatelessWidget {
         title: const Text('Order Details',
             style: TextStyle(fontWeight: FontWeight.w800)),
       ),
-      body: ListenableBuilder(
-        listenable: OrdersController.instance,
-        builder: (context, _) {
-          final order = OrdersController.instance.byId(orderId);
-          if (order == null) {
-            return const EmptyState(
-              icon: Icons.error_outline,
-              title: 'Order not found',
-              message: 'We could not find this order. It may have been removed.',
+      body: RefreshIndicator(
+        color: AppColors.primary,
+        onRefresh: OrdersController.instance.refresh,
+        child: ListenableBuilder(
+          listenable: OrdersController.instance,
+          builder: (context, _) {
+            final order = OrdersController.instance.byId(widget.orderId);
+            if (order == null) {
+              // Keep it scrollable so pull-to-refresh still works while the
+              // order is (re)loading or genuinely missing.
+              return ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.6,
+                    child: OrdersController.instance.isLoaded
+                        ? const EmptyState(
+                            icon: Icons.error_outline,
+                            title: 'Order not found',
+                            message:
+                                'We could not find this order. It may have been removed.',
+                          )
+                        : const Center(child: CircularProgressIndicator()),
+                  ),
+                ],
+              );
+            }
+            return ListView(
+              padding: const EdgeInsets.all(16),
+              physics: const AlwaysScrollableScrollPhysics(
+                parent: BouncingScrollPhysics(),
+              ),
+              children: [
+                if (widget.justPlaced) _successBanner(),
+                if (widget.justPlaced) const SizedBox(height: 16),
+                _orderInfoCard(order),
+                const SizedBox(height: 16),
+                _card('Order Status', _timeline(order)),
+                const SizedBox(height: 16),
+                _card('Delivery Address', _addressBlock(order.address)),
+                const SizedBox(height: 16),
+                _card('Payment Method', _paymentBlock(order.paymentMethod)),
+                const SizedBox(height: 16),
+                _card('Ordered Items', _itemsBlock(order)),
+                const SizedBox(height: 16),
+                _card('Invoice Summary', _invoiceBlock(order)),
+                const SizedBox(height: 16),
+                InvoiceCard(order: order),
+                const SizedBox(height: 16),
+                _actions(context, order),
+              ],
             );
-          }
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            physics: const BouncingScrollPhysics(),
-            children: [
-              if (justPlaced) _successBanner(),
-              if (justPlaced) const SizedBox(height: 16),
-              _orderInfoCard(order),
-              const SizedBox(height: 16),
-              _card('Order Status', _timeline(order)),
-              const SizedBox(height: 16),
-              _card('Delivery Address', _addressBlock(order.address)),
-              const SizedBox(height: 16),
-              _card('Payment Method', _paymentBlock(order.paymentMethod)),
-              const SizedBox(height: 16),
-              _card('Ordered Items', _itemsBlock(order)),
-              const SizedBox(height: 16),
-              _card('Invoice Summary', _invoiceBlock(order)),
-              const SizedBox(height: 16),
-              _actions(context, order),
-            ],
-          );
-        },
+          },
+        ),
       ),
     );
   }
@@ -214,7 +267,7 @@ class OrderDetailsScreen extends StatelessWidget {
     const steps = [
       OrderStatus.placed,
       OrderStatus.confirmed,
-      OrderStatus.packed,
+      OrderStatus.shipped,
       OrderStatus.outForDelivery,
       OrderStatus.delivered,
     ];

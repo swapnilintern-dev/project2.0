@@ -69,6 +69,13 @@ class _MarketingProductsScreenState extends State<MarketingProductsScreen> {
               child: ListenableBuilder(
                 listenable: _controller,
                 builder: (context, _) {
+                  // First load in flight and nothing cached yet → spinner (not
+                  // an empty state, and never dummy data).
+                  if (!_controller.isLoaded && _controller.products.isEmpty) {
+                    return const Center(
+                      child: CircularProgressIndicator(color: AppColors.primary),
+                    );
+                  }
                   final products = _visible();
                   if (products.isEmpty) {
                     return EmptyState(

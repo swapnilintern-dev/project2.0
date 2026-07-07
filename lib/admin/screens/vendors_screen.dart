@@ -27,8 +27,8 @@ class AdminVendorsScreen extends StatefulWidget {
 class _AdminVendorsScreenState extends State<AdminVendorsScreen> {
   final AdminApi _api = AdminApi();
 
-  // Seeded demo vendors + live pending vendors loaded from the backend.
-  final List<Vendor> _vendors = List.of(kVendors);
+  // All vendors are fetched live from the backend — no dummy/seed data.
+  final List<Vendor> _vendors = [];
   int _tab = 0;
   String _query = '';
   bool _loading = false;
@@ -38,20 +38,20 @@ class _AdminVendorsScreenState extends State<AdminVendorsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadPending();
+    _loadVendors();
   }
 
-  /// Pulls vendors awaiting approval from the backend and adds them to the top.
-  Future<void> _loadPending() async {
+  /// Loads the full vendor directory from the backend (GET /all-vendors).
+  Future<void> _loadVendors() async {
     setState(() => _loading = true);
-    final pending = await _api.getPendingVendors();
+    final all = await _api.getAllVendors();
     if (!mounted) return;
     setState(() {
       _loading = false;
-      if (pending != null) {
-        // Drop any previously-loaded backend vendors, then re-add fresh.
-        _vendors.removeWhere((v) => v.id.isNotEmpty);
-        _vendors.insertAll(0, pending);
+      if (all != null) {
+        _vendors
+          ..clear()
+          ..addAll(all);
       }
     });
   }
@@ -85,48 +85,61 @@ class _AdminVendorsScreenState extends State<AdminVendorsScreen> {
       VendorReviewScreen(vendor: v),
     );
     if (result == null || !mounted) return;
-
-    // For a backend-sourced (pending) vendor, persist the decision to the
-    // server: approve emails their login credentials; reject marks them
-    // rejected and emails them.
-    if (v.id.isNotEmpty) {
-      if (result == VendorStatus.active) {
-        final ok = await _api.approveVendor(v.id);
-        if (!mounted) return;
-        if (ok) {
-          adminSnack(context, '${v.name} approved — credentials emailed');
-        } else {
-          adminSnack(context, 'Approval failed — try again',
-              color: AdminColors.red);
-          return; // keep it pending when the server call fails
-        }
-      } else if (result == VendorStatus.suspended) {
-        final ok = await _api.rejectVendor(v.id);
-        if (!mounted) return;
-        if (ok) {
-          adminSnack(context, '${v.name} rejected');
-        } else {
-          adminSnack(context, 'Reject failed — try again',
-              color: AdminColors.red);
-          return;
-        }
-      }
+    if (result == VendorStatus.active) {
+      await _approve(v);
+    } else if (result == VendorStatus.suspended) {
+      await _reject(v);
     }
-    setState(() => v.status = result);
   }
 
-  /// Inline reject from a vendor card (also persists to the backend).
+  /// Rejects a vendor, then re-syncs the list from the backend so the card
+  /// reflects the TRUE server state.
   Future<void> _reject(Vendor v) async {
-    if (v.id.isNotEmpty) {
-      final ok = await _api.rejectVendor(v.id);
-      if (!mounted) return;
-      if (!ok) {
-        adminSnack(context, 'Reject failed — try again', color: AdminColors.red);
-        return;
+    await _api.rejectVendor(v.id);
+    await _reconcile(
+      v.id,
+      VendorStatus.suspended,
+      okMsg: '${v.name} rejected',
+      failMsg: 'Reject failed — try again',
+    );
+  }
+
+  /// Approves a vendor (backend emails their credentials), then re-syncs.
+  Future<void> _approve(Vendor v) async {
+    await _api.approveVendor(v.id);
+    await _reconcile(
+      v.id,
+      VendorStatus.active,
+      okMsg: '${v.name} approved — credentials emailed',
+      failMsg: 'Approval failed — try again',
+    );
+  }
+
+  /// Re-fetches the vendor directory from the backend and reports whether
+  /// vendor [id] reached [expected]. Using the refreshed server list as the
+  /// source of truth makes the UI correct even when an endpoint returns a
+  /// non-2xx while still having persisted the change (e.g. reject succeeds
+  /// server-side but its confirmation email fails). Never leaves stale data.
+  Future<void> _reconcile(
+    String id,
+    VendorStatus expected, {
+    required String okMsg,
+    required String failMsg,
+  }) async {
+    await _loadVendors();
+    if (!mounted) return;
+    Vendor? updated;
+    for (final x in _vendors) {
+      if (x.id == id) {
+        updated = x;
+        break;
       }
-      adminSnack(context, '${v.name} rejected');
     }
-    setState(() => v.status = VendorStatus.suspended);
+    if (updated != null && updated.status == expected) {
+      adminSnack(context, okMsg);
+    } else {
+      adminSnack(context, failMsg, color: AdminColors.red);
+    }
   }
 
   @override
@@ -157,7 +170,7 @@ class _AdminVendorsScreenState extends State<AdminVendorsScreen> {
                       : IconButton(
                           icon: const Icon(Icons.refresh, size: 20),
                           tooltip: 'Refresh',
-                          onPressed: _loadPending,
+                          onPressed: _loadVendors,
                           visualDensity: VisualDensity.compact,
                         ),
                 ],
@@ -188,6 +201,7 @@ class _AdminVendorsScreenState extends State<AdminVendorsScreen> {
                         vendor: list[i],
                         onOpen: () => _openReview(list[i]),
                         onReject: () => _reject(list[i]),
+                        onApprove: () => _approve(list[i]),
                       ),
                     ),
             ),
@@ -203,16 +217,19 @@ class _VendorCard extends StatelessWidget {
     required this.vendor,
     required this.onOpen,
     required this.onReject,
+    required this.onApprove,
   });
 
   final Vendor vendor;
   final VoidCallback onOpen;
   final VoidCallback onReject;
+  final VoidCallback onApprove;
 
   @override
   Widget build(BuildContext context) {
-    final actionable = vendor.status == VendorStatus.pending ||
-        vendor.status == VendorStatus.review;
+    // Show Reject unless already suspended; show Approve unless already active.
+    final canReject = vendor.status != VendorStatus.suspended;
+    final canApprove = vendor.status != VendorStatus.active;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: adminCard(),
@@ -263,12 +280,12 @@ class _VendorCard extends StatelessWidget {
               ),
             ),
           ),
-          if (actionable) ...[
-            const Divider(height: 1, color: AppColors.border),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(13, 10, 13, 12),
-              child: Row(
-                children: [
+          const Divider(height: 1, color: AppColors.border),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(13, 10, 13, 12),
+            child: Row(
+              children: [
+                if (canReject)
                   Expanded(
                     child: AdminButton(
                       label: 'Reject',
@@ -279,19 +296,19 @@ class _VendorCard extends StatelessWidget {
                       onPressed: onReject,
                     ),
                   ),
-                  const SizedBox(width: 10),
+                if (canReject && canApprove) const SizedBox(width: 10),
+                if (canApprove)
                   Expanded(
                     child: AdminButton(
-                      label: 'Review',
-                      icon: Icons.fact_check_outlined,
+                      label: 'Approve',
+                      icon: Icons.check_circle_outline,
                       height: 42,
-                      onPressed: onOpen,
+                      onPressed: onApprove,
                     ),
                   ),
-                ],
-              ),
+              ],
             ),
-          ],
+          ),
         ],
       ),
     );

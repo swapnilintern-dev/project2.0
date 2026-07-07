@@ -8,12 +8,15 @@
 // marketing accent.
 // =============================================================================
 
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../customer/customer_models.dart' show PromoBanner;
 import '../customer/customer_widgets.dart' show SecondaryButton, showAppSnack;
 import 'marketing_controllers.dart';
-import 'marketing_models.dart';
 
 enum CampaignType { coupon, banner, push }
 
@@ -30,13 +33,25 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
 
   CampaignType _type = CampaignType.banner;
 
+  // Uploaded banner creative + a decoded preview (works on web + mobile).
+  final ImagePicker _picker = ImagePicker();
+  XFile? _bannerImage;
+  Uint8List? _bannerPreview;
+  bool _submitting = false;
+
+  // Qualitative targeting options only. Audience SIZES are intentionally not
+  // shown here — there's no backend endpoint for audience segmentation, so any
+  // number would be fabricated.
   static const _audiences = [
-    'All Pharmacies · 12.4k',
-    'New Buyers · 3.1k',
-    'Bulk Buyers · 1.8k',
-    'Inactive 30d · 2.5k',
+    'All Pharmacies',
+    'New Buyers',
+    'Bulk Buyers',
+    'Inactive 30 days',
   ];
   String _audience = _audiences.first;
+
+  // Discount % for a Coupon-type campaign (only used/shown for that type).
+  final _discount = TextEditingController();
 
   DateTime? _startDate;
   DateTime? _endDate;
@@ -44,14 +59,8 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
   @override
   void dispose() {
     _name.dispose();
+    _discount.dispose();
     super.dispose();
-  }
-
-  /// Rough reach estimate: a slice of the selected audience size.
-  int get _estimatedReach {
-    final match = RegExp(r'([\d.]+)k').firstMatch(_audience);
-    final base = match == null ? 0.0 : (double.tryParse(match.group(1)!) ?? 0);
-    return (base * 1000 * 0.74).round();
   }
 
   @override
@@ -84,10 +93,30 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
             _label('Campaign Type'),
             const SizedBox(height: 8),
             _typeSelector(),
-            const SizedBox(height: 18),
-            _label('Banner Creative'),
-            const SizedBox(height: 8),
-            _creativeUpload(),
+            // Discount % — only for a Coupon campaign (persisted to the backend).
+            if (_type == CampaignType.coupon) ...[
+              const SizedBox(height: 18),
+              _label('Discount %'),
+              const SizedBox(height: 6),
+              TextFormField(
+                controller: _discount,
+                keyboardType: TextInputType.number,
+                validator: (v) {
+                  if (_type != CampaignType.coupon) return null;
+                  final n = double.tryParse((v ?? '').trim());
+                  if (n == null || n <= 0 || n > 100) return 'Enter 1–100';
+                  return null;
+                },
+                decoration: _decoration('e.g. 20'),
+              ),
+            ],
+            // Banner creative — only relevant for a Banner campaign.
+            if (_type == CampaignType.banner) ...[
+              const SizedBox(height: 18),
+              _label('Banner Creative'),
+              const SizedBox(height: 8),
+              _creativeUpload(),
+            ],
             const SizedBox(height: 18),
             _label('Target Audience'),
             const SizedBox(height: 6),
@@ -108,23 +137,30 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
                 Expanded(child: _datePicker('End Date', isStart: false)),
               ],
             ),
-            const SizedBox(height: 18),
-            _reachCard(),
             const SizedBox(height: 24),
             Row(
               children: [
                 Expanded(
                   child: SecondaryButton(
                     label: 'Save Draft',
-                    onPressed: () => _submit(launch: false),
+                    onPressed:
+                        _submitting ? null : () => _submit(launch: false),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: ElevatedButton.icon(
-                    onPressed: () => _submit(launch: true),
-                    icon: const Icon(Icons.send, size: 18),
-                    label: const Text('Launch'),
+                    onPressed:
+                        _submitting ? null : () => _submit(launch: true),
+                    icon: _submitting
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Icon(Icons.send, size: 18),
+                    label: Text(_submitting ? 'Publishing…' : 'Launch'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
@@ -145,14 +181,25 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
 
   // ---------------------------------------------------------------------------
 
-  void _submit({required bool launch}) {
+  Future<void> _submit({required bool launch}) async {
+    if (_submitting) return;
     final formOk = _formKey.currentState?.validate() ?? false;
     if (!formOk) {
       showAppSnack(context, 'Please fix the highlighted fields',
           success: false);
       return;
     }
-    if (launch && (_startDate == null || _endDate == null)) {
+    // A banner campaign always needs a creative to publish.
+    if (launch && _type == CampaignType.banner && _bannerImage == null) {
+      showAppSnack(context, 'Upload a banner creative to launch',
+          success: false);
+      return;
+    }
+    // Coupons are dateless (the backend coupon has no schedule); only
+    // banner/push campaigns require a run window.
+    if (launch &&
+        _type != CampaignType.coupon &&
+        (_startDate == null || _endDate == null)) {
       showAppSnack(context, 'Pick a start and end date to launch',
           success: false);
       return;
@@ -172,18 +219,71 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
       return;
     }
 
-    // Launching a Coupon-type campaign creates a live coupon in the list.
-    if (_type == CampaignType.coupon) {
-      MarketingCouponsController.instance.add(
-        MarketingCoupon(
-          code: _codeFromName(name),
-          description: name,
-          redemptions: 0,
-        ),
+    // Banner campaign → upload the creative and publish it live to the
+    // customer home carousel (POST /promo-banners).
+    if (_type == CampaignType.banner) {
+      setState(() => _submitting = true);
+      final ok = await MarketingBannersController.instance.add(
+        PromoBanner(id: '', tag: 'OFFER', title: name),
+        _bannerImage!,
       );
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      if (ok) {
+        showAppSnack(context, 'Banner "$name" is now live 🎉');
+        Navigator.of(context).pop();
+      } else {
+        showAppSnack(context, 'Could not publish banner — try again',
+            success: false);
+      }
+      return;
     }
+
+    // Launching a Coupon-type campaign creates a REAL coupon on the backend
+    // (POST /coupons) so it persists and reaches customer checkout.
+    if (_type == CampaignType.coupon) {
+      setState(() => _submitting = true);
+      final err = await MarketingCouponsController.instance.addRemote(
+        code: _codeFromName(name),
+        description: name,
+        percentOff: double.parse(_discount.text.trim()),
+      );
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      if (err == null) {
+        showAppSnack(context, 'Coupon campaign "$name" launched 🚀');
+        Navigator.of(context).pop();
+      } else {
+        showAppSnack(context, err, success: false);
+      }
+      return;
+    }
+
+    // Push (and any future type) has no backend action yet.
     showAppSnack(context, 'Campaign "$name" launched 🚀');
     Navigator.of(context).pop();
+  }
+
+  /// Picks a banner creative from the gallery and decodes a preview.
+  Future<void> _pickCreative() async {
+    try {
+      final picked = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 2000,
+        imageQuality: 90,
+      );
+      if (picked == null) return;
+      final bytes = await picked.readAsBytes();
+      if (!mounted) return;
+      setState(() {
+        _bannerImage = picked;
+        _bannerPreview = bytes;
+      });
+    } catch (_) {
+      if (mounted) {
+        showAppSnack(context, 'Could not pick image', success: false);
+      }
+    }
   }
 
   String _codeFromName(String name) {
@@ -263,22 +363,62 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
   }
 
   Widget _creativeUpload() {
+    // ~2.4:1 preview matching the customer carousel so marketing sees the real
+    // crop. BoxFit.cover means any uploaded ratio renders cleanly on iOS +
+    // Android. Recommended source size: 1080×450.
     return GestureDetector(
-      onTap: () =>
-          showAppSnack(context, 'Creative upload coming soon', success: true),
-      child: Container(
-        height: 90,
-        decoration: BoxDecoration(
-          color: AppColors.lighterGreen,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border),
+      onTap: _submitting ? null : _pickCreative,
+      child: AspectRatio(
+        aspectRatio: 1080 / 450,
+        child: Container(
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: AppColors.lighterGreen,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: _bannerPreview == null
+              ? const Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.add_photo_alternate_outlined,
+                        size: 30, color: AppColors.greyText),
+                    SizedBox(height: 8),
+                    Text('Upload banner creative',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.darkText)),
+                    SizedBox(height: 2),
+                    Text('Recommended 1080×450 · JPG / PNG',
+                        style:
+                            TextStyle(fontSize: 11, color: AppColors.greyText)),
+                  ],
+                )
+              : Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.memory(_bannerPreview!, fit: BoxFit.cover),
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: Material(
+                        color: Colors.black54,
+                        shape: const CircleBorder(),
+                        clipBehavior: Clip.antiAlias,
+                        child: InkWell(
+                          onTap: _submitting ? null : _pickCreative,
+                          child: const Padding(
+                            padding: EdgeInsets.all(6),
+                            child:
+                                Icon(Icons.edit, size: 16, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
         ),
-        alignment: Alignment.center,
-        child: const Text('BANNER CREATIVE · 1080×400',
-            style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: AppColors.greyText)),
       ),
     );
   }
@@ -319,43 +459,6 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
           ),
         ),
       ],
-    );
-  }
-
-  Widget _reachCard() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.lightGreenBg,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.groups_outlined,
-              color: AppColors.darkGreen),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Estimated Reach',
-                    style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 14,
-                        color: AppColors.darkText)),
-                SizedBox(height: 2),
-                Text('Based on audience & budget',
-                    style: TextStyle(fontSize: 11.5, color: AppColors.greyText)),
-              ],
-            ),
-          ),
-          Text('~${(_estimatedReach / 1000).toStringAsFixed(1)}k',
-              style: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 20,
-                  color: AppColors.darkGreen)),
-        ],
-      ),
     );
   }
 

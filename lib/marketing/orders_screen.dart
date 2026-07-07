@@ -9,11 +9,14 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../services/auth_service.dart';
 import '../theme/app_theme.dart' show AppShadows;
+import '../services/live_refresh.dart';
 import '../customer/customer_widgets.dart'
     show formatRupees, showAppSnack, EmptyState;
 import 'marketing_controllers.dart';
 import 'marketing_models.dart';
+import 'assign_agent_sheet.dart';
 import 'order_details_screen.dart';
 
 class MarketingOrdersScreen extends StatefulWidget {
@@ -23,16 +26,38 @@ class MarketingOrdersScreen extends StatefulWidget {
   State<MarketingOrdersScreen> createState() => _MarketingOrdersScreenState();
 }
 
-class _MarketingOrdersScreenState extends State<MarketingOrdersScreen> {
+class _MarketingOrdersScreenState extends State<MarketingOrdersScreen>
+    with LiveRefreshMixin {
   MarketingOrderStatus _filter = MarketingOrderStatus.pending;
   String _query = '';
+  bool _refreshing = false;
 
   MarketingOrdersController get _controller => MarketingOrdersController.instance;
 
   @override
   void initState() {
     super.initState();
-    _controller.refresh();
+    // Keep the pipeline live so new orders + status changes surface on their
+    // own (GET /all-orders), matching what the customer sees.
+    startLiveRefresh();
+  }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => _controller.refresh();
+
+  /// Re-fetches all orders from the backend (GET /all-orders) with feedback.
+  Future<void> _doRefresh() async {
+    setState(() => _refreshing = true);
+    await _controller.refresh();
+    if (!mounted) return;
+    setState(() => _refreshing = false);
+    showAppSnack(context, 'Orders updated', success: true);
   }
 
   @override
@@ -55,6 +80,9 @@ class _MarketingOrdersScreenState extends State<MarketingOrdersScreen> {
                           o.buyer.toLowerCase().contains(q))
                       .toList();
                 }
+                if (!_controller.isLoaded && orders.isEmpty) {
+                  return const Center(child: CircularProgressIndicator());
+                }
                 if (orders.isEmpty) {
                   return EmptyState(
                     icon: Icons.inbox_outlined,
@@ -64,14 +92,18 @@ class _MarketingOrdersScreenState extends State<MarketingOrdersScreen> {
                         : 'No orders match "$_query".',
                   );
                 }
-                return ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                  itemCount: orders.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 12),
-                  itemBuilder: (context, i) => _OrderCard(
-                    order: orders[i],
-                    onAction: () => _onAction(orders[i]),
-                    onDetails: () => _onDetails(orders[i]),
+                return RefreshIndicator(
+                  onRefresh: _doRefresh,
+                  child: ListView.separated(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                    itemCount: orders.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 12),
+                    itemBuilder: (context, i) => _OrderCard(
+                      order: orders[i],
+                      onAction: () => _onAction(orders[i]),
+                      onDetails: () => _onDetails(orders[i]),
+                    ),
                   ),
                 );
               },
@@ -82,7 +114,15 @@ class _MarketingOrdersScreenState extends State<MarketingOrdersScreen> {
     );
   }
 
-  void _onAction(MarketingOrder order) {
+  Future<void> _onAction(MarketingOrder order) async {
+    // Moving Shipped -> Out for Delivery requires picking a real delivery agent.
+    if (order.status.next == MarketingOrderStatus.outForDelivery) {
+      final agent = await showAssignAgentSheet(context, order);
+      if (agent == null || !mounted) return;
+      _controller.assignAgent(order.id, agent);
+      showAppSnack(context, 'Assigned to ${agent.name} · Out for Delivery');
+      return;
+    }
     final next = order.status.next;
     _controller.advance(order.id);
     if (next != null) {
@@ -112,51 +152,58 @@ class _MarketingOrdersScreenState extends State<MarketingOrdersScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('MedSupply Co.',
-              style: TextStyle(color: Colors.white70, fontSize: 12)),
-          const SizedBox(height: 2),
-          const Text('Orders',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800)),
-          const SizedBox(height: 14),
+          // Real store/company name from the session; hidden when unknown.
+          if (AuthService.storeName != null) ...[
+            Text(AuthService.storeName!,
+                style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            const SizedBox(height: 2),
+          ],
           Row(
             children: [
-              Expanded(
-                child: TextField(
-                  onChanged: (v) => setState(() => _query = v),
-                  decoration: InputDecoration(
-                    hintText: 'Search order ID, buyer…',
-                    prefixIcon: const Icon(Icons.search, size: 20),
-                    isDense: true,
-                    filled: true,
-                    fillColor: Colors.white,
-                    contentPadding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Container(
-                height: 46,
-                width: 46,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(14),
-                ),
+              const Text('Orders',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w800)),
+              const Spacer(),
+              Material(
+                color: Colors.white.withValues(alpha: 0.18),
+                shape: const CircleBorder(),
+                clipBehavior: Clip.antiAlias,
                 child: IconButton(
-                  onPressed: () =>
-                      showAppSnack(context, 'Filters coming soon', success: true),
-                  icon: const Icon(Icons.tune, color: Colors.white),
-                  tooltip: 'Filter',
+                  icon: _refreshing
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.refresh, color: Colors.white, size: 20),
+                  tooltip: 'Refresh orders',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _refreshing ? null : _doRefresh,
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 14),
+          // Search field. (The non-functional "Filters coming soon" button was
+          // removed — the status tabs below already filter the pipeline.)
+          TextField(
+            onChanged: (v) => setState(() => _query = v),
+            decoration: InputDecoration(
+              hintText: 'Search order ID, buyer…',
+              prefixIcon: const Icon(Icons.search, size: 20),
+              isDense: true,
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide.none,
+              ),
+            ),
           ),
         ],
       ),
@@ -306,6 +353,7 @@ class _OrderCard extends StatelessWidget {
               ),
             ],
           ),
+          _assignedAgentLine(),
           const SizedBox(height: 12),
           Row(
             children: [
@@ -360,4 +408,29 @@ class _OrderCard extends StatelessWidget {
             style: TextStyle(
                 fontSize: 10, fontWeight: FontWeight.w800, color: color)),
       );
+
+  /// A "Delivery agent: X" line, shown once an agent has been assigned.
+  Widget _assignedAgentLine() {
+    final agent = MarketingOrdersController.instance.assignedAgentFor(order.id);
+    if (agent == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        children: [
+          const Icon(Icons.two_wheeler_outlined,
+              size: 15, color: MarketingColors.blue),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text('Delivery agent: $agent',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: MarketingColors.blue)),
+          ),
+        ],
+      ),
+    );
+  }
 }

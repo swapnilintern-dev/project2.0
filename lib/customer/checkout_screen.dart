@@ -6,6 +6,7 @@
 // OrdersController, clears the cart and routes to the Order Details screen.
 // =============================================================================
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
 
@@ -14,17 +15,10 @@ import '../theme/app_theme.dart' show AppShadows;
 import 'catalog.dart';
 import 'customer_api.dart';
 import 'customer_controllers.dart';
-import 'customer_mock_data.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
 import 'order_details_screen.dart';
 import 'addresses_screen.dart';
-
-/// Razorpay publishable Key ID. Replace with VS Arogya's real key before going
-/// live (test keys start with `rzp_test_`, live keys with `rzp_live_`).
-// TODO(razorpay): move this to a secure source and pair it with a backend that
-// creates the Razorpay order and verifies the payment signature.
-const String _razorpayKeyId = 'rzp_test_XXXXXXXXXXXXXX';
 
 class CheckoutScreen extends StatefulWidget {
   const CheckoutScreen({super.key});
@@ -36,10 +30,14 @@ class CheckoutScreen extends StatefulWidget {
 class _CheckoutScreenState extends State<CheckoutScreen> {
   final CustomerApi _api = CustomerApi();
 
-  Address _address = AddressController.instance.defaultAddress ??
-      MockData.addresses.first;
+  // The chosen delivery address. Null until the user has one — no fake fallback.
+  Address? _address = AddressController.instance.defaultAddress;
   PaymentMethod _payment = PaymentMethod.razorpay;
   bool _placing = false;
+
+  /// The backend order id awaiting online payment. Kept so a failed/cancelled
+  /// payment can be retried against the SAME order instead of placing a new one.
+  String? _pendingOrderId;
 
   late final Razorpay _razorpay;
 
@@ -50,6 +48,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       ..on(Razorpay.EVENT_PAYMENT_SUCCESS, _onPaymentSuccess)
       ..on(Razorpay.EVENT_PAYMENT_ERROR, _onPaymentError)
       ..on(Razorpay.EVENT_EXTERNAL_WALLET, _onExternalWallet);
+    // Pull the user's real past-order addresses so the default/picker reflects
+    // real data (OrdersController.refresh feeds AddressController.syncFromOrders).
+    if (!OrdersController.instance.isLoaded) {
+      OrdersController.instance.refresh().then((_) {
+        if (!mounted) return;
+        setState(() => _address ??= AddressController.instance.defaultAddress);
+      });
+    }
   }
 
   @override
@@ -66,61 +72,213 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     if (selected != null) setState(() => _address = selected);
   }
 
-  /// Place Order button. COD records the order immediately; Razorpay opens the
-  /// payment gateway and only records the order from the success callback.
+  /// Place Order button. COD records the order immediately; Razorpay places the
+  /// order, creates a server-side Razorpay order and opens the gateway — the
+  /// order is only marked paid after the server verifies the signature.
   Future<void> _placeOrder() async {
     final cart = CartController.instance;
-    if (cart.isEmpty) return;
-    setState(() => _placing = true);
+    // Nothing to place unless there's a cart, OR a pending online order to retry.
+    if (cart.isEmpty && _pendingOrderId == null) return;
 
-    if (_payment == PaymentMethod.razorpay) {
-      _openRazorpayGateway(cart.total);
-      return; // flow continues in _onPaymentSuccess / _onPaymentError
+    // A real delivery address is required — no fake fallback.
+    final address = _address;
+    if (address == null) {
+      showAppSnack(context, 'Add a delivery address to continue',
+          success: false);
+      _changeAddress();
+      return;
     }
 
-    // Cash on Delivery — no gateway, fulfil straight away.
-    await _finalizeOrder();
+    // razorpay_flutter is a MOBILE-ONLY plugin: on Flutter web the gateway never
+    // opens and no callback fires, so the button would spin forever. Guide the
+    // user to COD / the mobile app instead of hanging.
+    if (_payment == PaymentMethod.razorpay && kIsWeb) {
+      showAppSnack(context,
+          'Online payment opens only in the mobile app. Use Cash on Delivery here, or test on an Android/iOS device.',
+          success: false);
+      return;
+    }
+
+    setState(() => _placing = true);
+
+    // Ids that existed BEFORE this placement — used to recover the new order's
+    // id if the place-order response is lost to a timeout/cold start. The
+    // recovery only ever picks an order NOT in this set (and placed in the
+    // last few minutes), so it can never grab an old order.
+    final knownIds =
+        OrdersController.instance.orders.map((o) => o.id).toSet();
+
+    // ---- Cash on Delivery: place + finalise straight away. ----
+    if (_payment == PaymentMethod.cod) {
+      await _api.syncCartToServer(cart.items);
+      final (backendId, orderError) = await _api.placeOrderFromCart(
+        address,
+        couponCode: cart.appliedCoupon?.code,
+      );
+      // The server explicitly rejected the order (out of stock / coupon
+      // already used or expired) — tell the user, don't place anything.
+      if (orderError != null) {
+        if (!mounted) return;
+        setState(() => _placing = false);
+        showAppSnack(context, orderError, success: false);
+        return;
+      }
+      // Response lost (timeout) but the order may exist server-side — recover
+      // its real id so invoice + live tracking work.
+      var placedId = backendId;
+      placedId ??= await _api.recoverPlacedOrderId(knownIds);
+      if (placedId != null) {
+        await _api.payForOrder(placedId, method: PaymentMethod.cod);
+      }
+      await _finalizeLocally(placedId);
+      return;
+    }
+
+    // ---- Razorpay (online): order-first, then a verifiable payment. ----
+    try {
+      // Reuse an already-placed order on retry so a failed payment never
+      // creates a duplicate order.
+      String? orderId = _pendingOrderId;
+      if (orderId == null) {
+        await _api.syncCartToServer(cart.items);
+        final (newId, orderError) = await _api.placeOrderFromCart(
+          address,
+          couponCode: cart.appliedCoupon?.code,
+        );
+        // Explicit server rejection (stock / coupon) — show the real reason.
+        if (orderError != null) {
+          if (!mounted) return;
+          setState(() => _placing = false);
+          showAppSnack(context, orderError, success: false);
+          return;
+        }
+        orderId = newId;
+        // Lost response? Recover the order the server actually created so a
+        // retry never places a DUPLICATE order.
+        orderId ??= await _api.recoverPlacedOrderId(knownIds);
+      }
+      if (!mounted) return;
+      if (orderId == null) {
+        setState(() => _placing = false);
+        showAppSnack(context,
+            'Could not reach the server for payment. Check your connection or use Cash on Delivery.',
+            success: false);
+        return;
+      }
+      _pendingOrderId = orderId;
+
+      // Ask the backend to create the Razorpay order (amount/signature live here).
+      final pay = await _api.createOnlinePayment(orderId);
+      if (!mounted) return;
+      if (pay == null) {
+        setState(() => _placing = false);
+        showAppSnack(context,
+            'Could not start the payment. Please check your connection and try again.',
+            success: false);
+        return;
+      }
+      _openRazorpayGateway(pay);
+      // Flow continues in _onPaymentSuccess / _onPaymentError.
+    } catch (e) {
+      // Bulletproof: never leave the button spinning on an unexpected error.
+      if (!mounted) return;
+      setState(() => _placing = false);
+      showAppSnack(context, 'Something went wrong starting the payment. Try again.',
+          success: false);
+    }
   }
 
-  /// Opens the Razorpay checkout sheet for [amount] (in rupees).
-  ///
-  /// For a fully verifiable flow your backend should create a Razorpay order
-  /// and return its `order_id`; pass it below so the payment can be captured
-  /// and the signature verified server-side. Without it the sheet still opens
-  /// in test mode using the key + amount.
-  void _openRazorpayGateway(double amount) {
+  /// Opens the Razorpay checkout sheet using the SERVER-created order id + key,
+  /// so the payment is captured against a real order and can be verified.
+  void _openRazorpayGateway(OnlinePayment pay) {
+    // Razorpay wants a bare phone number (no spaces / country-code punctuation).
+    final contact = (_address?.phone ?? '').replaceAll(RegExp(r'[^0-9]'), '');
     final options = <String, dynamic>{
-      'key': _razorpayKeyId,
-      'amount': (amount * 100).round(), // Razorpay expects paise (integer)
-      'currency': 'INR',
+      'key': pay.keyId,
+      'order_id': pay.razorpayOrderId, // server-created — enables verification
+      'amount': pay.amount, // paise, from the server (matches the order)
+      'currency': pay.currency,
       'name': 'VS Arogya',
       'description': 'MediCaPlus order payment',
-      'prefill': <String, dynamic>{
-        'contact': _address.phone,
-      },
+      if (contact.length >= 10)
+        'prefill': <String, dynamic>{
+          'contact': contact.substring(contact.length - 10),
+        },
       'theme': <String, dynamic>{'color': '#1E8E5A'},
-      // TODO(backend): 'order_id': <id from your server-created Razorpay order>,
     };
     try {
       _razorpay.open(options);
     } catch (e) {
       if (!mounted) return;
       setState(() => _placing = false);
-      showAppSnack(context, 'Could not open Razorpay: $e');
+      showAppSnack(context, 'Could not open Razorpay: $e', success: false);
     }
   }
 
-  void _onPaymentSuccess(PaymentSuccessResponse response) {
+  /// Razorpay success → verify the signature server-side. Reaching this callback
+  /// means Razorpay CAPTURED the payment, so we never re-open the gateway from
+  /// here (that would create a second order = double charge). We always finalise
+  /// the order; the server only marks it "paid" when the signature verifies, and
+  /// an unverified capture stays a pending order for reconciliation.
+  Future<void> _onPaymentSuccess(PaymentSuccessResponse response) async {
+    final orderId = _pendingOrderId;
+    if (orderId == null || !mounted) return;
+
+    // Payment captured — this order must not be charged again.
+    _pendingOrderId = null;
+
+    final verified = await _api.verifyPayment(
+      razorpayOrderId: response.orderId ?? '',
+      paymentId: response.paymentId ?? '',
+      signature: response.signature ?? '',
+    );
     if (!mounted) return;
-    // TODO(backend): verify response.signature / paymentId / orderId on your
-    // server before fulfilling. We proceed here so the demo flow completes.
-    _finalizeOrder();
+
+    await _finalizeLocally(
+      orderId,
+      successMessage: verified
+          ? 'Payment successful 🎉'
+          : 'Payment received — we\'re confirming it. Check your orders shortly.',
+    );
   }
 
   void _onPaymentError(PaymentFailureResponse response) {
     if (!mounted) return;
     setState(() => _placing = false);
-    showAppSnack(context, 'Payment failed or cancelled. Please try again.');
+
+    // Surface the REAL Razorpay error so failures are diagnosable instead of a
+    // generic "try again". Code 2 == user cancelled; anything else is a real
+    // gateway/config error worth showing in full.
+    final code = response.code;
+    final rawMessage = response.message ?? '';
+    debugPrint('Razorpay error → code=$code message=$rawMessage');
+
+    if (code == Razorpay.PAYMENT_CANCELLED) {
+      // The order stays placed-but-unpaid; tapping Place Order retries the SAME
+      // order (see _pendingOrderId) rather than creating a new one.
+      showAppSnack(context, 'Payment cancelled. Tap Place Order to retry.',
+          success: false);
+      return;
+    }
+
+    // Razorpay often nests the useful text inside a JSON string — show whatever
+    // we can so the exact cause is visible.
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Payment error'),
+        content: Text(
+          rawMessage.isEmpty ? 'Error code: $code' : rawMessage,
+          style: const TextStyle(fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _onExternalWallet(ExternalWalletResponse response) {
@@ -128,31 +286,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     showAppSnack(context, 'Opening ${response.walletName ?? 'wallet'}…');
   }
 
-  /// Creates the order, records it, clears the cart and opens Order Details.
-  /// Shared by the COD path and the Razorpay success callback.
-  Future<void> _finalizeOrder() async {
+  /// Records the order locally, clears the cart and opens Order Details. Called
+  /// once the order is placed (COD) or the online payment is verified.
+  Future<void> _finalizeLocally(String? backendId, {String? successMessage}) async {
     final cart = CartController.instance;
-    if (cart.isEmpty) {
-      if (mounted) setState(() => _placing = false);
-      return;
-    }
-
-    // Create the order on the backend (built from the synced server cart) and
-    // record the payment method. Falls back to a locally-generated id so the
-    // flow still works offline / on web / when not logged in.
-    String orderId = 'MCP-${DateTime.now().millisecondsSinceEpoch % 100000}';
-    final backendId = await _api.placeOrderFromCart(_address);
-    if (backendId != null) {
-      orderId = backendId;
-      await _api.payForOrder(backendId, method: _payment);
-    }
+    final orderId =
+        backendId ?? 'MCP-${DateTime.now().millisecondsSinceEpoch % 100000}';
 
     final order = Order(
       id: orderId,
       placedAt: DateTime.now(),
       status: OrderStatus.placed,
       items: cart.items.map(OrderItem.fromCartItem).toList(),
-      address: _address,
+      // Non-null here: _placeOrder guards on a chosen address before finalising.
+      address: _address!,
       paymentMethod: _payment,
       subtotal: cart.subtotal,
       deliveryFee: cart.deliveryFee,
@@ -166,6 +313,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     Catalog.decrementForOrder(cart.items);
     cart.clear();
     setState(() => _placing = false);
+    if (successMessage != null) showAppSnack(context, successMessage);
 
     // Replace checkout + cart with a fresh order-details view.
     Navigator.of(context).pushReplacement(
@@ -236,6 +384,37 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   }
 
   Widget _addressCard() {
+    final address = _address;
+    // No address yet → a tappable prompt to add/select one (no fake fallback).
+    if (address == null) {
+      return InkWell(
+        onTap: _changeAddress,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.primary),
+            boxShadow: AppShadows.card,
+          ),
+          child: Row(
+            children: const [
+              Icon(Icons.add_location_alt_outlined, color: AppColors.primary),
+              SizedBox(width: 12),
+              Expanded(
+                child: Text('Add a delivery address',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                        color: AppColors.darkText)),
+              ),
+              Icon(Icons.chevron_right, color: AppColors.greyText),
+            ],
+          ),
+        ),
+      );
+    }
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -255,27 +434,31 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               children: [
                 Row(
                   children: [
-                    Text(_address.label,
+                    Text(address.label,
                         style: const TextStyle(
                             fontWeight: FontWeight.w800, fontSize: 14)),
                     const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: AppColors.lightGreenBg,
-                        borderRadius: BorderRadius.circular(6),
+                    if (address.phone.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: AppColors.lightGreenBg,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(address.phone,
+                            style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.darkGreen)),
                       ),
-                      child: Text(_address.phone,
-                          style: const TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.darkGreen)),
-                    ),
                   ],
                 ),
                 const SizedBox(height: 4),
-                Text('${_address.fullName}\n${_address.formatted}',
+                Text(
+                    address.fullName.isEmpty
+                        ? address.formatted
+                        : '${address.fullName}\n${address.formatted}',
                     style: const TextStyle(
                         fontSize: 13,
                         color: AppColors.greyText,
@@ -405,7 +588,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               label: 'Place Order · ${formatRupees(cart.total)}',
               icon: Icons.lock_outline,
               loading: _placing,
-              onPressed: cart.isEmpty ? null : _placeOrder,
+              onPressed: (cart.isEmpty || _address == null) ? null : _placeOrder,
             ),
           );
         },

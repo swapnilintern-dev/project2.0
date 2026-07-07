@@ -16,10 +16,31 @@ class AuthService {
   /// need backend CORS + `SameSite=None; Secure` to work.
   static String? sessionCookie;
 
+  /// JWT captured from the login response BODY (`token`). Sent as
+  /// `Authorization: Bearer <token>` on authed calls. Unlike the httpOnly
+  /// cookie, this works on web AND mobile, localhost AND production — so it's
+  /// the reliable auth path. (Requires the backend to return `token` on login
+  /// and to read the Authorization header in isAuthenticated.)
+  static String? authToken;
+
+  /// The logged-in user's display name (store / company name, falling back to
+  /// the contact person). Populated from the login response when the backend
+  /// includes it. Null until then — the UI shows a neutral label, never a fake
+  /// company. (Requires the backend login to return `store_name` /
+  /// `contact_person_name` for this to be populated.)
+  static String? storeName;
+
+  /// The mobile number the user signed in with. This is REAL, known
+  /// client-side without any backend change, so screens can show the user's
+  /// actual phone instead of a hardcoded placeholder.
+  static String? phone;
+
   static Future<Map<String, dynamic>> login({
     required String mobileNo,
     required String password,
   }) async {
+    // The mobile number is real, user-provided data — remember it for the UI.
+    phone = mobileNo.trim();
     final response = await http.post(
       Uri.parse('$baseUrl/vsArogya/login'),
       headers: {
@@ -31,15 +52,31 @@ class AuthService {
       }),
     );
 
-    // Capture the JWT cookie so later authed calls (cart) can resend it.
+    // Capture the JWT cookie so later authed calls (cart) can resend it (mobile).
     final setCookie = response.headers['set-cookie'];
     if (setCookie != null && setCookie.isNotEmpty) {
       sessionCookie = setCookie.split(';').first; // -> "token=<jwt>"
     }
 
-    return jsonDecode(response.body) as Map<String, dynamic>;
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    // Token-based auth — the reliable path on web + mobile (see [authToken]).
+    if (body['token'] is String && (body['token'] as String).isNotEmpty) {
+      authToken = body['token'] as String;
+    }
+    // Capture the display name if the backend sends one (store or contact
+    // person). Stays null otherwise so the UI never shows a fabricated name.
+    final name = body['store_name'] ?? body['contact_person_name'] ?? body['name'];
+    if (name is String && name.trim().isNotEmpty) {
+      storeName = name.trim();
+    }
+    return body;
   }
 
   /// Clears the captured session. Call on logout.
-  static void clearSession() => sessionCookie = null;
+  static void clearSession() {
+    sessionCookie = null;
+    authToken = null;
+    storeName = null;
+    phone = null;
+  }
 }

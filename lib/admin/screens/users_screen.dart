@@ -33,12 +33,25 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   static const _tabs = ['Vendors', 'Delivery Agents'];
   static const _kinds = [UserKind.customer, UserKind.agent];
 
-  // Reads from the live, mutable user store so deletions reflect immediately.
+  @override
+  void initState() {
+    super.initState();
+    // Fetch the live directory (vendors + delivery agents) from the backend.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      AdminUsersController.instance.load();
+    });
+  }
+
+  // Reads from the live user store so fetches/deletions reflect immediately.
   List<PlatformUser> _filteredFor(int tab) {
     var list = AdminUsersController.instance.byKind(_kinds[tab]);
     if (_query.isNotEmpty) {
       final q = _query.toLowerCase();
-      list = list.where((u) => u.name.toLowerCase().contains(q)).toList();
+      list = list.where((u) {
+        final hay =
+            '${u.name} ${u.meta} ${u.location} ${u.email}'.toLowerCase();
+        return hay.contains(q);
+      }).toList();
     }
     return list;
   }
@@ -73,24 +86,30 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: MiniStat(
-                      value: groupInt(kVendorCount),
-                      label: 'Vendors',
-                      color: AppColors.darkGreen,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: MiniStat(
-                      value: '$kAgentCount',
-                      label: 'Agents',
-                      color: AdminColors.purple,
-                    ),
-                  ),
-                ],
+              child: ListenableBuilder(
+                listenable: AdminUsersController.instance,
+                builder: (context, _) {
+                  final c = AdminUsersController.instance;
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: MiniStat(
+                          value: groupInt(c.countOf(UserKind.customer)),
+                          label: 'Vendors',
+                          color: AppColors.darkGreen,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: MiniStat(
+                          value: groupInt(c.countOf(UserKind.agent)),
+                          label: 'Agents',
+                          color: AdminColors.purple,
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
             if (tab == 1)
@@ -130,25 +149,90 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
               child: ListenableBuilder(
                 listenable: AdminUsersController.instance,
                 builder: (context, _) {
-                  final list = _filteredFor(tab);
-                  if (list.isEmpty) {
-                    return const AdminEmpty(label: 'No users found');
-                  }
-                  return ListView.builder(
-                    physics: adminScroll,
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
-                    itemCount: list.length,
-                    itemBuilder: (_, i) => _UserRow(
-                      user: list[i],
-                      onTap: () =>
-                          adminPush(context, UserDetailScreen(user: list[i])),
-                    ),
+                  final c = AdminUsersController.instance;
+                  return RefreshIndicator(
+                    color: AppColors.primary,
+                    onRefresh: () => c.load(force: true),
+                    child: _body(context, c, tab),
                   );
                 },
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// The list area: a spinner on the first load, a retry card on failure, an
+  /// empty state, or the tagged user rows. Every branch is scrollable so the
+  /// pull-to-refresh gesture works from any state.
+  Widget _body(BuildContext context, AdminUsersController c, int tab) {
+    // First load in flight and nothing to show yet.
+    if (c.isLoading && !c.isLoaded) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.only(bottom: 40),
+          child: CircularProgressIndicator(color: AppColors.primary),
+        ),
+      );
+    }
+
+    // Fetch failed and we have no cached data — offer a retry.
+    if (c.error != null && !c.isLoaded) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+        padding: const EdgeInsets.fromLTRB(24, 60, 24, 24),
+        children: [
+          const Icon(Icons.wifi_off_rounded,
+              size: 46, color: AppColors.greyText),
+          const SizedBox(height: 12),
+          Text(
+            c.error!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppColors.greyText, fontSize: 13.5),
+          ),
+          const SizedBox(height: 18),
+          Center(
+            child: SizedBox(
+              width: 160,
+              child: AdminButton(
+                label: 'Retry',
+                icon: Icons.refresh,
+                height: 44,
+                onPressed: () => c.load(force: true),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    final list = _filteredFor(tab);
+    if (list.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+        children: [
+          const SizedBox(height: 80),
+          AdminEmpty(
+            label: _query.isNotEmpty
+                ? 'No matches for "$_query"'
+                : (tab == 0 ? 'No vendors yet' : 'No delivery agents yet'),
+            icon: tab == 0
+                ? Icons.storefront_outlined
+                : Icons.delivery_dining_outlined,
+          ),
+        ],
+      );
+    }
+
+    return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+      itemCount: list.length,
+      itemBuilder: (_, i) => _UserRow(
+        user: list[i],
+        onTap: () => adminPush(context, UserDetailScreen(user: list[i])),
       ),
     );
   }

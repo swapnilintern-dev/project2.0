@@ -44,41 +44,56 @@ String formatTimeAgo(DateTime time) {
 
 /// The fulfilment pipeline for an incoming order, in display order. The tab
 /// labels in the UI are: New, Packing, Ready, Shipped, Done.
-enum MarketingOrderStatus { pending, packing, ready, shipped, done }
+/// Mirrors the backend order status enum exactly:
+/// ["Pending", "Confirm Order", "Shipped", "Out for Delivery", "Delivered",
+/// "Cancelled"]. The marketing pipeline advances an order through these via the
+/// matching backend status endpoints.
+enum MarketingOrderStatus {
+  pending,
+  confirmed,
+  shipped,
+  outForDelivery,
+  delivered,
+  cancelled,
+}
 
 extension MarketingOrderStatusX on MarketingOrderStatus {
   String get label => switch (this) {
         MarketingOrderStatus.pending => 'New',
-        MarketingOrderStatus.packing => 'Packing',
-        MarketingOrderStatus.ready => 'Ready',
+        MarketingOrderStatus.confirmed => 'Confirmed',
         MarketingOrderStatus.shipped => 'Shipped',
-        MarketingOrderStatus.done => 'Done',
+        MarketingOrderStatus.outForDelivery => 'Out for Delivery',
+        MarketingOrderStatus.delivered => 'Delivered',
+        MarketingOrderStatus.cancelled => 'Cancelled',
       };
 
   Color get color => switch (this) {
         MarketingOrderStatus.pending => AppColors.primary,
-        MarketingOrderStatus.packing => MarketingColors.orange,
-        MarketingOrderStatus.ready => MarketingColors.blue,
-        MarketingOrderStatus.shipped => AppColors.darkGreen,
-        MarketingOrderStatus.done => AppColors.greyText,
+        MarketingOrderStatus.confirmed => MarketingColors.orange,
+        MarketingOrderStatus.shipped => MarketingColors.blue,
+        MarketingOrderStatus.outForDelivery => MarketingColors.blue,
+        MarketingOrderStatus.delivered => AppColors.darkGreen,
+        MarketingOrderStatus.cancelled => AppColors.error,
       };
 
-  /// The contextual action that advances the order, or null when it is Done.
+  /// The contextual action that advances the order, or null when finished.
   String? get actionLabel => switch (this) {
         MarketingOrderStatus.pending => 'Accept',
-        MarketingOrderStatus.packing => 'Pack',
-        MarketingOrderStatus.ready => 'Ship',
-        MarketingOrderStatus.shipped => 'Mark Done',
-        MarketingOrderStatus.done => null,
+        MarketingOrderStatus.confirmed => 'Ship',
+        MarketingOrderStatus.shipped => 'Out for Delivery',
+        MarketingOrderStatus.outForDelivery => 'Mark Delivered',
+        MarketingOrderStatus.delivered => null,
+        MarketingOrderStatus.cancelled => null,
       };
 
   /// The status this order moves to when the action button is tapped.
   MarketingOrderStatus? get next => switch (this) {
-        MarketingOrderStatus.pending => MarketingOrderStatus.packing,
-        MarketingOrderStatus.packing => MarketingOrderStatus.ready,
-        MarketingOrderStatus.ready => MarketingOrderStatus.shipped,
-        MarketingOrderStatus.shipped => MarketingOrderStatus.done,
-        MarketingOrderStatus.done => null,
+        MarketingOrderStatus.pending => MarketingOrderStatus.confirmed,
+        MarketingOrderStatus.confirmed => MarketingOrderStatus.shipped,
+        MarketingOrderStatus.shipped => MarketingOrderStatus.outForDelivery,
+        MarketingOrderStatus.outForDelivery => MarketingOrderStatus.delivered,
+        MarketingOrderStatus.delivered => null,
+        MarketingOrderStatus.cancelled => null,
       };
 }
 
@@ -114,7 +129,7 @@ class MarketingOrder {
     this.items = const [],
     this.phone = '',
     this.address = '',
-    this.paymentTerm = 'Credit · Net 30',
+    this.paymentTerm = '', // real payment method from the backend; '' = unknown
     this.urgent = false,
     this.isNew = false,
   });
@@ -325,6 +340,55 @@ class InventoryProduct {
       badge: badge ?? this.badge,
       packInfo: packInfo ?? this.packInfo,
       imageUrl: imageUrl ?? this.imageUrl,
+    );
+  }
+}
+
+// =============================================================================
+// DELIVERY AGENTS
+// =============================================================================
+
+/// A delivery partner, fetched live from the backend (users with
+/// role == "delivery" in GET /vsArogya/all-vendors). Never dummy data.
+@immutable
+class DeliveryAgent {
+  const DeliveryAgent({
+    required this.id,
+    required this.name,
+    this.phone = '',
+    this.city = '',
+    this.email = '',
+  });
+
+  final String id;
+  final String name;
+  final String phone;
+  final String city;
+  final String email;
+
+  /// Two-letter initials for the avatar (e.g. "Suresh Patil" -> "SP").
+  String get initials {
+    final parts =
+        name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) {
+      final p = parts.first;
+      return p.substring(0, p.length >= 2 ? 2 : 1).toUpperCase();
+    }
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  factory DeliveryAgent.fromJson(Map<String, dynamic> j) {
+    final contact = (j['contact_person_name'] ?? '').toString().trim();
+    final store = (j['store_name'] ?? '').toString().trim();
+    return DeliveryAgent(
+      id: (j['_id'] ?? '').toString(),
+      name: contact.isNotEmpty
+          ? contact
+          : (store.isNotEmpty ? store : 'Delivery Agent'),
+      phone: (j['mobile_no'] ?? '').toString(),
+      city: (j['city'] ?? '').toString(),
+      email: (j['email'] ?? '').toString(),
     );
   }
 }

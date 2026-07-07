@@ -1,15 +1,20 @@
 // =============================================================================
 // MediCaPlus — Admin · Platform Overview (tab 0)
 //
-// The operator's landing screen: a gradient hero with the headline GMV, a 2×2
-// KPI grid (orders / vendors / pending approvals / open disputes), a 6-month
-// GMV trend chart, quick actions into the deeper tools (Analytics, Products,
-// Delivery), and a recent-activity feed.
+// The operator's landing screen, fully backed by the backend:
+//   GET /vsArogya/total-revenue   -> realised revenue (Delivered orders)
+//   GET /vsArogya/all-orders      -> total orders + delivered + recent feed
+//   GET /vsArogya/active-vendors  -> active (approved) vendor count
+//   GET /vsArogya/pending-vendor  -> pending approvals count
+//
+// A gradient hero with realised revenue, a 2×2 KPI grid, quick actions into the
+// deeper tools, and a recent-orders feed. Pull-to-refresh reloads everything.
 // =============================================================================
 
 import 'package:flutter/material.dart';
 
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../admin_api.dart';
 import '../admin_common.dart';
 import '../admin_main.dart';
 import '../admin_models.dart';
@@ -17,11 +22,55 @@ import 'analytics_screen.dart';
 import 'products_screen.dart';
 import 'delivery_management_screen.dart';
 
-class AdminOverviewScreen extends StatelessWidget {
+class AdminOverviewScreen extends StatefulWidget {
   const AdminOverviewScreen({super.key, required this.onOpenTab});
 
   /// Switches the shell to another bottom-nav tab (1=Vendors, 2=Orders…).
   final ValueChanged<int> onOpenTab;
+
+  @override
+  State<AdminOverviewScreen> createState() => _AdminOverviewScreenState();
+}
+
+class _AdminOverviewScreenState extends State<AdminOverviewScreen> {
+  final AdminApi _api = AdminApi();
+
+  bool _loading = true;
+  double? _revenue;
+  int? _activeVendors;
+  int? _pending;
+  List<AdminOrder> _orders = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  /// Loads every headline metric in parallel. Each call is independent and
+  /// null-safe, so a single failing endpoint never blanks the whole screen.
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final results = await Future.wait([
+      _api.getTotalRevenue(),
+      _api.getAllOrders(),
+      _api.getActiveVendorCount(),
+      _api.getPendingVendors(),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _revenue = results[0] as double?;
+      final orders = results[1] as List<AdminOrder>?;
+      if (orders != null) _orders = orders;
+      _activeVendors = results[2] as int?;
+      final pending = results[3] as List<Vendor>?;
+      _pending = pending?.length;
+    });
+  }
+
+  int get _deliveredCount =>
+      _orders.where((o) => o.status == AdminOrderStatus.delivered).length;
 
   @override
   Widget build(BuildContext context) {
@@ -29,32 +78,36 @@ class AdminOverviewScreen extends StatelessWidget {
       backgroundColor: AppColors.pageBg,
       body: SafeArea(
         bottom: false,
-        child: CustomScrollView(
-          physics: adminScroll,
-          slivers: [
-            SliverToBoxAdapter(child: _hero(context)),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _kpiGrid(context),
-                    const SizedBox(height: 22),
-                    const AdminSectionTitle('Quick Actions'),
-                    const SizedBox(height: 12),
-                    _quickActions(context),
-                    const SizedBox(height: 22),
-                    AdminSectionTitle('Recent Activity',
-                        actionLabel: 'View all',
-                        onAction: () => adminSnack(context, 'Full activity log')),
-                    const SizedBox(height: 12),
-                    ...kActivity.map((a) => _ActivityRow(item: a)),
-                  ],
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(
+                parent: BouncingScrollPhysics()),
+            slivers: [
+              SliverToBoxAdapter(child: _hero(context)),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _kpiGrid(context),
+                      const SizedBox(height: 22),
+                      const AdminSectionTitle('Quick Actions'),
+                      const SizedBox(height: 12),
+                      _quickActions(context),
+                      const SizedBox(height: 22),
+                      AdminSectionTitle('Recent Orders',
+                          actionLabel: 'View all',
+                          onAction: () => widget.onOpenTab(2)),
+                      const SizedBox(height: 12),
+                      _recentOrders(context),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -107,42 +160,44 @@ class AdminOverviewScreen extends StatelessWidget {
                 ),
               ),
               AdminBell(
-                count: 2,
+                count: _pending ?? 0,
                 light: true,
-                onTap: () => adminSnack(context, 'Notifications'),
+                onTap: () => widget.onOpenTab(1),
               ),
             ],
           ),
           const SizedBox(height: 22),
-          const Text('Gross Merchandise Value (MTD)',
+          const Text('Total Revenue (Delivered)',
               style: TextStyle(color: Colors.white70, fontSize: 13)),
           const SizedBox(height: 4),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              AnimatedCount(
-                target: 2.84,
-                decimals: 2,
-                prefix: '₹',
-                suffix: ' Cr',
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 34,
-                    fontWeight: FontWeight.w800),
+          if (_loading && _revenue == null)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 6),
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2.4, color: Colors.white),
               ),
-              const SizedBox(width: 10),
-              const Padding(
-                padding: EdgeInsets.only(bottom: 6),
-                child: ChangeBadge(pct: kGmvChangePct, onLight: true),
-              ),
-            ],
-          ),
+            )
+          else
+            AnimatedCount(
+              target: _revenue ?? 0,
+              grouped: true,
+              prefix: '₹',
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 34,
+                  fontWeight: FontWeight.w800),
+            ),
         ],
       ),
     );
   }
 
   // ---- KPI grid ------------------------------------------------------------
+
+  String _kpi(int? v) => v == null ? '—' : groupInt(v);
 
   Widget _kpiGrid(BuildContext context) {
     return GridView.count(
@@ -155,35 +210,36 @@ class AdminOverviewScreen extends StatelessWidget {
       children: [
         KpiCard(
           icon: Icons.receipt_long_outlined,
-          value: groupInt(kTotalOrders),
+          value: _kpi(_orders.isEmpty && _loading ? null : _orders.length),
           label: 'Total Orders',
           color: AdminColors.blue,
-          onTap: () => onOpenTab(2),
+          onTap: () => widget.onOpenTab(2),
         ),
         KpiCard(
           icon: Icons.storefront_outlined,
-          value: groupInt(kActiveVendors),
+          value: _kpi(_activeVendors),
           label: 'Active Vendors',
           color: AdminColors.green,
-          onTap: () => onOpenTab(1),
+          onTap: () => widget.onOpenTab(1),
         ),
         KpiCard(
           icon: Icons.pending_actions_outlined,
-          value: '$kPendingApprovals',
+          value: _kpi(_pending),
           label: 'Pending Approvals',
           color: AdminColors.orange,
-          onTap: () => onOpenTab(1),
+          onTap: () => widget.onOpenTab(1),
         ),
         KpiCard(
-          icon: Icons.gavel_outlined,
-          value: '$kOpenDisputes',
-          label: 'Open Disputes',
-          color: AdminColors.red,
-          onTap: () => onOpenTab(2),
+          icon: Icons.check_circle_outline,
+          value: _kpi(_orders.isEmpty && _loading ? null : _deliveredCount),
+          label: 'Delivered',
+          color: AdminColors.darkGreen,
+          onTap: () => widget.onOpenTab(2),
         ),
       ],
     );
   }
+
   // ---- Quick actions -------------------------------------------------------
 
   Widget _quickActions(BuildContext context) {
@@ -198,7 +254,8 @@ class AdminOverviewScreen extends StatelessWidget {
     return Row(
       children: [
         for (int i = 0; i < items.length; i++) ...[
-          Expanded(child: _QuickAction(
+          Expanded(
+              child: _QuickAction(
             icon: items[i].$1,
             label: items[i].$2,
             onTap: items[i].$3,
@@ -208,10 +265,33 @@ class AdminOverviewScreen extends StatelessWidget {
       ],
     );
   }
+
+  // ---- Recent orders -------------------------------------------------------
+
+  Widget _recentOrders(BuildContext context) {
+    if (_loading && _orders.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+            child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2.2))),
+      );
+    }
+    if (_orders.isEmpty) {
+      return const AdminEmpty(label: 'No orders yet');
+    }
+    final recent = _orders.take(5).toList();
+    return Column(
+      children: [for (final o in recent) _OrderRow(order: o)],
+    );
+  }
 }
 
 class _QuickAction extends StatelessWidget {
-  const _QuickAction({required this.icon, required this.label, required this.onTap});
+  const _QuickAction(
+      {required this.icon, required this.label, required this.onTap});
 
   final IconData icon;
   final String label;
@@ -249,12 +329,37 @@ class _QuickAction extends StatelessWidget {
   }
 }
 
-class _ActivityRow extends StatelessWidget {
-  const _ActivityRow({required this.item});
-  final ActivityItem item;
+class _OrderRow extends StatelessWidget {
+  const _OrderRow({required this.order});
+  final AdminOrder order;
+
+  (IconData, Color) get _visual => switch (order.status) {
+        AdminOrderStatus.delivered => (
+            Icons.check_circle_outline,
+            AdminColors.darkGreen
+          ),
+        AdminOrderStatus.cancelled => (Icons.cancel_outlined, AdminColors.red),
+        AdminOrderStatus.pending => (
+            Icons.pending_actions_outlined,
+            AdminColors.orange
+          ),
+        AdminOrderStatus.confirmed => (
+            Icons.inventory_2_outlined,
+            AdminColors.blue
+          ),
+        AdminOrderStatus.shipped => (
+            Icons.local_shipping_outlined,
+            AdminColors.purple
+          ),
+        AdminOrderStatus.outForDelivery => (
+            Icons.delivery_dining_outlined,
+            AdminColors.amber
+          ),
+      };
 
   @override
   Widget build(BuildContext context) {
+    final (icon, color) = _visual;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
@@ -265,34 +370,41 @@ class _ActivityRow extends StatelessWidget {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: item.color.withValues(alpha: 0.13),
+              color: color.withValues(alpha: 0.13),
               borderRadius: BorderRadius.circular(11),
             ),
-            child: Icon(item.icon, size: 20, color: item.color),
+            child: Icon(icon, size: 20, color: color),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(item.title,
+                Text('#${_shortId(order.id)} · ${money(order.amount)}',
                     style: const TextStyle(
                         fontSize: 13.5,
                         fontWeight: FontWeight.w700,
                         color: AppColors.darkText)),
                 const SizedBox(height: 2),
-                Text(item.subtitle,
+                Text('${order.status.label} · ${order.buyer}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, color: AppColors.greyText)),
+                    style:
+                        const TextStyle(fontSize: 12, color: AppColors.greyText)),
               ],
             ),
           ),
           const SizedBox(width: 8),
-          Text(item.timeAgo,
+          Text('${order.itemCount} items',
               style: const TextStyle(fontSize: 11, color: AppColors.greyText)),
         ],
       ),
     );
   }
+}
+
+/// Short, readable order reference from a Mongo _id (last 6 chars, upper-case).
+String _shortId(String id) {
+  if (id.length <= 6) return id.toUpperCase();
+  return id.substring(id.length - 6).toUpperCase();
 }

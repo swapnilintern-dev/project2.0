@@ -48,6 +48,15 @@ dependencies:
   # Charts for the admin dashboard revenue graph (cross-platform).
   fl_chart: ^0.68.0
 
+  # Invoice/bill PDF: generated on-device (no server dependency) and previewed /
+  # shared / saved / printed in-app. `pdf` builds the document, `printing`
+  # renders + shares it.
+  printing: ^5.13.4
+  pdf: ^3.11.1
+
+  # Native share sheet (Android + iOS) for the "Share product" button.
+  share_plus: ^10.1.4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -97,6 +106,8 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/vs_arogya_banner.png
+    - assets/icon/
+    - assets/invoice/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

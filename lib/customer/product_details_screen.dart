@@ -7,10 +7,12 @@
 // =============================================================================
 
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_widgets.dart';
 import 'catalog.dart';
+import 'customer_api.dart';
 import 'customer_controllers.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
@@ -29,21 +31,74 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
   int _qty = 1;
   bool _adding = false;
 
+  // --- inline search (the top search bar filters the catalogue live) ---
+  final CustomerApi _api = CustomerApi();
+  final TextEditingController _searchCtrl = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+  String _query = '';
+  bool _searching = false;
+
   @override
   void initState() {
     super.initState();
     // Reflect live stock / price changes from the shared catalogue store.
     Catalog.listenable.addListener(_onCatalogChanged);
+    _searchFocus.addListener(_onFocusChanged);
+    // Make sure the catalogue is loaded so search has something to match.
+    if (Catalog.all.isEmpty) _api.getProducts();
   }
 
   @override
   void dispose() {
     Catalog.listenable.removeListener(_onCatalogChanged);
+    _searchFocus.removeListener(_onFocusChanged);
+    _searchFocus.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
   void _onCatalogChanged() {
     if (mounted) setState(() {});
+  }
+
+  void _onFocusChanged() {
+    if (_searchFocus.hasFocus && !_searching) {
+      setState(() => _searching = true);
+    }
+  }
+
+  /// Products matching the current query (title or brand contains it).
+  List<Product> get _searchResults {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return const [];
+    return Catalog.all
+        .where((p) =>
+            p.title.toLowerCase().contains(q) ||
+            p.brand.toLowerCase().contains(q))
+        .toList();
+  }
+
+  /// Closes the inline search: clears the field, drops focus, hides the panel.
+  void _closeSearch() {
+    _searchFocus.unfocus();
+    _searchCtrl.clear();
+    setState(() {
+      _query = '';
+      _searching = false;
+    });
+  }
+
+  /// Opens the tapped result. Same product → just close search; otherwise
+  /// replace this screen so the back button returns to the original list.
+  void _openProduct(Product p) {
+    if (p.id == _p.id) {
+      _closeSearch();
+      return;
+    }
+    _searchFocus.unfocus();
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => ProductDetailsScreen(product: p)),
+    );
   }
 
   /// The live record (current stock/price) falling back to the one we were
@@ -55,97 +110,260 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
       .take(6)
       .toList();
 
-  Future<void> _addToCart({bool buyNow = false}) async {
+  Future<void> _addToCart() async {
     setState(() => _adding = true);
     await Future<void>.delayed(const Duration(milliseconds: 350));
     if (!mounted) return;
     CartController.instance.add(_p, quantity: _qty);
     setState(() => _adding = false);
-    if (buyNow) {
-      // Buy Now skips the cart and goes straight to checkout.
-      Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const CheckoutScreen()));
-    } else {
-      showAppSnack(context, '${_qty}x ${_p.title} added to cart');
-    }
+    showAppSnack(context, '${_qty}x ${_p.title} added to cart');
+  }
+
+  /// Buy Now → opens Checkout with this item so the customer picks their
+  /// address AND payment method (Razorpay — UPI / Cards / Net-Banking / Wallets
+  /// — or Cash on Delivery). Respects the chosen quantity, GST and any coupon
+  /// via the standard checkout flow.
+  void _buyNow() {
+    CartController.instance.add(_p, quantity: _qty);
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const CheckoutScreen()),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final topInset = MediaQuery.of(context).padding.top + kToolbarHeight;
     return Scaffold(
       backgroundColor: Colors.white,
-      body: CustomScrollView(
-        physics: const BouncingScrollPhysics(),
-        slivers: [
-          _buildAppBar(),
-          SliverToBoxAdapter(child: _buildBody()),
+      body: Stack(
+        children: [
+          CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              _buildAppBar(),
+              SliverToBoxAdapter(child: _buildImage()),
+              SliverToBoxAdapter(child: _buildBody()),
+            ],
+          ),
+          // Live search results drop down right below the pinned search bar.
+          if (_searching)
+            Positioned(
+              top: topInset,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _buildSearchPanel(),
+            ),
         ],
       ),
-      bottomNavigationBar: _buildBottomBar(),
+      bottomNavigationBar: _searching ? null : _buildBottomBar(),
     );
   }
 
+  /// The dropdown shown while searching: a prompt when empty, matching
+  /// products as a tappable list, or an empty state when nothing matches.
+  Widget _buildSearchPanel() {
+    final results = _searchResults;
+    return Material(
+      color: Colors.white,
+      elevation: 2,
+      child: _query.trim().isEmpty
+          ? _searchPrompt()
+          : results.isEmpty
+              ? EmptyState(
+                  icon: Icons.search_off,
+                  title: 'No results',
+                  message: 'No medicines match "${_query.trim()}".',
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  itemCount: results.length,
+                  separatorBuilder: (context, index) =>
+                      const Divider(height: 1, color: AppColors.border),
+                  itemBuilder: (context, i) => _resultTile(results[i]),
+                ),
+    );
+  }
+
+  Widget _searchPrompt() {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.search, size: 44, color: AppColors.greyText),
+            SizedBox(height: 12),
+            Text('Search medicines & brands',
+                style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.darkText)),
+            SizedBox(height: 4),
+            Text('Start typing to see matching products',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: AppColors.greyText)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _resultTile(Product p) {
+    return ListTile(
+      leading: Container(
+        width: 46,
+        height: 46,
+        decoration: BoxDecoration(
+          color: AppColors.lighterGreen,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: AppNetworkImage(
+          url: p.imageUrl,
+          fit: BoxFit.cover,
+          fallback: Icon(p.icon, color: AppColors.primary, size: 24),
+        ),
+      ),
+      title: Text(p.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+      subtitle: Text(p.brand,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: AppColors.greyText, fontSize: 12)),
+      trailing: Text('₹${p.price.toStringAsFixed(0)}',
+          style: const TextStyle(
+              fontWeight: FontWeight.w800, color: AppColors.primary)),
+      onTap: () => _openProduct(p),
+    );
+  }
+
+  /// Fetches a shareable link for this product from the backend
+  /// (GET /share-prod/:id) and opens the native share sheet (Android + iOS).
+  /// Falls back to sharing the product name if the link can't be fetched.
+  Future<void> _shareProduct() async {
+    final url = await _api.getShareUrl(_p.id);
+    if (!mounted) return;
+    final text = (url != null && url.isNotEmpty)
+        ? '${_p.title} — VS Arogya\n$url'
+        : '${_p.title} — VS Arogya';
+    await Share.share(text, subject: _p.title);
+  }
+
+  /// Pinned white top bar with the search field, plus wishlist + share.
   Widget _buildAppBar() {
     return SliverAppBar(
-      expandedHeight: 280,
       pinned: true,
-      backgroundColor: AppColors.lighterGreen,
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.white,
       foregroundColor: AppColors.darkText,
-      leading: _circleButton(Icons.arrow_back, () => Navigator.pop(context),
-          tooltip: 'Back'),
+      elevation: 0.5,
+      titleSpacing: 0,
+      leadingWidth: 44,
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back, size: 22),
+        onPressed: _searching ? _closeSearch : () => Navigator.pop(context),
+        tooltip: _searching ? 'Close search' : 'Back',
+      ),
+      title: _searchBar(),
       actions: [
         ListenableBuilder(
           listenable: WishlistController.instance,
           builder: (context, _) {
             final saved = WishlistController.instance.contains(_p.id);
-            return _circleButton(
-              saved ? Icons.favorite : Icons.favorite_border,
-              () {
-                WishlistController.instance.toggle(_p.id);
+            return IconButton(
+              icon: Icon(saved ? Icons.favorite : Icons.favorite_border,
+                  color: saved ? AppColors.error : AppColors.darkText, size: 22),
+              tooltip: 'Wishlist',
+              onPressed: () {
+                WishlistController.instance.toggle(_p);
                 showAppSnack(context,
                     saved ? 'Removed from saved' : 'Saved to wishlist');
               },
-              color: saved ? AppColors.error : AppColors.darkText,
-              tooltip: 'Wishlist',
             );
           },
         ),
-        _circleButton(Icons.share_outlined,
-            () => showAppSnack(context, 'Share link copied'),
-            tooltip: 'Share'),
-        const SizedBox(width: 8),
+        IconButton(
+          icon: const Icon(Icons.share_outlined, size: 22),
+          tooltip: 'Share',
+          onPressed: _shareProduct,
+        ),
+        const SizedBox(width: 4),
       ],
-      flexibleSpace: FlexibleSpaceBar(
-        background: Container(
-          color: AppColors.lighterGreen,
-          child: Hero(
-            tag: 'product-${_p.id}',
-            child: Center(
-              child: AppNetworkImage(
-                url: _p.imageUrl,
-                fit: BoxFit.contain,
-                fallback: Icon(_p.icon, size: 120, color: AppColors.primary),
-              ),
-            ),
+    );
+  }
+
+  /// The product hero image, shown below the search app bar.
+  Widget _buildImage() {
+    return Container(
+      height: 280,
+      width: double.infinity,
+      color: AppColors.lighterGreen,
+      child: Hero(
+        tag: 'product-${_p.id}',
+        child: Center(
+          child: AppNetworkImage(
+            url: _p.imageUrl,
+            fit: BoxFit.contain,
+            fallback: Icon(_p.icon, size: 120, color: AppColors.primary),
           ),
         ),
       ),
     );
   }
 
-  Widget _circleButton(IconData icon, VoidCallback onTap,
-      {Color? color, String? tooltip}) {
-    return Padding(
-      padding: const EdgeInsets.all(8),
-      child: Material(
-        color: Colors.white,
-        shape: const CircleBorder(),
-        elevation: 1,
-        child: IconButton(
-          onPressed: onTap,
-          icon: Icon(icon, color: color ?? AppColors.darkText, size: 20),
-          tooltip: tooltip,
-          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+  /// Live search field in the app bar. Tapping it opens the keyboard; typing
+  /// filters the catalogue and shows matches in the panel below (see
+  /// [_buildSearchPanel]). No navigation — everything happens in place.
+  Widget _searchBar() {
+    return Container(
+      height: 40,
+      alignment: Alignment.center,
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.lighterGreen,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: TextField(
+        controller: _searchCtrl,
+        focusNode: _searchFocus,
+        textInputAction: TextInputAction.search,
+        style: const TextStyle(fontSize: 13.5, color: AppColors.darkText),
+        cursorColor: AppColors.primary,
+        onTap: () {
+          if (!_searching) setState(() => _searching = true);
+        },
+        onChanged: (v) => setState(() {
+          _query = v;
+          _searching = true;
+        }),
+        decoration: InputDecoration(
+          isDense: true,
+          hintText: 'Search medicines, brands…',
+          hintStyle: const TextStyle(color: AppColors.greyText, fontSize: 13.5),
+          prefixIcon:
+              const Icon(Icons.search, size: 20, color: AppColors.greyText),
+          prefixIconConstraints:
+              const BoxConstraints(minWidth: 38, minHeight: 38),
+          suffixIcon: _query.isEmpty
+              ? null
+              : GestureDetector(
+                  onTap: () => setState(() {
+                    _searchCtrl.clear();
+                    _query = '';
+                  }),
+                  child: const Icon(Icons.close,
+                      size: 18, color: AppColors.greyText),
+                ),
+          suffixIconConstraints:
+              const BoxConstraints(minWidth: 34, minHeight: 34),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.only(right: 12, bottom: 10),
         ),
       ),
     );
@@ -401,7 +619,8 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
               child: SecondaryButton(
                 label: 'Buy Now',
                 icon: Icons.flash_on,
-                onPressed: _adding ? null : () => _addToCart(buyNow: true),
+                onPressed:
+                    (_adding || !_p.inStock) ? null : () => _buyNow(),
               ),
             ),
             const SizedBox(width: 12),

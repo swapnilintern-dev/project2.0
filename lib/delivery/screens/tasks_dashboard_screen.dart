@@ -5,17 +5,11 @@ import '../../theme/app_theme.dart' show AppPalette;
 import '../delivery_mock_data.dart';
 import '../delivery_models.dart';
 import '../screens/delivery_verification_screen.dart';
-import '../screens/route_screen.dart';
 import '../widgets/stat_card.dart';
 import '../widgets/task_card.dart';
 
 class TasksDashboardScreen extends StatefulWidget {
-  const TasksDashboardScreen({
-    super.key,
-    required this.onOpenRoute,
-  });
-
-  final VoidCallback onOpenRoute;
+  const TasksDashboardScreen({super.key});
 
   @override
   State<TasksDashboardScreen> createState() => _TasksDashboardScreenState();
@@ -43,12 +37,6 @@ class _TasksDashboardScreenState extends State<TasksDashboardScreen> {
     );
   }
 
-  void _openRoute(DeliveryTask task) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => RouteScreen(taskId: task.id)),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -63,7 +51,7 @@ class _TasksDashboardScreenState extends State<TasksDashboardScreen> {
             parent: AlwaysScrollableScrollPhysics(),
           ),
           slivers: [
-            SliverToBoxAdapter(child: _header(rider, ctrl)),
+            SliverToBoxAdapter(child: _header(rider)),
             SliverToBoxAdapter(child: _statsRow(ctrl)),
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -94,13 +82,6 @@ class _TasksDashboardScreenState extends State<TasksDashboardScreen> {
                       for (final task in tasks)
                         TaskCard(
                           task: task,
-                          onNavigate: task.status ==
-                                  DeliveryTaskStatus.active
-                              ? () {
-                                  widget.onOpenRoute();
-                                  _openRoute(task);
-                                }
-                              : () {},
                           onStartDelivery: task.status ==
                                   DeliveryTaskStatus.active
                               ? () => _startDelivery(task)
@@ -116,7 +97,7 @@ class _TasksDashboardScreenState extends State<TasksDashboardScreen> {
     );
   }
 
-  Widget _header(RiderProfile rider, DeliveryController ctrl) {
+  Widget _header(RiderProfile rider) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 22),
@@ -165,24 +146,6 @@ class _TasksDashboardScreenState extends State<TasksDashboardScreen> {
                 ],
               ),
             ),
-            Column(
-              children: [
-                Text(
-                  ctrl.online ? 'Online' : 'Offline',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.9),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                Switch.adaptive(
-                  value: ctrl.online,
-                  onChanged: ctrl.setOnline,
-                  activeThumbColor: Colors.white,
-                  activeTrackColor: AppColors.primary,
-                ),
-              ],
-            ),
           ],
         ),
       ),
@@ -190,7 +153,6 @@ class _TasksDashboardScreenState extends State<TasksDashboardScreen> {
   }
 
   Widget _statsRow(DeliveryController ctrl) {
-    final rider = ctrl.rider ?? DeliveryMockData.rider;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       child: Row(
@@ -205,13 +167,6 @@ class _TasksDashboardScreenState extends State<TasksDashboardScreen> {
             value: '₹${ctrl.todayEarnings.round()}',
             label: 'Earned',
             icon: Icons.currency_rupee,
-          ),
-          const SizedBox(width: 10),
-          DeliveryStatCard(
-            value: '${rider.rating}',
-            label: 'Rating',
-            icon: Icons.star,
-            accentColor: AppPalette.warning,
           ),
         ],
       ),

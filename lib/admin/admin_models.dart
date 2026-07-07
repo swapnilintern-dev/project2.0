@@ -155,9 +155,12 @@ extension VendorStatusX on VendorStatus {
 }
 
 class VendorDoc {
-  const VendorDoc(this.name, this.verified);
+  const VendorDoc(this.name, this.verified, {this.url});
   final String name;
   final bool verified;
+
+  /// The uploaded document's image URL (Cloudinary), or null when not provided.
+  final String? url;
 }
 
 class Vendor {
@@ -172,6 +175,14 @@ class Vendor {
     required this.appliedOn,
     required this.status,
     required this.docs,
+    this.mobile = '',
+    this.email = '',
+    this.fullAddress = '',
+    this.state = '',
+    this.pincode = '',
+    this.storePhotoUrl,
+    this.vendorType = '',
+    this.shopType = '',
   });
 
   /// Backend _id (empty for the seeded demo vendors). Used to approve via API.
@@ -185,189 +196,118 @@ class Vendor {
   final String appliedOn;
   VendorStatus status;
   final List<VendorDoc> docs;
+
+  // --- Extra detail fields (populated from the backend) ---
+  final String mobile;
+  final String email;
+  final String fullAddress;
+  final String state;
+  final String pincode;
+  final String? storePhotoUrl; // shown as the header avatar
+  final String vendorType;
+  final String shopType;
 }
 
-// TODO: GET /api/admin/vendors
-final List<Vendor> kVendors = [
-  Vendor(
-    name: 'MedSupply Co.',
-    legalName: 'MedSupply Distributors Pvt Ltd',
-    city: 'Mumbai',
-    gstin: '27MEDSP1234K1Z5',
-    orders: 1240,
-    rating: 4.8,
-    appliedOn: '02 Jan 2026',
-    status: VendorStatus.active,
-    docs: const [
-      VendorDoc('Store Photo', true),
-      VendorDoc('Drug License Copy', true),
-      VendorDoc('GST Certificate', true),
-    ],
-  ),
-  Vendor(
-    name: 'HealthFirst Dist.',
-    legalName: 'HealthFirst Distribution LLP',
-    city: 'Pune',
-    gstin: '27HLTHF5678M1Z2',
-    orders: 890,
-    rating: 4.6,
-    appliedOn: '08 Jan 2026',
-    status: VendorStatus.active,
-    docs: const [
-      VendorDoc('Store Photo', true),
-      VendorDoc('Drug License Copy', true),
-      VendorDoc('GST Certificate', true),
-    ],
-  ),
-  Vendor(
-    name: 'CarePlus Wholesale',
-    legalName: 'CarePlus Wholesale Pvt Ltd',
-    city: 'Thane',
-    gstin: '27CRPLS5678K1Z2',
-    orders: 0,
-    rating: 0,
-    appliedOn: '14 Jun 2026',
-    status: VendorStatus.pending,
-    docs: const [
-      VendorDoc('Store Photo', true),
-      VendorDoc('Drug License Copy', true),
-      VendorDoc('GST Certificate', false),
-    ],
-  ),
-  Vendor(
-    name: 'QuickMeds Supply',
-    legalName: 'QuickMeds Supply Co.',
-    city: 'Nashik',
-    gstin: '27QKMDS9012P1Z8',
-    orders: 12,
-    rating: 4.1,
-    appliedOn: '11 Jun 2026',
-    status: VendorStatus.review,
-    docs: const [
-      VendorDoc('Store Photo', true),
-      VendorDoc('Drug License Copy', false),
-      VendorDoc('GST Certificate', true),
-    ],
-  ),
-  Vendor(
-    name: 'ValueRx Traders',
-    legalName: 'ValueRx Traders Pvt Ltd',
-    city: 'Nagpur',
-    gstin: '27VLRXT3456R1Z1',
-    orders: 340,
-    rating: 3.2,
-    appliedOn: '20 Feb 2026',
-    status: VendorStatus.suspended,
-    docs: const [
-      VendorDoc('Store Photo', true),
-      VendorDoc('Drug License Copy', true),
-      VendorDoc('GST Certificate', true),
-    ],
-  ),
-];
+// Vendors are fetched live from the backend (GET /vsArogya/all-vendors) via
+// AdminApi.getAllVendors() — there is no dummy/seed vendor list.
 
 // -----------------------------------------------------------------------------
 // ORDERS
 // -----------------------------------------------------------------------------
 
-enum AdminOrderStatus { processing, transit, delivered, disputed }
+// Backend order lifecycle (server orderModel enum):
+// Pending → Confirm Order → Shipped → Out for Delivery → Delivered / Cancelled.
+enum AdminOrderStatus {
+  pending,
+  confirmed,
+  shipped,
+  outForDelivery,
+  delivered,
+  cancelled,
+}
 
 extension AdminOrderStatusX on AdminOrderStatus {
   String get label => switch (this) {
-    AdminOrderStatus.processing => 'Processing',
-    AdminOrderStatus.transit => 'In Transit',
+    AdminOrderStatus.pending => 'Pending',
+    AdminOrderStatus.confirmed => 'Confirmed',
+    AdminOrderStatus.shipped => 'Shipped',
+    AdminOrderStatus.outForDelivery => 'Out for Delivery',
     AdminOrderStatus.delivered => 'Delivered',
-    AdminOrderStatus.disputed => 'Disputed',
+    AdminOrderStatus.cancelled => 'Cancelled',
   };
 
   Color get color => switch (this) {
-    AdminOrderStatus.processing => AdminColors.orange,
-    AdminOrderStatus.transit => AdminColors.blue,
+    AdminOrderStatus.pending => AdminColors.orange,
+    AdminOrderStatus.confirmed => AdminColors.blue,
+    AdminOrderStatus.shipped => AdminColors.purple,
+    AdminOrderStatus.outForDelivery => AdminColors.amber,
     AdminOrderStatus.delivered => AdminColors.darkGreen,
-    AdminOrderStatus.disputed => AdminColors.red,
+    AdminOrderStatus.cancelled => AdminColors.red,
+  };
+
+  /// The label for the button that advances this order to the next stage, or
+  /// null when the order is in a terminal state (delivered / cancelled).
+  String? get advanceLabel => switch (this) {
+    AdminOrderStatus.pending => 'Confirm Order',
+    AdminOrderStatus.confirmed => 'Mark Shipped',
+    AdminOrderStatus.shipped => 'Out for Delivery',
+    AdminOrderStatus.outForDelivery => 'Mark Delivered',
+    AdminOrderStatus.delivered => null,
+    AdminOrderStatus.cancelled => null,
+  };
+
+  /// The status this order moves to when the admin advances it.
+  AdminOrderStatus? get next => switch (this) {
+    AdminOrderStatus.pending => AdminOrderStatus.confirmed,
+    AdminOrderStatus.confirmed => AdminOrderStatus.shipped,
+    AdminOrderStatus.shipped => AdminOrderStatus.outForDelivery,
+    AdminOrderStatus.outForDelivery => AdminOrderStatus.delivered,
+    AdminOrderStatus.delivered => null,
+    AdminOrderStatus.cancelled => null,
   };
 }
 
+/// One line item inside an [AdminOrder] (product + quantity + price).
+class AdminOrderLine {
+  const AdminOrderLine({
+    required this.name,
+    required this.brand,
+    required this.quantity,
+    required this.price,
+  });
+
+  final String name;
+  final String brand;
+  final int quantity;
+  final double price;
+}
+
+/// A marketplace order, mapped from the backend (GET /vsArogya/all-orders).
 class AdminOrder {
-  const AdminOrder({
+  AdminOrder({
     required this.id,
     required this.buyer,
-    required this.vendor,
     required this.amount,
-    required this.items,
+    required this.itemCount,
     required this.status,
-    this.disputeId,
+    required this.lines,
+    this.placedAt,
+    this.phone = '',
+    this.address = '',
+    this.paymentMethod = '',
   });
 
   final String id;
   final String buyer;
-  final String vendor;
   final double amount;
-  final int items;
-  final AdminOrderStatus status;
-  final String? disputeId;
+  final int itemCount;
+  AdminOrderStatus status; // mutable so status advances update in place
+  final List<AdminOrderLine> lines;
+  final DateTime? placedAt;
+  final String phone;
+  final String address;
+  final String paymentMethod;
 }
-
-// TODO: GET /api/admin/orders
-const List<AdminOrder> kOrders = [
-  AdminOrder(
-    id: 'MCP-48210',
-    buyer: 'Apollo Pharmacy',
-    vendor: 'MedSupply Co.',
-    amount: 1519,
-    items: 8,
-    status: AdminOrderStatus.transit,
-  ),
-  AdminOrder(
-    id: 'MCP-48196',
-    buyer: 'HealthFirst',
-    vendor: 'CarePlus',
-    amount: 14280,
-    items: 36,
-    status: AdminOrderStatus.processing,
-  ),
-  AdminOrder(
-    id: 'MCP-47120',
-    buyer: 'Wellness Mart',
-    vendor: 'ValueRx',
-    amount: 6240,
-    items: 15,
-    status: AdminOrderStatus.disputed,
-    disputeId: 'DSP-1042',
-  ),
-  AdminOrder(
-    id: 'MCP-48108',
-    buyer: 'MedPlus',
-    vendor: 'HealthFirst',
-    amount: 3380,
-    items: 11,
-    status: AdminOrderStatus.delivered,
-  ),
-  AdminOrder(
-    id: 'MCP-48090',
-    buyer: 'City Care Chemist',
-    vendor: 'QuickMeds',
-    amount: 9870,
-    items: 24,
-    status: AdminOrderStatus.transit,
-  ),
-  AdminOrder(
-    id: 'MCP-48055',
-    buyer: 'Green Cross Pharma',
-    vendor: 'MedSupply Co.',
-    amount: 2110,
-    items: 6,
-    status: AdminOrderStatus.processing,
-  ),
-  AdminOrder(
-    id: 'MCP-47980',
-    buyer: 'Sunrise Medicals',
-    vendor: 'ValueRx',
-    amount: 540,
-    items: 3,
-    status: AdminOrderStatus.delivered,
-  ),
-];
 
 // -----------------------------------------------------------------------------
 // DISPUTES
@@ -442,7 +382,7 @@ const Dispute kSampleDispute = Dispute(
 
 enum UserKind { customer, agent, staff }
 
-enum UserTag { premium, isNew, flagged, suspended, active, onDuty }
+enum UserTag { premium, isNew, flagged, suspended, active, onDuty, pending }
 
 extension UserTagX on UserTag {
   String get label => switch (this) {
@@ -452,6 +392,7 @@ extension UserTagX on UserTag {
     UserTag.suspended => 'Suspended',
     UserTag.active => 'Active',
     UserTag.onDuty => 'On Duty',
+    UserTag.pending => 'Pending',
   };
 
   Color get color => switch (this) {
@@ -461,6 +402,7 @@ extension UserTagX on UserTag {
     UserTag.suspended => AdminColors.red,
     UserTag.active => AdminColors.green,
     UserTag.onDuty => AdminColors.green,
+    UserTag.pending => AdminColors.orange,
   };
 }
 
@@ -524,6 +466,7 @@ class TimelineEntry {
 
 class PlatformUser {
   const PlatformUser({
+    this.id = '',
     required this.name,
     required this.kind,
     required this.meta,
@@ -536,8 +479,13 @@ class PlatformUser {
     this.info = const [],
     this.timelineTitle = 'Recent Activity',
     this.timeline = const [],
+    this.photoUrl,
+    this.documents = const [],
   });
 
+  /// Backend _id (empty for seeded/test users). Used to identify a user across
+  /// refreshes and for any future server-side action.
+  final String id;
   final String name;
   final UserKind kind;
   final String meta;
@@ -554,324 +502,19 @@ class PlatformUser {
   final List<InfoPair> info;
   final String timelineTitle;
   final List<TimelineEntry> timeline;
+
+  /// The store/profile photo (Cloudinary), shown as the detail header image
+  /// when present; falls back to initials otherwise.
+  final String? photoUrl;
+
+  /// Uploaded verification documents (store photo, GST, drug license) as
+  /// name → URL entries. Empty for delivery agents / when nothing was uploaded.
+  final List<VendorDoc> documents;
 }
 
-const int kCustomerCount = 12400;
-const int kVendorCount = 486;
-const int kAgentCount = 128;
-
-// TODO: GET /api/admin/users  (and GET /api/admin/users/:id for the detail view)
-const List<PlatformUser> kUsers = [
-  // --- Vendors (B2B pharmacy buyers) ---------------------------------------
-  PlatformUser(
-    name: 'Apollo Pharmacy',
-    kind: UserKind.customer,
-    meta: '48 orders · Mumbai',
-    tag: UserTag.premium,
-    phone: '+91 98200 11234',
-    email: 'orders@apollopharma.in',
-    location: 'Andheri East, Mumbai',
-    joinedOn: '12 Jan 2024',
-    stats: [
-      UserStat('48', 'Orders', color: AdminColors.blue),
-      UserStat('₹3.2L', 'Lifetime Spend', color: AppColors.primary),
-      UserStat('★ 4.9', 'Buyer Rating', color: AdminColors.orange),
-    ],
-    info: [
-      InfoPair('Account Type', 'Premium B2B'),
-      InfoPair('GSTIN', '27APLLO1234K1Z9'),
-      InfoPair('Credit Limit', '₹5,00,000'),
-      InfoPair('Outstanding', '₹42,000'),
-      InfoPair('Open Disputes', '0'),
-      InfoPair('Member Since', '12 Jan 2024'),
-    ],
-    timelineTitle: 'Recent Orders',
-    timeline: [
-      TimelineEntry(
-        icon: Icons.check_circle_outline,
-        color: AppColors.darkGreen,
-        title: '#MCP-48210 · ₹1,519',
-        subtitle: 'Delivered · MedSupply Co.',
-        time: '2d ago',
-      ),
-      TimelineEntry(
-        icon: Icons.local_shipping_outlined,
-        color: AdminColors.blue,
-        title: '#MCP-48055 · ₹2,110',
-        subtitle: 'Processing · MedSupply Co.',
-        time: '4d ago',
-      ),
-      TimelineEntry(
-        icon: Icons.check_circle_outline,
-        color: AppColors.darkGreen,
-        title: '#MCP-47980 · ₹540',
-        subtitle: 'Delivered · ValueRx',
-        time: '1w ago',
-      ),
-    ],
-  ),
-  PlatformUser(
-    name: 'MedPlus Retail',
-    kind: UserKind.customer,
-    meta: '210 orders · Pune',
-    tag: UserTag.premium,
-    phone: '+91 98220 55678',
-    email: 'procure@medplusretail.in',
-    location: 'Kothrud, Pune',
-    joinedOn: '03 Feb 2024',
-    stats: [
-      UserStat('210', 'Orders', color: AdminColors.blue),
-      UserStat('₹14.6L', 'Lifetime Spend', color: AppColors.primary),
-      UserStat('★ 4.7', 'Buyer Rating', color: AdminColors.orange),
-    ],
-    info: [
-      InfoPair('Account Type', 'Premium B2B'),
-      InfoPair('GSTIN', '27MEDPL5678M1Z2'),
-      InfoPair('Credit Limit', '₹10,00,000'),
-      InfoPair('Outstanding', '₹1,18,500'),
-      InfoPair('Open Disputes', '0'),
-      InfoPair('Member Since', '03 Feb 2024'),
-    ],
-    timelineTitle: 'Recent Orders',
-    timeline: [
-      TimelineEntry(
-        icon: Icons.local_shipping_outlined,
-        color: AdminColors.blue,
-        title: '#MCP-48196 · ₹14,280',
-        subtitle: 'In Transit · CarePlus',
-        time: '6h ago',
-      ),
-      TimelineEntry(
-        icon: Icons.check_circle_outline,
-        color: AppColors.darkGreen,
-        title: '#MCP-48108 · ₹3,380',
-        subtitle: 'Delivered · HealthFirst',
-        time: '3d ago',
-      ),
-    ],
-  ),
-  PlatformUser(
-    name: 'Wellness Mart',
-    kind: UserKind.customer,
-    meta: '12 orders · Thane',
-    tag: UserTag.isNew,
-    phone: '+91 98330 44210',
-    email: 'buy@wellnessmart.in',
-    location: 'Ghodbunder Rd, Thane',
-    joinedOn: '28 May 2026',
-    stats: [
-      UserStat('12', 'Orders', color: AdminColors.blue),
-      UserStat('₹48.2K', 'Lifetime Spend', color: AppColors.primary),
-      UserStat('1', 'Open Disputes', color: AdminColors.red),
-    ],
-    info: [
-      InfoPair('Account Type', 'Standard B2B'),
-      InfoPair('GSTIN', '27WELLN4210T1Z7'),
-      InfoPair('Credit Limit', '₹1,00,000'),
-      InfoPair('Outstanding', '₹6,240'),
-      InfoPair('Open Disputes', '1 · #DSP-1042'),
-      InfoPair('Member Since', '28 May 2026'),
-    ],
-    timelineTitle: 'Recent Orders',
-    timeline: [
-      TimelineEntry(
-        icon: Icons.report_gmailerrorred_outlined,
-        color: AdminColors.red,
-        title: '#MCP-47120 · ₹6,240',
-        subtitle: 'Disputed · ValueRx',
-        time: '2d ago',
-      ),
-      TimelineEntry(
-        icon: Icons.check_circle_outline,
-        color: AppColors.darkGreen,
-        title: '#MCP-46980 · ₹1,180',
-        subtitle: 'Delivered · MedSupply Co.',
-        time: '1w ago',
-      ),
-    ],
-  ),
-  PlatformUser(
-    name: 'City Care Chemist',
-    kind: UserKind.customer,
-    meta: '6 orders · Nashik',
-    tag: UserTag.isNew,
-    phone: '+91 98600 77820',
-    email: 'citycare.nsk@gmail.com',
-    location: 'College Rd, Nashik',
-    joinedOn: '04 Jun 2026',
-    stats: [
-      UserStat('6', 'Orders', color: AdminColors.blue),
-      UserStat('₹19.4K', 'Lifetime Spend', color: AppColors.primary),
-      UserStat('0', 'Open Disputes', color: AppColors.darkGreen),
-    ],
-    info: [
-      InfoPair('Account Type', 'Standard B2B'),
-      InfoPair('GSTIN', '27CTYCR7820N1Z4'),
-      InfoPair('Credit Limit', '₹50,000'),
-      InfoPair('Outstanding', '₹0'),
-      InfoPair('Open Disputes', '0'),
-      InfoPair('Member Since', '04 Jun 2026'),
-    ],
-    timelineTitle: 'Recent Orders',
-    timeline: [
-      TimelineEntry(
-        icon: Icons.check_circle_outline,
-        color: AppColors.darkGreen,
-        title: '#MCP-48090 · ₹9,870',
-        subtitle: 'In Transit · QuickMeds',
-        time: '1d ago',
-      ),
-    ],
-  ),
-  PlatformUser(
-    name: 'Green Cross Pharma',
-    kind: UserKind.customer,
-    meta: 'Suspended · 2 disputes',
-    tag: UserTag.flagged,
-    phone: '+91 98190 33110',
-    email: 'admin@greencrosspharma.in',
-    location: 'Sitabuldi, Nagpur',
-    joinedOn: '19 Mar 2025',
-    stats: [
-      UserStat('64', 'Orders', color: AdminColors.blue),
-      UserStat('₹2.1L', 'Lifetime Spend', color: AppColors.primary),
-      UserStat('2', 'Open Disputes', color: AdminColors.red),
-    ],
-    info: [
-      InfoPair('Account Type', 'Suspended'),
-      InfoPair('GSTIN', '27GRNCR3110R1Z0'),
-      InfoPair('Credit Limit', '₹0 (frozen)'),
-      InfoPair('Outstanding', '₹78,900'),
-      InfoPair('Open Disputes', '2'),
-      InfoPair('Flagged For', 'Repeated chargebacks'),
-    ],
-    timelineTitle: 'Recent Activity',
-    timeline: [
-      TimelineEntry(
-        icon: Icons.block,
-        color: AdminColors.red,
-        title: 'Account suspended',
-        subtitle: 'By Risk team',
-        time: '5d ago',
-      ),
-      TimelineEntry(
-        icon: Icons.report_gmailerrorred_outlined,
-        color: AdminColors.red,
-        title: 'Dispute opened · ₹12,400',
-        subtitle: 'Non-payment · HealthFirst',
-        time: '2w ago',
-      ),
-    ],
-  ),
-
-  // --- Delivery agents ------------------------------------------------------
-  PlatformUser(
-    name: 'Suresh Patil',
-    kind: UserKind.agent,
-    meta: 'Andheri–Bandra · 312 deliveries',
-    tag: UserTag.onDuty,
-    phone: '+91 98201 55420',
-    email: 'suresh.patil@medicaplus.in',
-    location: 'Andheri–Bandra Zone',
-    joinedOn: '21 Mar 2024',
-    stats: [
-      UserStat('312', 'Deliveries', color: AdminColors.purple),
-      UserStat('★ 4.8', 'Rating', color: AdminColors.orange),
-      UserStat('98%', 'On-time', color: AppColors.primary),
-    ],
-    info: [
-      InfoPair('Login ID', 'DA-55420'),
-      InfoPair('Service Zone', 'Andheri–Bandra'),
-      InfoPair('Vehicle', 'Bike · MH02 AB 1234'),
-      InfoPair('Current Status', 'On Duty'),
-      InfoPair("Today's Trips", '7'),
-      InfoPair('Earnings (MTD)', '₹18,400'),
-    ],
-    timelineTitle: 'Recent Deliveries',
-    timeline: [
-      TimelineEntry(
-        icon: Icons.check_circle_outline,
-        color: AppColors.darkGreen,
-        title: '#MCP-48210 · Apollo Pharmacy',
-        subtitle: 'Delivered on time',
-        time: '1h ago',
-      ),
-      TimelineEntry(
-        icon: Icons.two_wheeler_outlined,
-        color: AdminColors.blue,
-        title: '#MCP-48055 · Green Cross',
-        subtitle: 'Out for delivery',
-        time: 'Now',
-      ),
-    ],
-  ),
-  PlatformUser(
-    name: 'Neha Tiwari',
-    kind: UserKind.agent,
-    meta: 'Pune Central · 198 deliveries',
-    tag: UserTag.onDuty,
-    phone: '+91 98223 90187',
-    email: 'neha.tiwari@medicaplus.in',
-    location: 'Pune Central Zone',
-    joinedOn: '02 May 2024',
-    stats: [
-      UserStat('198', 'Deliveries', color: AdminColors.purple),
-      UserStat('★ 4.9', 'Rating', color: AdminColors.orange),
-      UserStat('99%', 'On-time', color: AppColors.primary),
-    ],
-    info: [
-      InfoPair('Login ID', 'DA-39018'),
-      InfoPair('Service Zone', 'Pune Central'),
-      InfoPair('Vehicle', 'Scooter · MH12 KL 8890'),
-      InfoPair('Current Status', 'On Duty'),
-      InfoPair("Today's Trips", '5'),
-      InfoPair('Earnings (MTD)', '₹14,950'),
-    ],
-    timelineTitle: 'Recent Deliveries',
-    timeline: [
-      TimelineEntry(
-        icon: Icons.check_circle_outline,
-        color: AppColors.darkGreen,
-        title: '#MCP-48108 · MedPlus',
-        subtitle: 'Delivered on time',
-        time: '3h ago',
-      ),
-    ],
-  ),
-  PlatformUser(
-    name: 'Arjun Kapoor',
-    kind: UserKind.agent,
-    meta: 'Thane West · 87 deliveries',
-    tag: UserTag.active,
-    phone: '+91 98337 21640',
-    email: 'arjun.kapoor@medicaplus.in',
-    location: 'Thane West Zone',
-    joinedOn: '08 Apr 2026',
-    stats: [
-      UserStat('87', 'Deliveries', color: AdminColors.purple),
-      UserStat('★ 4.5', 'Rating', color: AdminColors.orange),
-      UserStat('94%', 'On-time', color: AppColors.primary),
-    ],
-    info: [
-      InfoPair('Login ID', 'DA-21640'),
-      InfoPair('Service Zone', 'Thane West'),
-      InfoPair('Vehicle', 'Bike · MH04 GH 4521'),
-      InfoPair('Current Status', 'Off Duty'),
-      InfoPair("Today's Trips", '0'),
-      InfoPair('Earnings (MTD)', '₹6,200'),
-    ],
-    timelineTitle: 'Recent Deliveries',
-    timeline: [
-      TimelineEntry(
-        icon: Icons.check_circle_outline,
-        color: AppColors.darkGreen,
-        title: '#MCP-47990 · Sunrise Medicals',
-        subtitle: 'Delivered · 8 min late',
-        time: 'Yesterday',
-      ),
-    ],
-  ),
-];
+// Platform users (vendors + delivery agents) are fetched live from the
+// backend (GET /vsArogya/all-vendors) via AdminApi.getAllPlatformUsers() and
+// held in AdminUsersController � there is no dummy/seed user list or count.
 
 // -----------------------------------------------------------------------------
 // DELIVERY AGENTS

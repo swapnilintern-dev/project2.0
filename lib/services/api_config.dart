@@ -11,12 +11,11 @@
 //   - iOS sim / desktop → http://localhost:3000
 //   - Physical device → your PC's LAN IP
 // =============================================================================
-
 class ApiConfig {
   ApiConfig._();
 
   /// Production backend (used when no --dart-define override is supplied).
-  static const String _defaultBaseUrl = "https://backend-new-0ady.onrender.com";
+  static const String _defaultBaseUrl = "http://localhost:3000";
 
   /// The base URL every service must use.
   static String get baseUrl {

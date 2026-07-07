@@ -492,7 +492,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         future: _image!.readAsBytes(),
         builder: (context, snap) => snap.hasData
             ? Image.memory(snap.data!,
-                fit: BoxFit.cover, width: double.infinity, height: 160)
+                fit: BoxFit.fill, width: double.infinity, height: 160)
             : const SizedBox(
                 height: 160,
                 child: Center(child: CircularProgressIndicator()),

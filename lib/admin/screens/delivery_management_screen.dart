@@ -2,9 +2,11 @@
 // MediCaPlus — Admin · Delivery Management (pushed from Overview / Users)
 //
 // The agent-onboarding console. A live stat strip (total agents / on-duty /
-// pending), then a "Create New Agent Login" form: name, mobile, service zone,
-// and an auto-generated credentials card (login id + temporary password) with
-// copy & regenerate. Share / Create Agent actions at the bottom.
+// pending), then a "Create New Agent Login" form: name, mobile, email, and a
+// generated credentials card. The LOGIN ID is the agent's mobile number and the
+// password is a one-time random 6-digit code. On "Create Agent" the credentials
+// are sent to the backend, which creates the delivery user and emails them the
+// login details.
 // =============================================================================
 
 import 'dart:math';
@@ -13,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../admin_api.dart';
 import '../admin_common.dart';
 import '../admin_models.dart';
 
@@ -27,48 +30,83 @@ class DeliveryManagementScreen extends StatefulWidget {
 class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
   final _name = TextEditingController();
   final _mobile = TextEditingController();
-  String _zone = kServiceZones.first;
+  final _email = TextEditingController();
 
-  late String _loginId;
-  late String _password;
+  /// One-time random 6-digit password for the agent (created once, never a
+  /// throwaway "temporary" code). Generated on screen load.
+  late final String _password;
+
+  bool _saving = false;
 
   @override
   void initState() {
     super.initState();
-    _regenerate();
+    _password = _generatePassword();
+    // Keep the credentials card's LOGIN ID in sync with the mobile field.
+    _mobile.addListener(_onMobileChanged);
   }
 
   @override
   void dispose() {
+    _mobile.removeListener(_onMobileChanged);
     _name.dispose();
     _mobile.dispose();
+    _email.dispose();
     super.dispose();
   }
 
-  void _regenerate() {
-    final rnd = Random();
-    final id = 100 + rnd.nextInt(900);
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    final pwd = List.generate(7, (_) => chars[rnd.nextInt(chars.length)]).join();
-    setState(() {
-      _loginId = 'DA-$id${20 + rnd.nextInt(80)}';
-      _password = 'Med-$pwd';
-    });
-  }
+  void _onMobileChanged() => setState(() {});
+
+  /// A random 6-digit numeric password (100000–999999).
+  String _generatePassword() => (100000 + Random().nextInt(900000)).toString();
+
+  String get _loginId =>
+      _mobile.text.trim().isEmpty ? 'Enter mobile number' : _mobile.text.trim();
+
+  bool _isValidEmail(String v) =>
+      RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v);
 
   void _copy(String value, String label) {
     Clipboard.setData(ClipboardData(text: value));
     adminSnack(context, '$label copied');
   }
 
-  void _create() {
-    if (_name.text.trim().isEmpty || _mobile.text.trim().length < 10) {
+  Future<void> _create() async {
+    if (_saving) return;
+    final name = _name.text.trim();
+    final mobile = _mobile.text.trim();
+    final email = _email.text.trim();
+
+    if (name.isEmpty || mobile.length < 10) {
       adminSnack(context, 'Enter a name and valid mobile number',
           color: AdminColors.red);
       return;
     }
-    adminSnack(context, 'Agent ${_name.text.trim()} created');
-    Navigator.of(context).pop();
+    if (!_isValidEmail(email)) {
+      adminSnack(context, 'Enter a valid email address',
+          color: AdminColors.red);
+      return;
+    }
+
+    setState(() => _saving = true);
+    // Sends the credentials to the backend, which creates the delivery user and
+    // emails the login details to the agent. (Local backend for now.)
+    final ok = await AdminApi().createDeliveryAgent(
+      name: name,
+      mobile: mobile,
+      email: email,
+      password: _password,
+    );
+    if (!mounted) return;
+    setState(() => _saving = false);
+
+    if (ok) {
+      adminSnack(context, 'Agent $name created — credentials emailed to $email');
+      Navigator.of(context).pop();
+    } else {
+      adminSnack(context, 'Could not create agent. Check connection and retry.',
+          color: AdminColors.red);
+    }
   }
 
   @override
@@ -147,8 +185,13 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
             keyboardType: TextInputType.phone,
           ),
           const SizedBox(height: 14),
-          _FieldLabel('Service Zone'),
-          _zoneDropdown(),
+          _FieldLabel('Email Address'),
+          _Field(
+            controller: _email,
+            hint: 'agent@example.com',
+            icon: Icons.mail_outline,
+            keyboardType: TextInputType.emailAddress,
+          ),
           const SizedBox(height: 20),
           _credentialsCard(),
           const SizedBox(height: 24),
@@ -160,57 +203,22 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
                   icon: Icons.ios_share,
                   outlined: true,
                   onPressed: () => _copy(
-                      'Login: $_loginId  Password: $_password', 'Credentials'),
+                      'Login: ${_mobile.text.trim()}  Password: $_password',
+                      'Credentials'),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 flex: 2,
                 child: AdminButton(
-                  label: 'Create Agent',
+                  label: _saving ? 'Creating…' : 'Create Agent',
                   icon: Icons.check,
-                  onPressed: _create,
+                  onPressed: () => _create(),
                 ),
               ),
             ],
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _zoneDropdown() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: _zone,
-          isExpanded: true,
-          icon: const Icon(Icons.expand_more, color: AppColors.greyText),
-          borderRadius: BorderRadius.circular(12),
-          items: [
-            for (final z in kServiceZones)
-              DropdownMenuItem(
-                value: z,
-                child: Row(
-                  children: [
-                    const Icon(Icons.location_on_outlined,
-                        size: 18, color: AppColors.darkGreen),
-                    const SizedBox(width: 8),
-                    Text(z,
-                        style: const TextStyle(
-                            fontSize: 14, color: AppColors.darkText)),
-                  ],
-                ),
-              ),
-          ],
-          onChanged: (v) => setState(() => _zone = v ?? _zone),
-        ),
       ),
     );
   }
@@ -238,31 +246,21 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
                         fontWeight: FontWeight.w800,
                         color: AppColors.darkText)),
               ),
-              const StatusBadge(label: 'Auto', color: AppColors.darkGreen, dense: true),
+              const StatusBadge(
+                  label: 'Auto', color: AppColors.darkGreen, dense: true),
             ],
           ),
           const SizedBox(height: 14),
           _CredRow(
-            label: 'LOGIN ID',
+            label: 'LOGIN ID (MOBILE NO.)',
             value: _loginId,
-            onCopy: () => _copy(_loginId, 'Login ID'),
+            onCopy: () => _copy(_mobile.text.trim(), 'Login ID'),
           ),
           const SizedBox(height: 10),
           _CredRow(
-            label: 'TEMPORARY PASSWORD',
+            label: 'PASSWORD',
             value: _password,
             onCopy: () => _copy(_password, 'Password'),
-          ),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: _regenerate,
-              style: TextButton.styleFrom(foregroundColor: AppColors.darkGreen),
-              icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('Regenerate',
-                  style: TextStyle(fontWeight: FontWeight.w700)),
-            ),
           ),
         ],
       ),

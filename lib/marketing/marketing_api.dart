@@ -193,7 +193,8 @@ class MarketingApi {
       discountPercent: _num(j['discountPercent']),
       lowThreshold: _int(j['lowThreshold'], 10),
       prescriptionRequired: j['prescriptionRequired'] == true,
-      rating: j['rating'] == null ? 4.5 : _num(j['rating']),
+      // No fabricated rating — 0 when the backend doesn't provide one.
+      rating: j['rating'] == null ? 0 : _num(j['rating']),
       reviewCount: _int(j['reviewCount']),
       badge: j['badge'] as String?,
       packInfo: (j['packInfo'] ?? '').toString(),
@@ -295,23 +296,38 @@ class BannerApi {
     }
   }
 
-  Future<bool> addBanner(PromoBanner b) async {
+  /// Creates a banner via multipart (POST /promo-banners). When [image] is
+  /// provided it is uploaded as the `image` file part (a full-image creative);
+  /// when null a text/gradient banner is created (backend needs a title then).
+  Future<bool> addBanner(PromoBanner b, [XFile? image]) async {
     try {
       final j = b.toJson();
-      final res = await _client
-          .post(
-            Uri.parse('$baseUrl/vsArogya/promo-banners'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'tag': j['tag'],
-              'title': j['title'],
-              'ctaLabel': j['ctaLabel'],
-              'startColor': j['startColor'],
-              'endColor': j['endColor'],
-              if (j['categoryId'] != null) 'categoryId': j['categoryId'],
-            }),
-          )
-          .timeout(_timeout);
+      final req = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/vsArogya/promo-banners'),
+      );
+      req.fields.addAll({
+        'tag': (j['tag'] ?? 'OFFER').toString(),
+        'title': (j['title'] ?? '').toString(),
+        'ctaLabel': (j['ctaLabel'] ?? 'Shop Now').toString(),
+        'startColor': (j['startColor'] ?? '#4CAF82').toString(),
+        'endColor': (j['endColor'] ?? '#2E7D5E').toString(),
+        if (j['categoryId'] != null) 'categoryId': j['categoryId'].toString(),
+      });
+
+      if (image != null) {
+        final bytes = await image.readAsBytes();
+        final name = MarketingApi._safeName(image);
+        req.files.add(http.MultipartFile.fromBytes(
+          'image', // backend multer field: upload.single("image")
+          bytes,
+          filename: name,
+          contentType: MarketingApi._contentTypeFor(name),
+        ));
+      }
+
+      final streamed = await req.send().timeout(_timeout);
+      final res = await http.Response.fromStream(streamed);
       return MarketingApi._isOk(res);
     } catch (_) {
       return false;
@@ -433,7 +449,34 @@ class MarketingOrdersApi {
       if (!MarketingApi._isOk(res)) return null;
       final body = jsonDecode(res.body) as Map<String, dynamic>;
       final list = (body['allOrders'] as List?) ?? const [];
-      return list.whereType<Map<String, dynamic>>().map(_fromBackend).toList();
+      return list
+          .whereType<Map<String, dynamic>>()
+          .map(_fromBackend)
+          // Skip empty (₹0 / 0-item) orders — these are unfulfillable garbage
+          // from before the cart-sync fix and shouldn't clutter the pipeline.
+          .where((o) => o.items.isNotEmpty)
+          .toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The real delivery-partner directory (users with role == "delivery"),
+  /// read from GET /vsArogya/all-vendors and filtered by role. Returns null on
+  /// failure so the picker can show a retry; never returns dummy data.
+  Future<List<DeliveryAgent>?> getDeliveryAgents() async {
+    try {
+      final res = await _client
+          .get(Uri.parse('$baseUrl/vsArogya/all-vendors'))
+          .timeout(_timeout);
+      if (!MarketingApi._isOk(res)) return null;
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final list = (body['all_vendors'] as List?) ?? const [];
+      return list
+          .whereType<Map<String, dynamic>>()
+          .where((j) => (j['role'] ?? '').toString().toLowerCase() == 'delivery')
+          .map(DeliveryAgent.fromJson)
+          .toList();
     } catch (_) {
       return null;
     }
@@ -441,6 +484,8 @@ class MarketingOrdersApi {
 
   Future<bool> confirmOrder(String id) => _put('/vsArogya/confirm-order/$id');
   Future<bool> shipOrder(String id) => _put('/vsArogya/shipped-order/$id');
+  Future<bool> outForDeliveryOrder(String id) =>
+      _put('/vsArogya/outof-delivery/$id');
   Future<bool> deliverOrder(String id) => _put('/vsArogya/delivered-prder/$id');
 
   Future<bool> _put(String path) async {
@@ -483,15 +528,16 @@ class MarketingOrdersApi {
       items: items,
       phone: (addr['phoneNo'] ?? '').toString(),
       address: addressStr,
+      paymentTerm: (j['paymentMethod'] ?? '').toString(),
     );
   }
 
   static MarketingOrderStatus _statusFromBackend(String s) => switch (s) {
-        'Confirm Order' => MarketingOrderStatus.packing,
+        'Confirm Order' => MarketingOrderStatus.confirmed,
         'Shipped' => MarketingOrderStatus.shipped,
-        'Out for Delivery' => MarketingOrderStatus.shipped,
-        'Delivered' => MarketingOrderStatus.done,
-        'Cancelled' => MarketingOrderStatus.done,
+        'Out for Delivery' => MarketingOrderStatus.outForDelivery,
+        'Delivered' => MarketingOrderStatus.delivered,
+        'Cancelled' => MarketingOrderStatus.cancelled,
         _ => MarketingOrderStatus.pending,
       };
 

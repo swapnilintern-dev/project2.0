@@ -1,6 +1,12 @@
 import sharp from "sharp";
 import cloudinary from "../utils/cloudinary.js";
 import Product from "../model/productModel.js";
+import Vendor from "../model/userModel.js";
+
+// Naye saved/share controllers `product` (lowercase) aur `Vendor` reference
+// karte hain — pehle ye import hi nahi the → ReferenceError → 500.
+// `product` ko imported Product model ka alias bana do (same model).
+const product = Product;
 
 const addnewProduct = async (req, res) => {
   try {
@@ -133,64 +139,64 @@ const addnewProduct = async (req, res) => {
 export default addnewProduct;
 
 
-export const  deleteProduct = async( req, res ) =>{
-       
-      try{
-         
-        const product_id = req.params.id ;
+export const deleteProduct = async (req, res) => {
 
-        console.log("Product id is : " , product_id ) ;
+  try {
 
-        const get_product = await Product.findById(product_id) ;
-        console.log("product is : " , get_product ) ;
+    const product_id = req.params.id;
+
+    console.log("Product id is : ", product_id);
+
+    const get_product = await Product.findById(product_id);
+    console.log("product is : ", get_product);
 
 
-        if( ! get_product ) {
-          return res.status(401)
-          .json({
-            message : " Product not found ",
-            success : false
-          });
-        }
+    if (!get_product) {
+      return res.status(401)
+        .json({
+          message: " Product not found ",
+          success: false
+        });
+    }
 
-        await Product.findByIdAndDelete(product_id ) ;
-        return res.status(201)
-        .json({ 
-          message :"Product deleted succesfully " ,
-          success : true 
-        })
-      }
-      catch(er) {
-        console.log(er , " er is")
-      }
+    await Product.findByIdAndDelete(product_id);
+    return res.status(201)
+      .json({
+        message: "Product deleted succesfully ",
+        success: true
+      })
+  }
+  catch (er) {
+    console.log(er, " er is")
+  }
 
 };
 
 
-export const getAllProducts =async(req , res ) =>{
+export const getAllProducts = async (req, res) => {
 
-    try{
-        const products =await Product.find() ;
+  try {
+    const products = await Product.find();
 
-        if( !products )
-          return res.status(401)
-        .json({ 
-          message :"Product not found ",
-          success :false 
-        }) ;
-
-        return res.status(200)
-        .json({ 
-            message :"all products are fetched successfully ",
-            success : true ,
-            products
+    if (!products)
+      return res.status(401)
+        .json({
+          message: "Product not found ",
+          success: false
         });
 
+    return res.status(200)
+      .json({
+        message: "all products are fetched successfully ",
+        success: true,
+        products
+      });
 
-    }
-    catch(er){
-        console.log(er , " error from fetch all product ") ;
-    }
+
+  }
+  catch (er) {
+    console.log(er, " error from fetch all product ");
+  }
 }
 
 
@@ -263,3 +269,125 @@ export const updateProduct = async (req, res) => {
     });
   }
 }
+
+
+export const copyUrl = async (req, res) => {
+  try {
+
+    const get_product = await product.findById(req.params.id);
+
+
+    if (!get_product) {
+
+      return res.status(404)
+        .json({
+
+          message: "Product not found",
+          success: false
+        });
+    }
+
+    const shareUrl = `https://backend-new-0ady.onrender.com/share-prod/${req.params.id}`;
+
+    return res.status(201)
+      .json({
+
+        message: "Product url copied",
+        success: true,
+        shareUrl
+      });
+  }
+  catch (er) {
+    console.log(" er is:", er);
+
+    return res.status(500)
+      .json({
+        message: "Internal server error ",
+        success: false
+      });
+  }
+}
+
+
+
+export const saveItem = async( req , res ) =>{
+
+  try{
+
+    const get_user = await Vendor.findById( req.id ) ;
+
+    const get_product = await product.findById( req.params.id ) ;
+
+    // savedProducts ObjectId array hai — string se .includes() hamesha false
+    // deta tha (isliye unsave kaam nahi karta tha). .some + .equals se sahi.
+    const isSaved = get_user.savedProducts.some(
+      (pid) => pid?.equals?.(req.params.id) || pid?.toString() === req.params.id
+    );
+
+    if( isSaved ) {
+
+     get_user.savedProducts.pull(req.params.id ) ;
+     
+     await get_user.save() ;
+     
+     return res.status(200)
+     .json({
+      message:"Product Usaved ",
+      success: true 
+     });
+    }
+
+     get_user.savedProducts.push(req.params.id ) ;
+     await get_user.save() ;
+
+     return res.status(200)
+     .json({
+
+      message:"Product saved ",
+      success : true 
+     });
+  
+  }
+  catch(er) {
+
+    console.log("er is :" , er ) ;
+
+    return res.status(500)
+    .json({
+      message:"Internal server error",
+      success: false 
+    }) ;
+  }
+}
+
+
+export const AllsaveItem = async( req , res ) =>{
+
+  try{
+
+    const all_save = await Vendor.findById( req.id )
+    .populate("savedProducts");
+
+    console.log(all_save.savedProducts ) ;
+    
+    return res.status(200)
+    .json({ 
+      message :"fetched all items ",
+      success : true ,
+      all_save 
+    });
+  }
+  catch(er) {
+    console.log(" er is :" , er ) ;
+    return res.status(500)
+    .json({
+      message:"Internal server error ",
+      success : false 
+    }) ;
+  }
+}
+
+
+
+
+

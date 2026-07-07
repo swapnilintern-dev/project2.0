@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../services/auth_service.dart';
 import '../theme/app_theme.dart' show AppShadows;
 import '../account_deletion/account_deletion_controller.dart';
 import '../account_deletion/privacy_security_screen.dart';
@@ -26,6 +27,31 @@ class ProfileScreen extends StatelessWidget {
 
   /// Invoked when the user confirms logout (the shell wires this to sign-out).
   final VoidCallback? onLogout;
+
+  /// Real display name when the backend provides one (see AuthService.storeName);
+  /// a neutral, non-fake label otherwise.
+  String get _displayName => AuthService.storeName ?? 'MediCaPlus Buyer';
+
+  /// The real mobile number the user signed in with.
+  String get _displayPhone =>
+      (AuthService.phone == null || AuthService.phone!.isEmpty)
+          ? '—'
+          : AuthService.phone!;
+
+  /// Two-letter initials from the display name.
+  String get _initials {
+    final parts = _displayName
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) {
+      final p = parts.first;
+      return p.substring(0, p.length >= 2 ? 2 : 1).toUpperCase();
+    }
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -69,10 +95,10 @@ class ProfileScreen extends StatelessWidget {
             subtitle: 'Account & data controls',
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(
-                builder: (_) => const PrivacySecurityScreen(
+                builder: (_) => PrivacySecurityScreen(
                   role: DeletionRole.vendor,
-                  userName: 'Apollo Pharmacy',
-                  contact: '+91 98765 43210',
+                  userName: _displayName,
+                  contact: _displayPhone,
                 ),
               ),
             ),
@@ -155,9 +181,9 @@ class ProfileScreen extends StatelessWidget {
                 border: Border.all(
                     color: Colors.white.withValues(alpha: 0.5), width: 1.5),
               ),
-              child: const Center(
-                child: Text('AP',
-                    style: TextStyle(
+              child: Center(
+                child: Text(_initials,
+                    style: const TextStyle(
                         color: Colors.white,
                         fontSize: 22,
                         fontWeight: FontWeight.w800)),
@@ -168,13 +194,13 @@ class ProfileScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Apollo Pharmacy',
-                      style: TextStyle(
+                  Text(_displayName,
+                      style: const TextStyle(
                           color: Colors.white,
                           fontSize: 18,
                           fontWeight: FontWeight.w800)),
                   const SizedBox(height: 2),
-                  Text('+91 98765 43210',
+                  Text(_displayPhone,
                       style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.9),
                           fontSize: 13)),
@@ -206,21 +232,30 @@ class ProfileScreen extends StatelessWidget {
       listenable:
           Listenable.merge([OrdersController.instance, WishlistController.instance]),
       builder: (context, _) {
-        OrdersController.instance.ensureSeeded();
-        final orders = OrdersController.instance.orders.length;
+        final orderList = OrdersController.instance.orders;
+        final orders = orderList.length;
         final saved = WishlistController.instance.count;
+        // Real lifetime spend = sum of the user's actual order totals.
+        final spent = orderList.fold<double>(0, (sum, o) => sum + o.total);
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(
             children: [
               _stat('$orders', 'Orders'),
               _stat('$saved', 'Saved'),
-              _stat('₹12.4k', 'Spent'),
+              _stat(_formatSpent(spent), 'Spent'),
             ],
           ),
         );
       },
     );
+  }
+
+  /// Compact rupee formatting for the lifetime-spend stat (₹0, ₹950, ₹12.4k).
+  String _formatSpent(double v) {
+    if (v >= 100000) return '₹${(v / 100000).toStringAsFixed(1)}L';
+    if (v >= 1000) return '₹${(v / 1000).toStringAsFixed(1)}k';
+    return '₹${v.round()}';
   }
 
   Widget _stat(String value, String label) {

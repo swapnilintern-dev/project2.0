@@ -6,12 +6,11 @@
 // opens the Create Campaign screen. Uses the purple marketing accent.
 // =============================================================================
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
+import '../services/live_refresh.dart';
 import '../customer/customer_widgets.dart' show EmptyState, showAppSnack;
 import 'marketing_controllers.dart';
 import 'marketing_models.dart';
@@ -25,15 +24,26 @@ class MarketingCouponsScreen extends StatefulWidget {
   State<MarketingCouponsScreen> createState() => _MarketingCouponsScreenState();
 }
 
-class _MarketingCouponsScreenState extends State<MarketingCouponsScreen> {
+class _MarketingCouponsScreenState extends State<MarketingCouponsScreen>
+    with LiveRefreshMixin {
   MarketingCouponsController get _controller =>
       MarketingCouponsController.instance;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_controller.refresh());
+    // Fetch on open + keep the coupon list live (poll + app-resume).
+    startLiveRefresh();
   }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => _controller.refresh();
 
   @override
   Widget build(BuildContext context) {
@@ -56,6 +66,11 @@ class _MarketingCouponsScreenState extends State<MarketingCouponsScreen> {
               listenable: _controller,
               builder: (context, _) {
                 final coupons = _controller.coupons;
+                if (!_controller.isLoaded && coupons.isEmpty) {
+                  return const Center(
+                    child: CircularProgressIndicator(color: AppColors.primary),
+                  );
+                }
                 if (coupons.isEmpty) {
                   return const EmptyState(
                     icon: Icons.local_offer_outlined,

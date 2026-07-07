@@ -1,9 +1,9 @@
 // =============================================================================
 // MediCaPlus — Delivery Partner Shell
 //
-// Entry point for the delivery role. Hosts four persistent tabs (Tasks, Route,
-// Earnings, Profile) in an IndexedStack. Android back from a sub-tab returns
-// to Tasks first.
+// Entry point for the delivery role. Hosts two persistent tabs (Tasks,
+// Profile) in an IndexedStack. Android back from a sub-tab returns to Tasks
+// first.
 // =============================================================================
 
 import 'package:flutter/material.dart';
@@ -11,9 +11,7 @@ import 'package:flutter/material.dart';
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_widgets.dart';
 import 'delivery_mock_data.dart';
-import 'screens/earnings_screen.dart';
 import 'screens/profile_screen.dart';
-import 'screens/route_screen.dart';
 import 'screens/tasks_dashboard_screen.dart';
 
 class DeliveryMain extends StatefulWidget {
@@ -36,11 +34,9 @@ class _DeliveryMainState extends State<DeliveryMain> {
 
   @override
   Widget build(BuildContext context) {
-    final tabs = [
-      TasksDashboardScreen(onOpenRoute: () => _select(1)),
-      const RouteScreen(embedded: true),
-      const EarningsScreen(),
-      const DeliveryProfileScreen(),
+    final tabs = const [
+      TasksDashboardScreen(),
+      DeliveryProfileScreen(),
     ];
 
     return PopScope(
@@ -88,22 +84,6 @@ class _DeliveryMainState extends State<DeliveryMain> {
                   color: AppColors.darkGreen,
                 ),
                 label: 'Tasks',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.navigation_outlined),
-                selectedIcon: Icon(
-                  Icons.navigation,
-                  color: AppColors.darkGreen,
-                ),
-                label: 'Route',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.account_balance_wallet_outlined),
-                selectedIcon: Icon(
-                  Icons.account_balance_wallet,
-                  color: AppColors.darkGreen,
-                ),
-                label: 'Earnings',
               ),
               NavigationDestination(
                 icon: Icon(Icons.person_outline),

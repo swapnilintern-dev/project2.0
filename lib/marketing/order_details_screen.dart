@@ -14,6 +14,7 @@ import '../theme/app_theme.dart' show AppShadows;
 import '../customer/customer_widgets.dart' show formatRupees, showAppSnack;
 import 'marketing_controllers.dart';
 import 'marketing_models.dart';
+import 'assign_agent_sheet.dart';
 
 class OrderDetailsScreen extends StatelessWidget {
   const OrderDetailsScreen({super.key, required this.orderId});
@@ -46,6 +47,10 @@ class OrderDetailsScreen extends StatelessWidget {
               _summaryHeader(order),
               const SizedBox(height: 14),
               _buyerCard(order),
+              if (_controller.assignedAgentFor(order.id) != null) ...[
+                const SizedBox(height: 14),
+                _agentCard(_controller.assignedAgentFor(order.id)!),
+              ],
               const SizedBox(height: 14),
               _sectionTitle('Items Ordered (${order.itemCount})'),
               const SizedBox(height: 8),
@@ -71,7 +76,17 @@ class OrderDetailsScreen extends StatelessWidget {
             child: SizedBox(
               height: 54,
               child: ElevatedButton.icon(
-                onPressed: () {
+                onPressed: () async {
+                  // Shipped -> Out for Delivery: pick a real delivery agent.
+                  if (order.status.next ==
+                      MarketingOrderStatus.outForDelivery) {
+                    final agent = await showAssignAgentSheet(context, order);
+                    if (agent == null || !context.mounted) return;
+                    _controller.assignAgent(order.id, agent);
+                    showAppSnack(context,
+                        'Assigned to ${agent.name} · Out for Delivery');
+                    return;
+                  }
                   final next = order.status.next;
                   _controller.advance(order.id);
                   if (next != null) {
@@ -202,8 +217,8 @@ class OrderDetailsScreen extends StatelessWidget {
                             fontSize: 15,
                             color: AppColors.darkText)),
                     const SizedBox(height: 2),
-                    const Text('Wholesale buyer',
-                        style: TextStyle(
+                    Text('Order #${order.id}',
+                        style: const TextStyle(
                             fontSize: 12, color: AppColors.greyText)),
                   ],
                 ),
@@ -312,7 +327,7 @@ class OrderDetailsScreen extends StatelessWidget {
       ),
     );
   }
-
+  
   Widget _billCard(MarketingOrder order) {
     return _card(
       child: Column(
@@ -358,11 +373,48 @@ class OrderDetailsScreen extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                   color: AppColors.greyText)),
           const Spacer(),
-          Text(order.paymentTerm,
+          Text(order.paymentTerm.isEmpty ? 'Not specified' : order.paymentTerm,
               style: const TextStyle(
                   fontSize: 13.5,
                   fontWeight: FontWeight.w800,
                   color: AppColors.darkText)),
+        ],
+      ),
+    );
+  }
+
+  /// The assigned delivery agent, shown once marketing has picked one.
+  Widget _agentCard(String agentName) {
+    return _card(
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: MarketingColors.blue.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.two_wheeler_outlined,
+                color: MarketingColors.blue, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Delivery Agent',
+                    style: TextStyle(
+                        fontSize: 11.5, color: AppColors.greyText)),
+                const SizedBox(height: 2),
+                Text(agentName,
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.darkText)),
+              ],
+            ),
+          ),
         ],
       ),
     );

@@ -72,6 +72,7 @@ const orderSchema = new mongoose.Schema({
         type: Date
     },
 
+
     totalAmount: {
         type: Number,
         required: true
@@ -85,6 +86,23 @@ const orderSchema = new mongoose.Schema({
 
     deliveredAt: {
         type: Date
+    },
+    invoice: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Invoice"
+    },
+    orderNo: {
+        type: String,
+
+    },
+    amountWord: {
+        type: String,
+        required: true
+    },
+
+    paymentMethod: {
+        type: String,
+        enum: ["COD", "ONLINE"]
     }
 
 }, { timestamps: true });

@@ -16,6 +16,7 @@ import adminRouter from "./routes/adminRoute.js" ;
 import paymentRouter from "./routes/paymentRoute.js"
 import bannerRouter from "./routes/bannerRoute.js" ;
 import couponRouter from "./routes/couponRoute.js" ;
+import invoiceRouter from "./routes/invoiceRoute.js" ;
 
 const app = express() ;
 
@@ -26,17 +27,17 @@ const port = process.env.PORT || 3000 ;
 
 
 // middlewares 
+app.use(cors()) ;
 app.use( express.json()) ;
 app.use(cookieParser() ) ;
 app.use(urlencoded({ extended: true })) ;
 
 const corsOptions ={
 
-    origin : 'http://localhost:5173',
+    origin : 'http://localhost:50900/',
     credentials : true 
 }
 
-app.use(cors(corsOptions)) ;
 
 // all api 
 app.use('/vsArogya', userRouter ) ;
@@ -47,6 +48,7 @@ app.use('/vsArogya' , adminRouter ) ;
 app.use('/vsArogya' , paymentRouter ) ;
 app.use('/vsArogya' , bannerRouter ) ;
 app.use('/vsArogya' , couponRouter ) ;
+app.use('/vsArogya' , invoiceRouter ) ;
 
 
 

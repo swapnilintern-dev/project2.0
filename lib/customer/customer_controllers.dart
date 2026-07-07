@@ -48,8 +48,12 @@ class CartController extends ChangeNotifier {
     return 0;
   }
 
-  /// Adds [quantity] of [product]; merges with an existing line. Fires the
-  /// backend call in the background but never blocks the UI.
+  // The cart is LOCAL-authoritative. We do NOT mirror every add/remove to the
+  // server (that caused races + a stale/accumulating server cart). Instead the
+  // whole cart is pushed to the server ONCE at checkout via
+  // CustomerApi.syncCartToServer, so the placed order exactly matches this cart.
+
+  /// Adds [quantity] of [product]; merges with an existing line.
   void add(Product product, {int quantity = 1}) {
     final index = _items.indexWhere((i) => i.product.id == product.id);
     if (index >= 0) {
@@ -59,30 +63,17 @@ class CartController extends ChangeNotifier {
       _items.add(CartItem(product: product, quantity: quantity));
     }
     notifyListeners();
-    // Best-effort sync; result intentionally ignored (offline-safe).
-    unawaited(_api.addToCart(product.id, quantity: quantity));
   }
 
   void setQuantity(String productId, int quantity) {
     final index = _items.indexWhere((i) => i.product.id == productId);
     if (index < 0) return;
-    final oldQty = _items[index].quantity;
     if (quantity <= 0) {
       _items.removeAt(index);
-      notifyListeners();
-      unawaited(_api.removeFromCart(productId));
-      return;
+    } else {
+      _items[index] = _items[index].copyWith(quantity: quantity);
     }
-    _items[index] = _items[index].copyWith(quantity: quantity);
     notifyListeners();
-    // Mirror the change to the backend one step at a time (offline-safe).
-    final delta = quantity - oldQty;
-    for (var i = 0; i < delta; i++) {
-      unawaited(_api.increaseCartItem(productId));
-    }
-    for (var i = 0; i < -delta; i++) {
-      unawaited(_api.decreaseCartItem(productId));
-    }
   }
 
   void increment(String productId) =>
@@ -94,7 +85,6 @@ class CartController extends ChangeNotifier {
   void remove(String productId) {
     _items.removeWhere((i) => i.product.id == productId);
     notifyListeners();
-    unawaited(_api.removeFromCart(productId));
   }
 
   /// Clears the LOCAL cart only. We deliberately do NOT mirror this to the
@@ -127,8 +117,8 @@ class CartController extends ChangeNotifier {
 
   double get discount => _coupon?.discountFor(subtotal) ?? 0;
 
-  /// Free delivery over ₹500, otherwise a flat ₹40.
-  double get deliveryFee => _items.isEmpty || subtotal >= 500 ? 0 : 40;
+  /// Delivery is always FREE on the platform.
+  double get deliveryFee => 0;
 
   /// 12% GST on the discounted subtotal.
   double get gst =>
@@ -147,115 +137,176 @@ void resetCustomerSession() {
   AddressController.instance.reset();
 }
 
-/// Saved / wishlisted products.
+/// Saved / wishlisted products — backed by the server (GET /all-saved,
+/// POST /save-prod/:id). The local [Set] is the source of truth for the UI and
+/// is kept in sync with the backend: [refresh] pulls it, [toggle] mirrors each
+/// change. Everything is offline-safe — the UI updates instantly and the
+/// backend call is best-effort.
 class WishlistController extends ChangeNotifier {
   WishlistController._();
   static final WishlistController instance = WishlistController._();
 
-  final Set<String> _ids = {};
-  Set<String> get ids => Set.unmodifiable(_ids);
-  int get count => _ids.length;
+  final CustomerApi _api = CustomerApi();
 
-  bool contains(String productId) => _ids.contains(productId);
+  // id -> full product. Single source of truth (populated from /all-saved and
+  // from each toggle), so the Saved screen never depends on the catalogue.
+  final Map<String, Product> _products = {};
 
-  void toggle(String productId) {
-    if (!_ids.remove(productId)) _ids.add(productId);
-    notifyListeners();
+  Set<String> get ids => _products.keys.toSet();
+  int get count => _products.length;
+
+  /// The saved products themselves (newest additions last).
+  List<Product> get products => _products.values.toList();
+
+  bool contains(String productId) => _products.containsKey(productId);
+
+  /// Pulls the saved products from the backend (GET /all-saved). Keeps the
+  /// current list on failure (offline / not logged in) — never wipes it.
+  Future<void> refresh() async {
+    final saved = await _api.getSavedProducts();
+    if (saved != null) {
+      _products
+        ..clear()
+        ..addEntries(saved.map((p) => MapEntry(p.id, p)));
+      notifyListeners();
+    }
   }
 
-  List<Product> resolve(List<Product> catalogue) =>
-      catalogue.where((p) => _ids.contains(p.id)).toList();
+  /// Optimistically flips the saved state locally, then mirrors it to the
+  /// backend (POST /save-prod/:id is itself a toggle). Offline-safe.
+  void toggle(Product product) {
+    if (_products.remove(product.id) == null) {
+      _products[product.id] = product;
+    }
+    notifyListeners();
+    unawaited(_api.toggleSavedProduct(product.id));
+  }
+
+  /// Kept for callers that still pass the catalogue — now simply the saved
+  /// products (the catalogue arg is ignored; saved products are self-contained).
+  List<Product> resolve(List<Product> catalogue) => products;
 
   void reset() {
-    _ids.clear();
+    _products.clear();
     notifyListeners();
   }
 }
 
-/// In-memory order history. Seeded from mock data on first access; new orders
-/// from checkout are prepended.
+/// Order history, fetched from the backend (GET /get-order). No mock/dummy
+/// data — the list is empty until [refresh] loads the user's real orders.
 class OrdersController extends ChangeNotifier {
   OrdersController._();
   static final OrdersController instance = OrdersController._();
 
   final CustomerApi _api = CustomerApi();
 
-  List<Order>? _orders;
-  List<Order> get orders => List.unmodifiable(_orders ?? const []);
+  final List<Order> _orders = [];
+  bool _loaded = false;
 
-  bool get isInitialised => _orders != null;
+  List<Order> get orders => List.unmodifiable(_orders);
+  bool get isLoaded => _loaded;
 
-  void ensureSeeded() {
-    _orders ??= MockData.seedOrders();
-  }
-
-  /// Loads orders from the backend (GET /get-order). Replaces the list on
-  /// success; on failure (offline / not logged in) keeps the local/mock seed so
-  /// the screen is never empty.
+  /// Loads order history from the backend (GET /get-order). On failure the
+  /// current list is kept — NO mock/dummy data is ever injected.
   Future<void> refresh() async {
     final backend = await _api.getOrders();
     if (backend != null) {
-      _orders = backend;
-    } else {
-      ensureSeeded();
+      // Preserve any just-placed / offline-only orders the backend list doesn't
+      // (yet) contain, so a freshly-placed order is never shown as "Order not
+      // found" while the server catches up — or when it was placed offline.
+      final backendIds = backend.map((o) => o.id).toSet();
+      final localOnly =
+          _orders.where((o) => !backendIds.contains(o.id)).toList();
+      _orders
+        ..clear()
+        ..addAll(backend)
+        ..addAll(localOnly)
+        ..sort((a, b) => b.placedAt.compareTo(a.placedAt));
     }
+    _loaded = true;
     notifyListeners();
+    // The user's real delivery addresses live on their past orders — feed them
+    // to the address book so it reflects real data (no server change needed).
+    AddressController.instance.syncFromOrders(_orders);
   }
 
   List<Order> byFilter(OrderFilter filter) {
-    ensureSeeded();
     return switch (filter) {
       OrderFilter.all => orders,
-      OrderFilter.active => orders.where((o) => o.status.isActive).toList(),
+      OrderFilter.active => _orders.where((o) => o.status.isActive).toList(),
       OrderFilter.delivered =>
-        orders.where((o) => o.status == OrderStatus.delivered).toList(),
+        _orders.where((o) => o.status == OrderStatus.delivered).toList(),
       OrderFilter.cancelled =>
-        orders.where((o) => o.status == OrderStatus.cancelled).toList(),
+        _orders.where((o) => o.status == OrderStatus.cancelled).toList(),
     };
   }
 
   Order? byId(String id) {
-    ensureSeeded();
-    for (final o in _orders!) {
+    for (final o in _orders) {
       if (o.id == id) return o;
     }
     return null;
   }
 
+  /// Optimistically prepends a freshly-placed order (reconciled by [refresh]).
   void addOrder(Order order) {
-    ensureSeeded();
-    _orders!.insert(0, order);
+    _orders.insert(0, order);
     notifyListeners();
   }
 
   void cancel(String id) {
-    ensureSeeded();
-    final i = _orders!.indexWhere((o) => o.id == id);
+    final i = _orders.indexWhere((o) => o.id == id);
     if (i < 0) return;
-    _orders![i] = _orders![i].copyWith(status: OrderStatus.cancelled);
+    _orders[i] = _orders[i].copyWith(status: OrderStatus.cancelled);
     notifyListeners();
     // Mirror to the backend (offline-safe; ignored if not logged in).
     unawaited(_api.cancelOrder(id));
   }
 
-  /// Drops cached orders so the next access reseeds (or refetches from the API
-  /// once wired). Used by [resetCustomerSession] on logout.
+  /// Clears cached orders. Used by [resetCustomerSession] on logout.
   void reset() {
-    _orders = null;
+    _orders.clear();
+    _loaded = false;
     notifyListeners();
   }
 }
 
-/// Saved delivery addresses. Seeded from mock data; supports add/edit/delete
-/// and a single default. Checkout + Profile observe this.
+/// Saved delivery addresses. NO fake seed — the list is built from the user's
+/// REAL past-order shipping addresses (via [syncFromOrders], fed by
+/// [OrdersController]) plus any addresses added this session. The backend has
+/// no address-book endpoint, so session-added addresses aren't persisted on
+/// their own; once used in an order they reappear via the order-derived list.
+/// Checkout + Profile observe this.
 class AddressController extends ChangeNotifier {
   AddressController._();
   static final AddressController instance = AddressController._();
 
-  List<Address>? _addresses;
+  /// Addresses the user added this session (not yet persisted server-side).
+  final List<Address> _local = [];
+
+  /// Real addresses derived from the user's past orders (GET /get-order).
+  List<Address> _derived = const [];
+
+  /// Id of the address the user chose as default (spans local + derived).
+  String? _defaultId;
+
+  /// Merged, de-duplicated address list (local first, then order-derived), with
+  /// exactly one entry marked default.
   List<Address> get addresses {
-    _addresses ??= List<Address>.from(MockData.addresses);
-    return List.unmodifiable(_addresses!);
+    final merged = <Address>[];
+    final seen = <String>{};
+    for (final a in [..._local, ..._derived]) {
+      if (a.line1.trim().isEmpty) continue;
+      if (seen.add(a.formatted.toLowerCase())) merged.add(a);
+    }
+    if (merged.isEmpty) return const [];
+    final chosen = _defaultId != null && merged.any((a) => a.id == _defaultId);
+    return List.unmodifiable([
+      for (int i = 0; i < merged.length; i++)
+        merged[i].copyWith(
+          isDefault: chosen ? merged[i].id == _defaultId : i == 0,
+        ),
+    ]);
   }
 
   Address? get defaultAddress {
@@ -264,56 +315,64 @@ class AddressController extends ChangeNotifier {
     return list.firstWhere((a) => a.isDefault, orElse: () => list.first);
   }
 
-  /// Drops cached addresses so the next access reseeds (or refetches once the
-  /// API is wired). Used by [resetCustomerSession] on logout.
+  /// Rebuilds the order-derived addresses from the user's real orders,
+  /// newest-first and de-duplicated by full address.
+  void syncFromOrders(List<Order> orders) {
+    final sorted = List<Order>.from(orders)
+      ..sort((a, b) => b.placedAt.compareTo(a.placedAt));
+    final seen = <String>{};
+    final out = <Address>[];
+    for (final o in sorted) {
+      final a = o.address;
+      if (a.line1.trim().isEmpty) continue;
+      final key = a.formatted.toLowerCase();
+      if (seen.add(key)) {
+        out.add(a.copyWith(
+          id: 'ord-${key.hashCode}',
+          label: a.label.trim().isEmpty ? 'Delivery' : a.label,
+        ));
+      }
+    }
+    _derived = out;
+    notifyListeners();
+  }
+
+  /// Clears all address state. Used by [resetCustomerSession] on logout.
   void reset() {
-    _addresses = null;
+    _local.clear();
+    _derived = const [];
+    _defaultId = null;
     notifyListeners();
   }
 
   void add(Address address) {
-    final list = _ensure();
-    // First address added becomes default automatically.
-    final makeDefault = address.isDefault || list.isEmpty;
-    if (makeDefault) _clearDefaults(list);
-    list.add(address.copyWith(isDefault: makeDefault));
+    final id = address.id.isEmpty
+        ? 'loc-${DateTime.now().microsecondsSinceEpoch}'
+        : address.id;
+    _local.insert(0, address.copyWith(id: id));
+    // First-ever address (or one explicitly marked) becomes the default.
+    if (address.isDefault || (_local.length == 1 && _derived.isEmpty)) {
+      _defaultId = id;
+    }
     notifyListeners();
   }
 
   void update(Address address) {
-    final list = _ensure();
-    final i = list.indexWhere((a) => a.id == address.id);
-    if (i < 0) return;
-    if (address.isDefault) _clearDefaults(list);
-    list[i] = address;
+    final i = _local.indexWhere((a) => a.id == address.id);
+    if (i >= 0) _local[i] = address; // order-derived entries are read-only
+    if (address.isDefault) _defaultId = address.id;
     notifyListeners();
   }
 
   void remove(String id) {
-    final list = _ensure();
-    final wasDefault = list.any((a) => a.id == id && a.isDefault);
-    list.removeWhere((a) => a.id == id);
-    if (wasDefault && list.isNotEmpty) list[0] = list[0].copyWith(isDefault: true);
+    _local.removeWhere((a) => a.id == id);
+    if (_defaultId == id) _defaultId = null;
     notifyListeners();
   }
 
   void setDefault(String id) {
-    final list = _ensure();
-    _clearDefaults(list);
-    final i = list.indexWhere((a) => a.id == id);
-    if (i >= 0) list[i] = list[i].copyWith(isDefault: true);
+    _defaultId = id;
     notifyListeners();
-  }
-
-  List<Address> _ensure() {
-    _addresses ??= List<Address>.from(MockData.addresses);
-    return _addresses!;
-  }
-
-  void _clearDefaults(List<Address> list) {
-    for (int i = 0; i < list.length; i++) {
-      if (list[i].isDefault) list[i] = list[i].copyWith(isDefault: false);
-    }
   }
 }
 

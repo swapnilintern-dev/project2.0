@@ -145,6 +145,10 @@ class _BannerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Image-first banners render the uploaded creative edge-to-edge; older
+    // (image-less) banners fall back to the gradient + text layout below.
+    if (banner.hasImage) return _imageCard();
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -219,6 +223,60 @@ class _BannerCard extends StatelessWidget {
             Icon(Icons.local_offer,
                 color: Colors.white.withValues(alpha: 0.25), size: 56),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Full-bleed creative for image-backed banners. Fills the carousel card
+  /// (BoxFit.cover) so any uploaded aspect ratio looks right on iOS + Android,
+  /// with graceful loading and error states.
+  Widget _imageCard() {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: banner.startColor,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+              color: banner.endColor.withValues(alpha: 0.25),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Image.network(
+          banner.imageUrl!,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
+          loadingBuilder: (context, child, progress) {
+            if (progress == null) return child;
+            return Container(
+              color: banner.startColor.withValues(alpha: 0.15),
+              alignment: Alignment.center,
+              child: const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            );
+          },
+          errorBuilder: (context, error, stack) => Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [banner.startColor, banner.endColor],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            alignment: Alignment.center,
+            child: const Icon(Icons.image_not_supported_outlined,
+                color: Colors.white70, size: 40),
+          ),
         ),
       ),
     );

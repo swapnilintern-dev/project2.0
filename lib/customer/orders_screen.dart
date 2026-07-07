@@ -6,12 +6,11 @@
 // Embedded as a tab inside the shell.
 // =============================================================================
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
+import '../services/live_refresh.dart';
 import 'catalog.dart';
 import 'customer_controllers.dart';
 import 'customer_models.dart';
@@ -27,16 +26,25 @@ class OrdersScreen extends StatefulWidget {
   State<OrdersScreen> createState() => _OrdersScreenState();
 }
 
-class _OrdersScreenState extends State<OrdersScreen> {
+class _OrdersScreenState extends State<OrdersScreen> with LiveRefreshMixin {
   OrderFilter _filter = OrderFilter.all;
 
   @override
   void initState() {
     super.initState();
-    OrdersController.instance.ensureSeeded();
-    // Pull the latest orders from the backend (falls back to the seed on fail).
-    unawaited(OrdersController.instance.refresh());
+    // All orders come from the backend (GET /get-order) — no dummy data. Keep
+    // the list live so status changes made by other roles surface on their own.
+    startLiveRefresh();
   }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => OrdersController.instance.refresh();
 
   void _reorder(Order order) {
     for (final item in order.items) {
@@ -54,7 +62,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final content = ListenableBuilder(
       listenable: OrdersController.instance,
       builder: (context, _) {
-        final orders = OrdersController.instance.byFilter(_filter);
+        // Newest orders first (backend returns them oldest-first).
+        final orders = List<Order>.from(
+            OrdersController.instance.byFilter(_filter))
+          ..sort((a, b) => b.placedAt.compareTo(a.placedAt));
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -76,20 +87,25 @@ class _OrdersScreenState extends State<OrdersScreen> {
             ),
             const SizedBox(height: 8),
             Expanded(
-              child: orders.isEmpty
+              child: (!OrdersController.instance.isLoaded && orders.isEmpty)
+                  ? const Center(child: CircularProgressIndicator())
+                  : orders.isEmpty
                   ? EmptyState(
                       icon: Icons.receipt_long_outlined,
                       title: 'No ${_filter == OrderFilter.all ? '' : _filter.label.toLowerCase()} orders',
                       message:
                           'When you place an order it will appear here for tracking and reordering.',
                     )
-                  : ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                      physics: const BouncingScrollPhysics(),
-                      itemCount: orders.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 12),
-                      itemBuilder: (context, i) =>
-                          _OrderCard(order: orders[i], onReorder: _reorder),
+                  : RefreshIndicator(
+                      onRefresh: OrdersController.instance.refresh,
+                      child: ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        itemCount: orders.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 12),
+                        itemBuilder: (context, i) =>
+                            _OrderCard(order: orders[i], onReorder: _reorder),
+                      ),
                     ),
             ),
           ],

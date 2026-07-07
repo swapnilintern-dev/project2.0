@@ -45,8 +45,12 @@ class VendorApiService {
   /// `--dart-define=API_BASE_URL=...` at run time.
   static String get baseUrl => ApiConfig.baseUrl;
 
+  /// Vendor registration is pinned to the local backend only — it does NOT use
+  /// [ApiConfig.baseUrl]. Every other service still reads ApiConfig.
+  static const String _registerBaseUrl = 'http://localhost:3000';
+
   static Uri get _registerVendorUri =>
-      Uri.parse('$baseUrl/vsArogya/register-vendor');
+      Uri.parse('$_registerBaseUrl/vsArogya/register-vendor');
 
   /// Submits [model] to the backend. Never throws — always returns a result.
   Future<VendorApiResult> registerVendor(VendorRegistrationModel model) async {
