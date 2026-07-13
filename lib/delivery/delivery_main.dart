@@ -10,7 +10,7 @@ import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_widgets.dart';
-import 'delivery_mock_data.dart';
+import 'delivery_models.dart';
 import 'screens/profile_screen.dart';
 import 'screens/tasks_dashboard_screen.dart';
 
@@ -29,7 +29,8 @@ class _DeliveryMainState extends State<DeliveryMain> {
   @override
   void initState() {
     super.initState();
-    DeliveryMockData.seed();
+    // Warm the live dispatch queue on entry (the dashboard also keeps it live).
+    DeliveryController.instance.refresh();
   }
 
   @override

@@ -56,6 +56,7 @@ dependencies:
 
   # Native share sheet (Android + iOS) for the "Share product" button.
   share_plus: ^10.1.4
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:

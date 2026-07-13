@@ -16,6 +16,7 @@
 import 'package:flutter/material.dart';
 
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../../marketing/invoice_screen.dart' show StaffInvoiceScreen;
 import '../admin_api.dart';
 import '../admin_common.dart';
 import '../admin_models.dart';
@@ -107,6 +108,41 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
     }
   }
 
+  /// Cancels an order (admin superset access) after confirmation. Allowed only
+  /// BEFORE delivery; the backend restores any stock deducted at accept time.
+  Future<void> _cancel(AdminOrder o) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancel this order?'),
+        content: Text(
+          'Order #${_shortId(o.id)} for ${o.buyer} will be cancelled. Any '
+          'stock reserved for it will be added back to inventory.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Keep order'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AdminColors.red),
+            child: const Text('Cancel order'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final err = await _api.cancelOrder(o.id);
+    if (!mounted) return;
+    if (err == null) {
+      setState(() => o.status = AdminOrderStatus.cancelled);
+      adminSnack(context, 'Order ${_shortId(o.id)} cancelled — stock restored');
+    } else {
+      adminSnack(context, err, color: AdminColors.red);
+    }
+  }
+
   void _openDetail(AdminOrder o) {
     showModalBottomSheet<void>(
       context: context,
@@ -122,6 +158,15 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
             : () {
                 Navigator.of(context).pop();
                 _advance(o);
+              },
+        // Cancellation is hidden once the order is Delivered (or already
+        // Cancelled) — never after delivery.
+        onCancel: (o.status == AdminOrderStatus.delivered ||
+                o.status == AdminOrderStatus.cancelled)
+            ? null
+            : () {
+                Navigator.of(context).pop();
+                _cancel(o);
               },
       ),
     );
@@ -329,10 +374,14 @@ class _OrderCard extends StatelessWidget {
 }
 
 class _OrderDetailSheet extends StatefulWidget {
-  const _OrderDetailSheet({required this.order, this.onAdvance});
+  const _OrderDetailSheet({required this.order, this.onAdvance, this.onCancel});
 
   final AdminOrder order;
   final VoidCallback? onAdvance;
+
+  /// Cancel action (null when the order can no longer be cancelled — i.e.
+  /// Delivered / Cancelled).
+  final VoidCallback? onCancel;
 
   @override
   State<_OrderDetailSheet> createState() => _OrderDetailSheetState();
@@ -348,6 +397,18 @@ class _OrderDetailSheetState extends State<_OrderDetailSheet> {
 
   AdminOrder get order => widget.order;
   VoidCallback? get onAdvance => widget.onAdvance;
+  VoidCallback? get onCancel => widget.onCancel;
+
+  /// The invoice exists only once the order has been ACCEPTED — Pending /
+  /// Cancelled orders show no invoice action at all.
+  bool get _invoiceAvailable => switch (order.status) {
+        AdminOrderStatus.confirmed ||
+        AdminOrderStatus.shipped ||
+        AdminOrderStatus.outForDelivery ||
+        AdminOrderStatus.delivered =>
+          true,
+        _ => false,
+      };
 
   @override
   void initState() {
@@ -507,12 +568,57 @@ class _OrderDetailSheetState extends State<_OrderDetailSheet> {
                         color: AppColors.darkText)),
               ],
             ),
-            if (onAdvance != null) ...[
+            if (_invoiceAvailable) ...[
               const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => StaffInvoiceScreen(
+                        orderId: order.id,
+                        buyer: order.buyer,
+                      ),
+                    ),
+                  ),
+                  icon: const Icon(Icons.receipt_long, size: 18),
+                  label: const Text('View Invoice',
+                      style: TextStyle(fontWeight: FontWeight.w700)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.darkGreen,
+                    side: const BorderSide(color: AppColors.primary),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ],
+            if (onAdvance != null) ...[
+              const SizedBox(height: 12),
               AdminButton(
                 label: order.status.advanceLabel ?? 'Advance',
                 icon: Icons.arrow_forward,
                 onPressed: onAdvance!,
+              ),
+            ],
+            if (onCancel != null) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 44,
+                child: OutlinedButton.icon(
+                  onPressed: onCancel!,
+                  icon: const Icon(Icons.close, size: 18),
+                  label: const Text('Cancel Order',
+                      style: TextStyle(fontWeight: FontWeight.w700)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AdminColors.red,
+                    side: const BorderSide(color: AdminColors.red),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
               ),
             ],
           ],

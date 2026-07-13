@@ -6,6 +6,19 @@
       "runtimeExecutable": "cmd",
       "runtimeArgs": ["/c", "cd /d C:\\swapnil2\\sport && flutter run -d web-server --web-port 8099"],
       "port": 8099
+    },
+    {
+      "name": "invoice-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "-y",
+        "http-server",
+        "C:\\Users\\medic\\AppData\\Local\\Temp\\claude\\C--medicine-self\\aa3af111-2129-4e6c-9b0f-14121594b557\\scratchpad",
+        "-p",
+        "5089",
+        "-c-1"
+      ],
+      "port": 5089
     }
   ]
 }

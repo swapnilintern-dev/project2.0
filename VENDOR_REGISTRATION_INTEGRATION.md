@@ -141,14 +141,14 @@ On success → `RegistrationSuccessScreen`. On failure → snackbar with `messag
 ## 7. Changing the server URL
 
 `ApiConfig.baseUrl` / `VendorApiService.baseUrl` =
-`http://localhost:3000`.
+`https://backend-new-0ady.onrender.com/`.
 
 Override at run time without editing code:
 ```bash
 flutter run --dart-define=API_BASE_URL=http://192.168.1.5:3000
 ```
 - Android emulator → host machine = `http://10.0.2.2:3000`
-- iOS sim / desktop → `http://localhost:3000`
+- iOS sim / desktop → `https://backend-new-0ady.onrender.com/`
 - Physical device → your PC's LAN IP
 
 ---

@@ -125,10 +125,18 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen>
                 const SizedBox(height: 16),
                 _card('Ordered Items', _itemsBlock(order)),
                 const SizedBox(height: 16),
-                _card('Invoice Summary', _invoiceBlock(order)),
+                _card('Bill Summary', _invoiceBlock(order)),
                 const SizedBox(height: 16),
-                InvoiceCard(order: order),
-                const SizedBox(height: 16),
+                // BUSINESS RULE: the tax invoice is generated only when the
+                // marketing team ACCEPTS the order. While it's pending there is
+                // NO invoice — no button, no number — just a clear note.
+                if (order.invoiceAvailable) ...[
+                  InvoiceCard(order: order),
+                  const SizedBox(height: 16),
+                ] else if (order.status == OrderStatus.placed) ...[
+                  _pendingInvoiceNote(),
+                  const SizedBox(height: 16),
+                ],
                 _actions(context, order),
               ],
             );
@@ -205,7 +213,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen>
                   color: Colors.white.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: Text(order.status.label,
+                child: Text(order.status.pillLabel,
                     style: const TextStyle(
                         color: Colors.white,
                         fontSize: 11,
@@ -457,7 +465,13 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen>
         row('Delivery',
             order.deliveryFee == 0 ? 'FREE' : formatRupees(order.deliveryFee),
             free: order.deliveryFee == 0),
-        row('GST (12%)', formatRupees(order.gst, decimals: true)),
+        // Prices are GST-inclusive — old orders that stored an added-on-top
+        // GST amount still show it, new ones show "Included in price".
+        row(
+            'GST',
+            order.gst > 0
+                ? formatRupees(order.gst, decimals: true)
+                : 'Included in price'),
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 10),
           child: Divider(color: AppColors.border, height: 1),
@@ -465,6 +479,58 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen>
         row('Total Paid', formatRupees(order.total, decimals: true),
             bold: true),
       ],
+    );
+  }
+
+  /// Shown in place of the invoice card while the order awaits marketing
+  /// approval — the invoice does not exist yet, so nothing invoice-shaped
+  /// (button / number / placeholder) is rendered.
+  Widget _pendingInvoiceNote() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+        boxShadow: AppShadows.card,
+      ),
+      child: Row(
+        children: const [
+          Icon(Icons.hourglass_top_rounded,
+              color: Color(0xFFF59E0B), size: 22),
+          SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Pending approval',
+                    style:
+                        TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+                SizedBox(height: 2),
+                Text(
+                  'Your tax invoice will be generated once the order is '
+                  'accepted by our team.',
+                  style: TextStyle(fontSize: 12, color: AppColors.greyText),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _cancelOrder(BuildContext context, Order order) async {
+    final ok = await OrdersController.instance.cancel(order.id);
+    if (!context.mounted) return;
+    showAppSnack(
+      context,
+      ok
+          ? 'Order cancelled — any reserved stock has been released'
+          : 'Order cancelled on this device. We could not reach the server — '
+              'it will sync when you are back online.',
+      success: false,
     );
   }
 
@@ -478,16 +544,15 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen>
             onPressed: () => _reorder(context, order),
           ),
         ),
+        // Cancellation is allowed only BEFORE delivery (and not while it's on
+        // the rider) — delivered/cancelled orders hide the action entirely.
         if (order.status.isActive && order.status != OrderStatus.outForDelivery) ...[
           const SizedBox(width: 12),
           Expanded(
             child: SecondaryButton(
               label: 'Cancel Order',
               icon: Icons.close,
-              onPressed: () {
-                OrdersController.instance.cancel(order.id);
-                showAppSnack(context, 'Order cancelled', success: false);
-              },
+              onPressed: () => _cancelOrder(context, order),
             ),
           ),
         ],

@@ -21,17 +21,43 @@ class AdminApi {
 
   final http.Client _client;
   static const Duration _timeout = Duration(seconds: 25);
-  static String get baseUrl => ApiConfig.baseUrl;
 
-  /// Approve / reject vendor calls are pinned to the local backend only — they
-  /// do NOT use [baseUrl]/[ApiConfig]. Every other admin call still uses baseUrl.
-  static const String _approvalBaseUrl = 'http://localhost:3000';
+  /// Accept renders the invoice PDF on the server inline; give that one call a
+  /// longer window so a cold-started PDF engine can't fail the confirmation.
+  static const Duration _slowTimeout = Duration(seconds: 60);
+  static String get baseUrl => ApiConfig.baseUrl;
 
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',
+        if (AuthService.authToken != null)
+          'Authorization': 'Bearer ${AuthService.authToken}',
         if (AuthService.sessionCookie != null)
           'Cookie': AuthService.sessionCookie!,
       };
+
+  /// Cancels an order as ADMIN (PUT /vsArogya/cancel-order/:id, staff token).
+  /// Allowed only BEFORE delivery — the backend rejects Delivered orders and
+  /// restores any stock deducted at accept time (see the contract in
+  /// MarketingOrdersApi / ORDER_INVOICE_STOCK_INTEGRATION.md). Returns null on
+  /// success or a user-facing error message.
+  Future<String?> cancelOrder(String id) async {
+    try {
+      final res = await _client
+          .put(Uri.parse('$baseUrl/vsArogya/cancel-order/$id'),
+              headers: _headers)
+          .timeout(_timeout);
+      if (res.statusCode >= 200 && res.statusCode < 300) return null;
+      try {
+        final b = jsonDecode(res.body);
+        if (b is Map && b['message'] != null) return b['message'].toString();
+      } catch (_) {
+        // non-JSON body
+      }
+      return 'Cancel failed (HTTP ${res.statusCode}) — try again';
+    } catch (_) {
+      return 'Network error — check your connection and try again';
+    }
+  }
 
   /// Vendors with approvalStatus "Pending". Returns null on failure (so the
   /// screen keeps whatever it has), or an empty list when there are none.
@@ -108,7 +134,7 @@ class AdminApi {
   Future<bool> approveVendor(String id) async {
     try {
       final res = await _client
-          .put(Uri.parse('$_approvalBaseUrl/vsArogya/approval-mail/$id'),
+          .put(Uri.parse('$baseUrl/vsArogya/approval-mail/$id'),
               headers: _headers)
           .timeout(_timeout);
       return res.statusCode >= 200 && res.statusCode < 300;
@@ -122,7 +148,7 @@ class AdminApi {
   Future<bool> rejectVendor(String id) async {
     try {
       final res = await _client
-          .put(Uri.parse('$_approvalBaseUrl/vsArogya/reject-vendor/$id'),
+          .put(Uri.parse('$baseUrl/vsArogya/reject-vendor/$id'),
               headers: _headers)
           .timeout(_timeout);
       return res.statusCode >= 200 && res.statusCode < 300;
@@ -131,35 +157,50 @@ class AdminApi {
     }
   }
 
-  /// Creates a delivery agent and emails them their login credentials.
-  ///   POST /vsArogya/create-delivery-agent  (pinned to the local backend)
-  /// Body: { contact_person_name, mobile_no, email, password, role:"delivery" }
-  /// The login id IS the mobile number; [password] is the generated 6-digit
-  /// code (created once, shown to the admin and mailed to the agent).
-  /// Returns true on success. The backend owns the actual mail send.
-  Future<bool> createDeliveryAgent({
+  /// Creates a delivery agent (POST /vsArogya/agent-create).
+  /// Body the backend expects: { fullName, email, mobile }. The SERVER
+  /// generates the 6-digit password itself and returns it on the created
+  /// agent, so the login id IS the mobile number and the password is whatever
+  /// the server made.
+  ///
+  /// Returns `(password, error)`:
+  ///  • password → the server-generated password to show/share with the agent.
+  ///  • error    → a user-facing message when the create failed.
+  Future<(String?, String?)> createDeliveryAgent({
     required String name,
     required String mobile,
     required String email,
-    required String password,
   }) async {
     try {
       final res = await _client
           .post(
-            Uri.parse('$_approvalBaseUrl/vsArogya/create-delivery-agent'),
+            Uri.parse('$baseUrl/vsArogya/agent-create'),
             headers: _headers,
             body: jsonEncode({
-              'contact_person_name': name,
-              'mobile_no': mobile,
+              'fullName': name,
               'email': email,
-              'password': password,
-              'role': 'delivery',
+              'mobile': mobile,
             }),
           )
           .timeout(_timeout);
-      return res.statusCode >= 200 && res.statusCode < 300;
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final body = jsonDecode(res.body) as Map<String, dynamic>;
+        final agent = body['agentDetails'];
+        final pwd = (agent is Map ? agent['password'] : null)?.toString();
+        return (pwd ?? '', null);
+      }
+      // Surface the server's own message (e.g. missing field / duplicate).
+      try {
+        final b = jsonDecode(res.body);
+        if (b is Map && b['message'] != null) {
+          return (null, b['message'].toString());
+        }
+      } catch (_) {
+        // non-JSON body
+      }
+      return (null, 'Could not create agent (HTTP ${res.statusCode}).');
     } catch (_) {
-      return false;
+      return (null, 'Could not reach the server. Check your connection.');
     }
   }
 
@@ -265,10 +306,14 @@ class AdminApi {
       _ => null,
     };
     if (path == null) return false;
+    // Accept renders the invoice PDF (Puppeteer) inline on the server before it
+    // replies, so that transition gets a longer timeout to survive a cold start.
+    final timeout =
+        next == AdminOrderStatus.confirmed ? _slowTimeout : _timeout;
     try {
       final res = await _client
           .put(Uri.parse('$baseUrl$path'), headers: _headers)
-          .timeout(_timeout);
+          .timeout(timeout);
       return res.statusCode >= 200 && res.statusCode < 300;
     } catch (_) {
       return false;

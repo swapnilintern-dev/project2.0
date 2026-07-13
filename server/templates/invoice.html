@@ -554,12 +554,12 @@
                 </td>
             </tr>
             <tr>
-                <td class="col-item"></td>
-                <td class="col-qty"></td>
+                <td class="col-item">CGST : {{total_cgst}}</td>
+                <td class="col-qty">SGST : {{total_sgst}}</td>
                 <td class="col-total">
                     <div class="flex-total-container">
                         <span class="total-label">ROUND OFF:</span>
-                        <span class="total-amount">0.00</span>
+                        <span class="total-amount">{{round_off}}</span>
                     </div>
                 </td>
             </tr>
@@ -586,10 +586,10 @@
                     </thead>
                     <tbody>
                         <tr>
-                            <td>{{gst5}}</td>
-                            <td>{{gst12}}</td>
-                            <td>{{gst18}}</td>
-                            <td>{{gst28}}</td>
+                            <td>{{gst_5}}</td>
+                            <td>{{gst_12}}</td>
+                            <td>{{gst_18}}</td>
+                            <td>{{gst_28}}</td>
                             <td><strong>{{gst_total}}</strong></td>
                         </tr>
                     </tbody>

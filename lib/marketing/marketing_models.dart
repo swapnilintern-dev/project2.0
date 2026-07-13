@@ -130,6 +130,7 @@ class MarketingOrder {
     this.phone = '',
     this.address = '',
     this.paymentTerm = '', // real payment method from the backend; '' = unknown
+    this.source = '', // e.g. MANUAL_BY_MARKETING; '' = placed by the vendor
     this.urgent = false,
     this.isNew = false,
   });
@@ -143,8 +144,17 @@ class MarketingOrder {
   final String phone;
   final String address;
   final String paymentTerm;
+
+  /// Where the order came from. `MANUAL_BY_MARKETING` = created by the
+  /// marketing team on the vendor's behalf (phone order); empty/anything else
+  /// = placed by the vendor in their own app. Auditable via the backend's
+  /// `source` + `createdBy` fields (see the manual-order API contract).
+  final String source;
   final bool urgent;
   final bool isNew;
+
+  /// True when this order was manually created by the marketing team.
+  bool get isManual => source == 'MANUAL_BY_MARKETING';
 
   int get itemCount => items.length;
   int get unitCount => items.fold(0, (sum, i) => sum + i.quantity);
@@ -178,6 +188,7 @@ class MarketingOrder {
         phone: phone,
         address: address,
         paymentTerm: paymentTerm,
+        source: source,
         urgent: urgent,
         isNew: isNew,
       );
@@ -389,6 +400,65 @@ class DeliveryAgent {
       phone: (j['mobile_no'] ?? '').toString(),
       city: (j['city'] ?? '').toString(),
       email: (j['email'] ?? '').toString(),
+    );
+  }
+}
+
+// =============================================================================
+// VENDOR ACCOUNTS (buyers)
+// =============================================================================
+
+/// A registered buyer/vendor account (pharmacy / distributor), fetched live
+/// from the backend (GET /vsArogya/all-vendors, staff roles filtered out).
+/// Used by the manual-order flow so marketing can place an order on a
+/// vendor's behalf. Never dummy data.
+@immutable
+class VendorAccount {
+  const VendorAccount({
+    required this.id,
+    required this.storeName,
+    this.contactPerson = '',
+    this.phone = '',
+    this.city = '',
+    this.email = '',
+    this.approved = true,
+  });
+
+  final String id;
+  final String storeName;
+  final String contactPerson;
+  final String phone;
+  final String city;
+  final String email;
+  final bool approved;
+
+  /// Two-letter initials for the avatar (e.g. "Apollo Pharmacy" -> "AP").
+  String get initials {
+    final parts = storeName
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) {
+      final p = parts.first;
+      return p.substring(0, p.length >= 2 ? 2 : 1).toUpperCase();
+    }
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  factory VendorAccount.fromJson(Map<String, dynamic> j) {
+    final store = (j['store_name'] ?? '').toString().trim();
+    final contact = (j['contact_person_name'] ?? '').toString().trim();
+    return VendorAccount(
+      id: (j['_id'] ?? '').toString(),
+      storeName: store.isNotEmpty ? store : (contact.isNotEmpty ? contact : 'Vendor'),
+      contactPerson: contact,
+      phone: (j['mobile_no'] ?? '').toString(),
+      city: (j['city'] ?? '').toString(),
+      email: (j['email'] ?? '').toString(),
+      // Missing field → treated as approved (older accounts).
+      approved: (j['approvalStatus'] ?? 'Approved').toString() == 'Approved',
     );
   }
 }

@@ -54,9 +54,11 @@ class CustomerApi {
   static const Duration _timeout = Duration(seconds: 12);
 
   /// Order placement + invoice generation can be slow when the (free-tier)
-  /// backend is cold-starting, so these calls wait much longer than the snappy
-  /// cart calls — a cold start must not be mistaken for a failure.
-  static const Duration _slowTimeout = Duration(seconds: 60);
+  /// backend is cold-starting or busy rendering a PDF, so these calls wait much
+  /// longer than the snappy cart calls — a cold start must not be mistaken for
+  /// a failure. (Even if this DOES time out, recoverPlacedOrderId finds the
+  /// order the server created, so no order is ever lost or duplicated.)
+  static const Duration _slowTimeout = Duration(seconds: 100);
 
   /// Shared base URL — see [ApiConfig]. (Previously pointed at localhost:3000,
   /// which made the customer app talk to a different server than the rest.)
@@ -251,14 +253,15 @@ class CustomerApi {
   }
 
   /// Fetches the server-side cart as [CartItem]s (GET /getCart-product).
-  /// Returns an empty list when offline / not logged in.
-  Future<List<CartItem>> getCart() async {
+  /// Returns null when the call failed (offline / not logged in) so callers
+  /// can tell "couldn't reach the server" apart from "cart is really empty".
+  Future<List<CartItem>?> getCart() async {
     try {
       final res = await _client
           .get(Uri.parse('$baseUrl/vsArogya/getCart-product'),
               headers: _headers)
           .timeout(_timeout);
-      if (!_isOk(res)) return const [];
+      if (!_isOk(res)) return null;
       final body = jsonDecode(res.body) as Map<String, dynamic>;
       final raw = (body['cart'] as List?) ?? const [];
       final items = <CartItem>[];
@@ -273,20 +276,15 @@ class CustomerApi {
       }
       return items;
     } catch (_) {
-      return const [];
+      return null;
     }
   }
 
-  /// Replaces the server cart with the given local items, AWAITING each call so
-  /// the server cart is correct BEFORE /place-order builds an order from it.
-  /// Without this, a not-yet-synced cart produces an empty (₹0) order that then
-  /// won't show meaningfully in history.
-  Future<void> syncCartToServer(List<CartItem> items) async {
-    await clearCart();
-    for (final item in items) {
-      await addToCart(item.product.id, quantity: item.quantity);
-    }
-  }
+  // NOTE: there is deliberately NO "clear the cart and re-add everything"
+  // helper here. That pattern doubled quantities: when the clear call was
+  // lost on a cold server, the re-adds piled on top of the old cart. Checkout
+  // uses CartController.pushToServer, which repairs differences with targeted
+  // add/increase/decrease/remove calls and then VERIFIES the server cart.
 
   /// Shared POST helper for the cart endpoints (offline-safe, never throws).
   Future<bool> _postCart(String path) async {
@@ -319,6 +317,27 @@ class CustomerApi {
   //   GET    /get-order              order history
   //   PUT    /cancel-order/:id       cancel an order
   // All require the auth cookie → effectively mobile-only (see AuthService).
+  //
+  // ── BACKEND CONTRACT (order lifecycle · invoice · stock) ────────────────────
+  // The full contract lives in ORDER_INVOICE_STOCK_INTEGRATION.md (repo root).
+  // Summary of what this client expects the server to do:
+  //
+  //  1. INVOICE ONLY AFTER ACCEPT — the invoice document + PDF should be
+  //     created when marketing accepts (PUT /vsArogya/confirm-order/:id), NOT
+  //     at place-order time. This client never shows an invoice while
+  //     orderStatus == "Pending", so it is forward-compatible either way.
+  //
+  //  2. POPULATED INVOICE — GET /vsArogya/get-order should populate the
+  //     order's `invoice` ref so the real number is shown:
+  //       "invoice": { "invoiceNumber": "INV-1720340…", "pdfUrl": "https://…" }
+  //     Until then this client falls back to a derived reference + the
+  //     /prev-invoice/:id PDF redirect.
+  //
+  //  3. STOCK RESTORE ON CANCEL — PUT /vsArogya/cancel-order/:id must add each
+  //     line's quantity back to product.stock when the order had already been
+  //     accepted (stock was deducted), and must reject cancels of Delivered
+  //     orders (it already does). This client refreshes /all-products right
+  //     after a successful cancel to pick up the restored stock.
   // ---------------------------------------------------------------------------
 
   /// Places an order from the (already-synced) server cart.
@@ -671,9 +690,24 @@ class CustomerApi {
       gst: 0,
       discount: 0,
       // Server-hosted invoice PDF, when the backend saved one on the order.
+      // Prefers the populated invoice document ({invoiceNumber, pdfUrl}) and
+      // tolerates the older flat `invoiceUrl` field.
       invoiceUrl: () {
+        final inv = j['invoice'];
+        if (inv is Map && (inv['pdfUrl'] ?? '').toString().trim().isNotEmpty) {
+          return inv['pdfUrl'].toString().trim();
+        }
         final u = (j['invoiceUrl'] ?? '').toString().trim();
         return u.isEmpty ? null : u;
+      }(),
+      // The REAL invoice number, once the backend populates `invoice`.
+      invoiceNumber: () {
+        final inv = j['invoice'];
+        if (inv is Map) {
+          final n = (inv['invoiceNumber'] ?? '').toString().trim();
+          if (n.isNotEmpty) return n;
+        }
+        return null;
       }(),
     );
   }

@@ -69,6 +69,11 @@ export const placeOrder = async (req, res) => {
             total + item.product.price * item.quantity, 0
         )
 
+        for (let i = 0; i < user.cart.length; i++) {
+            user.cart[i].product.stock -= user.cart[i].quantity;
+            await user.cart[i].product.save();
+        }
+
 
         const amountWord = converter.toWords(totalAmount);
         const Order = await order.create({
@@ -85,16 +90,23 @@ export const placeOrder = async (req, res) => {
             },
             totalAmount,
             orderNo,
-            amountWord
+            amountWord,
         });
 
-        // Order ban chuka hai — cart snapshot rakh ke abhi clear kar do, taaki
-        // niche invoice/PDF fail ho jaye (e.g. Render pe Chrome missing) toh
-        // bhi order 201 return ho. Order ab KABHI invoice ki wajah se fail
-        // nahi hoga.
+
+
+
         const cartSnapshot = [...user.cart];
         user.cart = [];
         await user.save();
+
+
+        res.status(201).json({
+            message: "Order placed successfully",
+            success: true,
+            Order
+        });
+
 
         let createdInvoice = null;
 
@@ -102,116 +114,143 @@ export const placeOrder = async (req, res) => {
         // ruk jaata hai aur niche ka invoice/PDF code kabhi chalta hi nahi.
         // res.json() ke baad bhi function aage chalta rehta hai — PDF
         // background me ban ke order se link ho jayega.
-        res.status(201)
-            .json({
-                message: "Order placed successfully",
-                success: true,
-                Order
-            });
+        // res.status(201)
+        //     .json({
+        //         message: "Order placed successfully",
+        //         success: true,
+        //         Order
+        //     });
 
         try {
 
-        const invoiceNumber = `INV-${Date.now()}`;
 
-        // GST slab summary (prices GST-inclusive hain — embedded tax nikala).
-        const slabs = { 5: 0, 12: 0, 18: 0, 28: 0 };
-        for (const item of cartSnapshot) {
-            const pct = Number(item.product.gstPercent) || 0;
-            const amt = item.product.price * item.quantity;
-            if (slabs[pct] !== undefined) slabs[pct] += amt - amt / (1 + pct / 100);
-        }
-        const gstTotal = slabs[5] + slabs[12] + slabs[18] + slabs[28];
+            const invoiceNumber = `INV-${Date.now()}`;
 
-        const invoiceData = {
-            shop_name: user.store_name,
-            shop_address: user.full_address,
-            gst_in: user.gst_no,
-            dl_no: user.drug_lic_no,
+            // GST split PER SLAB (5/12/18/28) so the invoice's tax summary
+            // fills each column, not just a single lump. Prices are
+            // GST-INCLUSIVE, so the tax already sitting inside each line is
+            // extracted:  gst = total - total / (1 + rate/100).
+            const gstSlabs = { 5: 0, 12: 0, 18: 0, 28: 0 };
 
-            order_no: orderNo,
-            order_date: new Date().toLocaleDateString("en-IN", {
-                day: "2-digit",
-                month: "long",
-                year: "numeric"
-            }),
+            for (let i = 0; i < cartSnapshot.length; i++) {
 
-            invoice_no: invoiceNumber,
-            invoice_date: new Date().toLocaleDateString("en-IN", {
-                day: "2-digit",
-                month: "long",
-                year: "numeric"
-            })
-            ,
+                const gst = Number(cartSnapshot[i].product.gstPercent) || 0;
 
-            items: cartSnapshot.map(item => ({
-                title: item.product.title,
-                hsnCode: item.product.hsnCode || "N/A",
-                mrp: item.product.mrp,
-                gstPercent: item.product.gstPercent,
-                disPercent: item.product.discountPercent || "N/A",
-                manufacturer: item.product.manufacturer || "N/A",
-                marketedBy: item.product.marketedBy || "N/A",
-                batch_no: item.product.batch_no || "N/A",
-                exp_date: item.product.exp_date || "N/A",
-                quantity: item.quantity,
-                price: item.product.price,
-                amount: item.product.price * item.quantity
-            })),
+                const item_price = cartSnapshot[i].product.price;
+                const item_qty = cartSnapshot[i].quantity;
 
-            total_item: cartSnapshot.length,
-            total_qty,
-            gross_total: totalAmount,
+                const itemTotal = item_price * item_qty;
 
-            amount_words: amountWord,
-            amount: totalAmount,
+                if (gstSlabs[gst] !== undefined) {
+                    gstSlabs[gst] += itemTotal - itemTotal / (1 + gst / 100);
+                }
+            }
 
-            // GST summary table ke placeholders (invoice.html)
-            gst5: slabs[5].toFixed(2),
-            gst12: slabs[12].toFixed(2),
-            gst18: slabs[18].toFixed(2),
-            gst28: slabs[28].toFixed(2),
-            gst_total: gstTotal.toFixed(2),
-            total_sgst: (gstTotal / 2).toFixed(2),
-            total_cgst: (gstTotal / 2).toFixed(2)
-        };
+            const totalgst =
+                gstSlabs[5] + gstSlabs[12] + gstSlabs[18] + gstSlabs[28];
 
-        // console.log("invoice data is:", invoiceData)
+            console.log("Total GST:", totalgst);
+
+            console.log(" total gst is :", totalgst);
 
 
-        const html = generateInvoiceHTML(invoiceData);
+            const invoiceData = {
+                shop_name: user.store_name,
+                shop_address: user.full_address,
+                gst_in: user.gst_no,
+                dl_no: user.drug_lic_no,
 
-        const pdfBuffer = await generatePDF(html);
+                order_no: orderNo,
+                order_date: new Date().toLocaleDateString("en-IN", {
+                    day: "2-digit",
+                    month: "long",
+                    year: "numeric"
+                }),
+
+                invoice_no: invoiceNumber,
+                invoice_date: new Date().toLocaleDateString("en-IN", {
+                    day: "2-digit",
+                    month: "long",
+                    year: "numeric"
+                })
+                ,
+
+                items: cartSnapshot.map(item => ({
+                    title: item.product.title,
+                    hsnCode: item.product.hsnCode || "N/A",
+                    mrp: item.product.mrp,
+                    gstPercent: item.product.gstPercent,
+                    disPercent: item.product.discountPercent || "N/A",
+                    manufacturer: item.product.manufacturer || "N/A",
+                    marketedBy: item.product.marketedBy || "N/A",
+                    batch_no: item.product.batch_no || "N/A",
+                    exp_date: item.product.exp_date || "N/A",
+                    quantity: item.quantity,
+                    price: item.product.price,
+                    amount: item.product.price * item.quantity
+                })),
+
+                total_item: cartSnapshot.length,
+                total_qty,
+                // Prices already include GST, so the gross total is simply the
+                // order total — tax is NOT added on top a second time.
+                gross_total: totalAmount,
+                round_off: (Math.round(totalAmount) - totalAmount).toFixed(2),
 
 
-        // PDF buffer SEEDHA Cloudinary pe — local "uploads/invoices" folder ki
-        // zaroorat nahi (wo folder exist nahi karta tha, fs.writeFileSync
-        // yahin crash karta tha).
-        const result = await new Promise((resolve, reject) => {
-            const stream = cloudinary.uploader.upload_stream(
-                {
-                    resource_type: "auto",
-                    folder: "invoices"
-                },
-                (err, uploaded) => (err ? reject(err) : resolve(uploaded))
+                amount_words: amountWord,
+                amount: totalAmount,
+
+                // Keys MUST match the template placeholders read by
+                // invoiceTemplate.js ({{gst_5}}, {{gst_total}}, {{total_cgst}},
+                // {{total_sgst}}…). CGST and SGST are each half of total GST.
+                gst_5: gstSlabs[5].toFixed(2),
+                gst_12: gstSlabs[12].toFixed(2),
+                gst_18: gstSlabs[18].toFixed(2),
+                gst_28: gstSlabs[28].toFixed(2),
+                gst_total: totalgst.toFixed(2),
+                total_cgst: (totalgst / 2).toFixed(2),
+                total_sgst: (totalgst / 2).toFixed(2)
+            };
+
+
+            // console.log("invoice data is:", invoiceData)
+
+
+            const html = generateInvoiceHTML(invoiceData);
+
+            const pdfBuffer = await generatePDF(html);
+
+
+            // Upload the PDF buffer straight to Cloudinary — no local file, so
+            // it never depends on an uploads/ folder existing (it does not on
+            // Render's ephemeral fs) and leaves no temp files behind.
+            const result = await new Promise((resolve, reject) => {
+                const stream = cloudinary.uploader.upload_stream(
+                    { resource_type: "auto", folder: "invoices" },
+                    (err, uploaded) => (err ? reject(err) : resolve(uploaded))
+                );
+                stream.end(pdfBuffer);
+            });
+
+            const pdfUrl = result.secure_url;
+
+            const createdInvoice = await Invoice.create({
+                invoiceNumber: `INV-${Date.now()}`,
+                order: Order._id,
+                vendor: user._id,
+                pdfUrl
+            });
+
+            Order.invoice = createdInvoice._id;
+            await Order.save();
+
+            // user.cart = [];
+            // await user.save();
+            console.log(
+                "Invoice generated successfully:",
+                createdInvoice._id
             );
-            stream.end(pdfBuffer);
-        });
-
-        const pdfUrl = result.secure_url;
-        // NOTE: model ka import "invoice" (lowercase) hai — pehle yahan
-        // "Invoice.create" tha jo defined hi nahi tha (ReferenceError → 500).
-        createdInvoice = await invoice.create({
-            invoiceNumber,
-            order: Order._id,
-            vendor: user._id,
-            pdfUrl
-        });
-        console.log("invoice id is :", createdInvoice._id)
-
-        Order.invoice = createdInvoice._id;
-        await Order.save();
-
-        return;
 
         } catch (invErr) {
             // Invoice/PDF ka fail hona order ko kabhi fail nahi karega —
@@ -307,6 +346,8 @@ export const placeSingleOrder = async (req, res) => {
         }];
 
         // console.log("orderitems array ", orderItems ) ;
+        Product.stock -= 1;
+        await Product.save();
 
         const singleOrder = await order.create({
 
@@ -360,7 +401,9 @@ export const cancelOrder = async (req, res) => {
 
         const product_id = req.params.id;
 
-        const existingOrder = await order.findById(product_id);
+        const existingOrder = await order
+            .findById(product_id)
+            .populate("orderItems.product");
 
         if (!existingOrder) {
             return res.status(404)
@@ -369,6 +412,13 @@ export const cancelOrder = async (req, res) => {
                     success: false
                 });
         }
+
+        if (existingOrder.orderStatus === "Cancelled")
+            return res.status(404)
+                .json({
+                    message: "Order already cancled ",
+                    success: false
+                });
 
         if (existingOrder.orderStatus === "Delivered") {
 
@@ -387,6 +437,14 @@ export const cancelOrder = async (req, res) => {
                     message: "unauthorized user ",
                     success: false
                 });
+        }
+
+        for (let i = 0; i < existingOrder.orderItems.length; i++) {
+
+            existingOrder.orderItems[i].product.stock +=
+                existingOrder.orderItems[i].quantity;
+
+            await existingOrder.orderItems[i].product.save();
         }
 
         existingOrder.orderStatus = "Cancelled";

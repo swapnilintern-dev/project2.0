@@ -9,14 +9,17 @@
 //   • animated loading dots, then it routes to Sign In.
 //
 // Pure Flutter animation — no packages, no assets required (the logo falls back
-// to a vector emblem if the image is missing). Navigation timing unchanged in
-// spirit: it advances automatically to SignInScreen.
+// to a vector emblem if the image is missing). While the intro plays, the saved
+// login session (1-day backend token) is restored: a valid session goes straight
+// to the user's portal, otherwise it advances to SignInScreen.
 // =============================================================================
 
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'auth/session.dart' show homeForRole;
+import 'services/auth_service.dart';
 import 'vendor_registration_screen.dart' show AppColors;
 import 'sign_in_screen.dart';
 
@@ -71,11 +74,26 @@ class _SplashScreenState extends State<SplashScreen>
 
     _intro.forward();
 
-    // Advance to Sign In once the intro has had time to play.
-    Future.delayed(const Duration(milliseconds: 2600), () {
+    // While the intro plays, try to restore the saved login (the backend
+    // session lasts 1 day — see AuthService.restoreSession). If a valid
+    // session exists the user lands straight in their portal; otherwise the
+    // normal Sign In screen is shown.
+    final restore = AuthService.restoreSession();
+
+    // Advance once the intro has had time to play.
+    Future.delayed(const Duration(milliseconds: 2600), () async {
+      final restored = await restore;
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const SignInScreen()),
+        MaterialPageRoute(
+          builder: (_) => restored
+              ? homeForRole(
+                  AuthService.role,
+                  mobile: AuthService.phone,
+                  name: AuthService.storeName,
+                )
+              : const SignInScreen(),
+        ),
       );
     });
   }

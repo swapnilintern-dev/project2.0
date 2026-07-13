@@ -7,10 +7,10 @@ import 'package:flutter/services.dart'; // Clipboard (tap-to-copy support detail
 
 import 'vendor_registration_screen.dart'; // AppColors + VendorRegistrationScreen
 import 'auth/forgot_password_screen.dart';
-import 'customer/customer_shell.dart';
+import 'auth/session.dart' show homeForRole;
 import 'delivery/delivery_main.dart';
-import 'admin/admin_main.dart';
-import 'marketing/marketing_role_main.dart';
+import 'delivery/delivery_api.dart';
+import 'delivery/delivery_models.dart' show DeliveryController;
 
 /// The account types a user can sign in as. The role is decided by the account
 /// (returned by the backend at login) — there is no on-screen role picker.
@@ -55,35 +55,41 @@ Future<void> _onSignIn() async {
 
     if (!mounted) return;
 
-    setState(() => _isSubmitting = false);
+    final mobile = _identifierCtrl.text.trim();
 
+    // If the vendor/staff login didn't succeed, this may be a DELIVERY AGENT —
+    // agents live in a separate backend collection with their own login
+    // (POST /agent-login), so we fall back to it before showing an error.
     if (response['success'] != true) {
+      final agentRes =
+          await DeliveryApi().agentLogin(mobile, _passwordCtrl.text.trim());
+      if (!mounted) return;
+      setState(() => _isSubmitting = false);
+      if (agentRes['success'] == true) {
+        DeliveryController.instance.setAgent(mobile: mobile);
+        AuthService.phone = mobile;
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const DeliveryMain()),
+        );
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            response['message'] ?? 'Login Failed',
-          ),
-        ),
+        SnackBar(content: Text(response['message'] ?? 'Login Failed')),
       );
       return;
     }
 
+    setState(() => _isSubmitting = false);
+
     // Route to the portal for the account's role. The backend MUST return
     // `role` in the login response (server: userController.login -> add
-    // `role: user.role`). Matching is keyword-based so values like "admin",
-    // "Admin", "marketing head", "delivery boy" all route correctly. Anything
-    // missing / unrecognised falls back to the vendor/buyer shopping app.
-    final role = (response['role'] ?? '').toString().toLowerCase();
-    final Widget nextScreen;
-    if (role.contains('admin')) {
-      nextScreen = const AdminRoleMain();
-    } else if (role.contains('marketing')) {
-      nextScreen = const MarketingRoleMain();
-    } else if (role.contains('delivery')) {
-      nextScreen = const DeliveryMain();
-    } else {
-      nextScreen = const CustomerShell();
-    }
+    // `role: user.role`). The mapping lives in [homeForRole] (auth/session.dart)
+    // and is SHARED with the splash screen's restored-session routing.
+    final Widget nextScreen = homeForRole(
+      (response['role'] ?? '').toString(),
+      mobile: mobile,
+      name: AuthService.storeName,
+    );
 /////////////////////////////////////////
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
@@ -413,8 +419,6 @@ Future<void> _onSignIn() async {
               style: TextStyle(fontSize: 13, color: AppColors.greyText),
             ),
             const SizedBox(height: 20),
-            
-
 
             // Identifier field.
             _InputField(
@@ -460,6 +464,7 @@ Future<void> _onSignIn() async {
               },
             ),
 
+
             // Forgot password.
             Align(
               alignment: Alignment.centerRight,
@@ -480,6 +485,7 @@ Future<void> _onSignIn() async {
               ),
             ),
             const SizedBox(height: 8),
+
 
             // Sign In button with green glow.
             _GlowGradientButton(
@@ -504,7 +510,7 @@ Future<void> _onSignIn() async {
                 Expanded(child: Divider(color: AppColors.border)),
               ],
             ),
-          
+        
             const SizedBox(height: 16),
 
             // New Vendor Registration banner.
@@ -623,11 +629,9 @@ Future<void> _onSignIn() async {
     );
   }
 }
-
 // =============================================================================
 // REUSABLE WIDGETS
 // =============================================================================
-
 /// Labelled input with a green circular icon prefix and inline validation.
 class _InputField extends StatelessWidget {
   const _InputField({
@@ -722,7 +726,6 @@ class _GlowGradientButton extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
   final bool loading;
-
   @override
   Widget build(BuildContext context) {
     final enabled = onPressed != null && !loading;

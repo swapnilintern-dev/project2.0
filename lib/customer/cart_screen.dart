@@ -28,6 +28,9 @@ class CartScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Retry loading the saved server cart (no-op once hydrated) — covers the
+    // case where the shell opened offline and the user lands here later.
+    CartController.instance.hydrateFromServer();
     final body = ListenableBuilder(
       listenable: CartController.instance,
       builder: (context, _) {
@@ -354,7 +357,7 @@ class _OrderSummary extends StatelessWidget {
                   ? 'FREE'
                   : formatRupees(cart.deliveryFee, decimals: true),
               free: cart.deliveryFee == 0),
-          _row('GST (12%)', formatRupees(cart.gst, decimals: true)),
+          _row('GST', 'Included in price'),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 10),
             child: Divider(color: AppColors.border, height: 1),

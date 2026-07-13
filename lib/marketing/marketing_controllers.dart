@@ -12,6 +12,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart' show XFile;
 
+import '../customer/customer_api.dart';
 import '../customer/customer_models.dart' show PromoBanner;
 import 'marketing_api.dart';
 import 'marketing_models.dart';
@@ -67,44 +68,99 @@ class MarketingOrdersController extends ChangeNotifier {
   /// to the backend (which drives the enum
   /// Pending -> Confirm Order -> Shipped -> Out for Delivery -> Delivered).
   ///
-  /// The local status is bumped optimistically for instant feedback, the
-  /// matching backend endpoint is awaited, and then the list is re-fetched so
-  /// this screen reflects the authoritative server state (and self-heals if the
-  /// write failed). Because the customer + delivery screens poll the same
-  /// backend, the change reaches them within a poll interval.
-  void advance(String id) {
+  /// The local status is bumped optimistically for instant feedback and the
+  /// matching backend endpoint is AWAITED. Returns null on success (after
+  /// reconciling with the server) or a user-facing error message — e.g. the
+  /// backend's "Insufficient stock for `<product>`: available X, ordered Y" when
+  /// an Accept fails the stock check — in which case the optimistic status is
+  /// ROLLED BACK so the pipeline never lies about the server state.
+  Future<String?> advance(String id) async {
     final i = _orders.indexWhere((o) => o.id == id);
-    if (i < 0) return;
-    final next = _orders[i].status.next;
-    if (next == null) return;
-    _orders[i] = _orders[i].copyWith(status: next);
+    if (i < 0) return null;
+    final previous = _orders[i];
+    final next = previous.status.next;
+    if (next == null) return null;
+    _orders[i] = previous.copyWith(status: next);
     notifyListeners();
-    unawaited(_persistStatus(id, next));
+    final error = await _persistStatus(id, next);
+    if (error != null) {
+      // Roll back the optimistic bump — the server rejected the transition.
+      final j = _orders.indexWhere((o) => o.id == id);
+      if (j >= 0) _orders[j] = _orders[j].copyWith(status: previous.status);
+      notifyListeners();
+    }
+    return error;
   }
 
   /// Assigns [agent] to the order and advances it to Out for Delivery. The
   /// status change persists to the backend (PUT /outof-delivery/:id); the agent
-  /// choice is remembered locally (no server field for it yet).
-  void assignAgent(String orderId, DeliveryAgent agent) {
+  /// choice is remembered locally (no server field for it yet). Returns null
+  /// on success or a user-facing error.
+  Future<String?> assignAgent(String orderId, DeliveryAgent agent) {
     _assignedAgents[orderId] = agent.name;
-    advance(orderId); // Shipped -> Out for Delivery (persisted)
+    return advance(orderId); // Shipped -> Out for Delivery (persisted)
+  }
+
+  /// Cancels an order as staff (marketing/admin) BEFORE delivery. The backend
+  /// restores any stock it deducted at accept time (see the contract in
+  /// MarketingOrdersApi); on success orders + stock are re-fetched so every
+  /// screen updates. Returns null on success or a user-facing error message.
+  Future<String?> cancelOrder(String id) async {
+    final error = await _api.cancelOrder(id);
+    if (error != null) return error;
+    await refresh();
+    unawaited(refreshStock());
+    return null;
+  }
+
+  /// Creates an order on a vendor's behalf (phone order). Same lifecycle as a
+  /// vendor-placed order — it lands in the Pending pipeline on success and in
+  /// the vendor's own panel (their GET /get-order). Returns `(orderId, error)`.
+  Future<(String?, String?)> createManualOrder({
+    required String vendorId,
+    required Map<String, int> items,
+    required String clientOrderId,
+  }) async {
+    final (orderId, error) = await _api.createManualOrder(
+      vendorId: vendorId,
+      items: items,
+      clientOrderId: clientOrderId,
+    );
+    if (error == null) await refresh();
+    return (orderId, error);
   }
 
   /// Fires the backend status endpoint for [next], then reconciles the list
-  /// with the server. Offline-safe: on failure the optimistic status stays.
-  Future<void> _persistStatus(String id, MarketingOrderStatus next) async {
-    final ok = switch (next) {
+  /// with the server. Returns null on success or the server's error message.
+  Future<String?> _persistStatus(String id, MarketingOrderStatus next) async {
+    final error = switch (next) {
       MarketingOrderStatus.confirmed => await _api.confirmOrder(id),
       MarketingOrderStatus.shipped => await _api.shipOrder(id),
       MarketingOrderStatus.outForDelivery =>
         await _api.outForDeliveryOrder(id),
       MarketingOrderStatus.delivered => await _api.deliverOrder(id),
-      _ => false,
+      _ => 'Nothing to update',
     };
-    // Reconcile with the backend once the write lands so the pipeline shows the
-    // real server status. Skip on a failed/no-op write to avoid clobbering the
-    // optimistic value when offline.
-    if (ok) await refresh();
+    if (error == null) {
+      // Reconcile with the backend so the pipeline shows the real status.
+      await refresh();
+      // Accepting deducts stock on the server — pull the fresh numbers so the
+      // inventory + product pickers + customer catalogue all update reactively.
+      if (next == MarketingOrderStatus.confirmed) unawaited(refreshStock());
+    }
+    return error;
+  }
+
+  /// Re-fetches product stock from the backend after a server-side stock
+  /// mutation (accept deducts, cancel restores): the marketing inventory
+  /// (MarketingProductsController) AND the shared customer Catalog (via
+  /// CustomerApi.getProducts) so every stock display refreshes without a
+  /// manual reload. The app itself never computes stock — it only re-reads it.
+  Future<void> refreshStock() async {
+    await Future.wait([
+      MarketingProductsController.instance.refresh(),
+      CustomerApi().getProducts(),
+    ]);
   }
 }
 
@@ -364,6 +420,44 @@ class MarketingBannersController extends ChangeNotifier {
     final ok = await _api.deleteBanner(id);
     if (ok) await refresh();
     return ok;
+  }
+}
+
+/// The registered buyer/vendor directory, fetched live from the backend
+/// (GET /all-vendors, staff roles filtered out). Used by the manual-order
+/// "on behalf of" vendor picker — never dummy data.
+class MarketingVendorsController extends ChangeNotifier {
+  MarketingVendorsController._();
+  static final MarketingVendorsController instance =
+      MarketingVendorsController._();
+
+  final MarketingOrdersApi _api = MarketingOrdersApi();
+
+  List<VendorAccount> _vendors = const [];
+  bool _loading = false;
+  bool _loaded = false;
+  String? _error;
+
+  List<VendorAccount> get vendors => List.unmodifiable(_vendors);
+  bool get isLoading => _loading;
+  bool get isLoaded => _loaded;
+  String? get error => _error;
+
+  /// Loads (or reloads) the vendor directory. Keeps the current list on
+  /// failure and exposes [error] so the picker can offer a retry.
+  Future<void> refresh() async {
+    _loading = true;
+    _error = null;
+    notifyListeners();
+    final res = await _api.getVendors();
+    if (res == null) {
+      _error = 'Could not load vendors. Check your connection.';
+    } else {
+      _vendors = res;
+      _loaded = true;
+    }
+    _loading = false;
+    notifyListeners();
   }
 }
 

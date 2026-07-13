@@ -240,7 +240,7 @@ class _OrderCard extends StatelessWidget {
         color: status.color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Text(status.label,
+      child: Text(status.pillLabel,
           style: TextStyle(
               fontSize: 11, fontWeight: FontWeight.w700, color: status.color)),
     );

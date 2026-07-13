@@ -34,6 +34,14 @@ class CustomerShell extends StatefulWidget {
 class _CustomerShellState extends State<CustomerShell> {
   int _index = 0;
 
+  @override
+  void initState() {
+    super.initState();
+    // Restore the vendor's saved cart from the backend (GET /getCart-product)
+    // so items added before the app was closed reappear after re-login.
+    CartController.instance.hydrateFromServer();
+  }
+
   void _select(int i) => setState(() => _index = i);
 
   @override

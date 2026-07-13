@@ -5,8 +5,8 @@ import '../../account_deletion/privacy_security_screen.dart';
 import '../../auth/session.dart';
 import '../../vendor_registration_screen.dart' show AppColors;
 import '../../theme/app_theme.dart' show AppPalette, AppShadows;
-import '../delivery_mock_data.dart';
 import '../delivery_models.dart';
+import 'delivery_history_screen.dart';
 
 class DeliveryProfileScreen extends StatelessWidget {
   const DeliveryProfileScreen({super.key});
@@ -30,18 +30,24 @@ class DeliveryProfileScreen extends StatelessWidget {
     return ListenableBuilder(
       listenable: DeliveryController.instance,
       builder: (context, _) {
-        final rider =
-            DeliveryController.instance.rider ?? DeliveryMockData.rider;
+        final rider = DeliveryController.instance.rider;
 
         return ListView(
           physics: const BouncingScrollPhysics(),
           padding: EdgeInsets.zero,
           children: [
             _header(rider),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: _vehicleCard(rider.vehicle),
-            ),
+            _menuGroup(context, [
+              _MenuItem(
+                icon: Icons.local_shipping_outlined,
+                label: 'My Deliveries',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const DeliveryHistoryScreen(),
+                  ),
+                ),
+              ),
+            ]),
             _menuGroup(context, [
               _MenuItem(
                 icon: Icons.person_outline,
@@ -177,10 +183,11 @@ class DeliveryProfileScreen extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.star, color: AppPalette.warning, size: 16),
+                  const Icon(Icons.local_shipping_outlined,
+                      color: Colors.white, size: 15),
                   const SizedBox(width: 6),
                   Text(
-                    '${rider.rating} · ${rider.totalDeliveries} deliveries',
+                    '${rider.totalDeliveries} delivered this session',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 12.5,
@@ -192,72 +199,6 @@ class DeliveryProfileScreen extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _vehicleCard(VehicleInfo vehicle) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.primary, width: 1.2),
-        boxShadow: AppShadows.card,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: AppColors.lightGreenBg,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.two_wheeler, color: AppColors.darkGreen),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  vehicle.number,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.darkText,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  vehicle.type,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    color: AppColors.greyText,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (vehicle.verified)
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: AppColors.lightGreenBg,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Text(
-                'Verified',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.darkGreen,
-                ),
-              ),
-            ),
-        ],
       ),
     );
   }

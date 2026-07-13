@@ -17,6 +17,7 @@ import '../customer/customer_widgets.dart'
 import 'marketing_controllers.dart';
 import 'marketing_models.dart';
 import 'assign_agent_sheet.dart';
+import 'manual_order_screen.dart';
 import 'order_details_screen.dart';
 
 class MarketingOrdersScreen extends StatefulWidget {
@@ -60,9 +61,33 @@ class _MarketingOrdersScreenState extends State<MarketingOrdersScreen>
     showAppSnack(context, 'Orders updated', success: true);
   }
 
+  /// Opens the manual-order flow (vendor phoned the order in). On success the
+  /// pipeline refreshes so the new Pending order appears immediately.
+  Future<void> _createManualOrder() async {
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const ManualOrderScreen()),
+    );
+    if (created == true && mounted) {
+      showAppSnack(context, 'Manual order created — it is now Pending review',
+          success: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      // Entry point for phone orders: marketing creates the order on the
+      // vendor's behalf. Visible only inside the Marketing role's shell.
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _createManualOrder,
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add_shopping_cart_rounded),
+        label: const Text('Create Manual Order',
+            style: TextStyle(fontWeight: FontWeight.w700)),
+      ),
+      body: SafeArea(
       child: Column(
         children: [
           _header(),
@@ -111,6 +136,7 @@ class _MarketingOrdersScreenState extends State<MarketingOrdersScreen>
           ),
         ],
       ),
+      ),
     );
   }
 
@@ -119,13 +145,24 @@ class _MarketingOrdersScreenState extends State<MarketingOrdersScreen>
     if (order.status.next == MarketingOrderStatus.outForDelivery) {
       final agent = await showAssignAgentSheet(context, order);
       if (agent == null || !mounted) return;
-      _controller.assignAgent(order.id, agent);
-      showAppSnack(context, 'Assigned to ${agent.name} · Out for Delivery');
+      final err = await _controller.assignAgent(order.id, agent);
+      if (!mounted) return;
+      if (err != null) {
+        showAppSnack(context, err, success: false);
+      } else {
+        showAppSnack(context, 'Assigned to ${agent.name} · Out for Delivery');
+      }
       return;
     }
     final next = order.status.next;
-    _controller.advance(order.id);
-    if (next != null) {
+    if (next == null) return;
+    // Awaited so a server rejection (e.g. "Insufficient stock for <product>:
+    // available X, ordered Y" on Accept) is shown and the card rolls back.
+    final err = await _controller.advance(order.id);
+    if (!mounted) return;
+    if (err != null) {
+      showAppSnack(context, err, success: false);
+    } else {
       showAppSnack(context, 'Order ${order.id} moved to ${next.label}');
     }
   }
@@ -313,6 +350,9 @@ class _OrderCard extends StatelessWidget {
                       color: AppColors.darkText)),
               const SizedBox(width: 8),
               if (order.urgent) _pill('Urgent', AppColors.error),
+              // Audit badge: this order was keyed in by marketing on the
+              // vendor's behalf (phone order).
+              if (order.isManual) _pill('Manual', MarketingColors.blue),
               const Spacer(),
               if (order.isNew)
                 _pill('New', MarketingColors.orange)

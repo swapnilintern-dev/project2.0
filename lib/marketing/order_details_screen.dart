@@ -15,6 +15,7 @@ import '../customer/customer_widgets.dart' show formatRupees, showAppSnack;
 import 'marketing_controllers.dart';
 import 'marketing_models.dart';
 import 'assign_agent_sheet.dart';
+import 'invoice_screen.dart';
 
 class OrderDetailsScreen extends StatelessWidget {
   const OrderDetailsScreen({super.key, required this.orderId});
@@ -61,6 +62,12 @@ class OrderDetailsScreen extends StatelessWidget {
               _billCard(order),
               const SizedBox(height: 14),
               _paymentCard(order),
+              // BUSINESS RULE: the invoice exists only once the order has been
+              // ACCEPTED — Pending / Cancelled orders show no invoice at all.
+              if (_invoiceAvailable(order.status)) ...[
+                const SizedBox(height: 14),
+                _invoiceCard(context, order),
+              ],
             ],
           );
         },
@@ -69,46 +76,190 @@ class OrderDetailsScreen extends StatelessWidget {
         listenable: _controller,
         builder: (context, _) {
           final order = _controller.byId(orderId);
-          final action = order?.status.actionLabel;
-          if (order == null || action == null) return const SizedBox.shrink();
+          if (order == null) return const SizedBox.shrink();
+          final action = order.status.actionLabel;
+          final cancellable = _cancellable(order.status);
+          if (action == null && !cancellable) return const SizedBox.shrink();
           return SafeArea(
             minimum: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            child: SizedBox(
-              height: 54,
-              child: ElevatedButton.icon(
-                onPressed: () async {
-                  // Shipped -> Out for Delivery: pick a real delivery agent.
-                  if (order.status.next ==
-                      MarketingOrderStatus.outForDelivery) {
-                    final agent = await showAssignAgentSheet(context, order);
-                    if (agent == null || !context.mounted) return;
-                    _controller.assignAgent(order.id, agent);
-                    showAppSnack(context,
-                        'Assigned to ${agent.name} · Out for Delivery');
-                    return;
-                  }
-                  final next = order.status.next;
-                  _controller.advance(order.id);
-                  if (next != null) {
-                    showAppSnack(
-                        context, 'Order ${order.id} moved to ${next.label}');
-                  }
-                },
-                icon: const Icon(Icons.arrow_forward),
-                label: Text('$action Order',
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w700)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (action != null)
+                  SizedBox(
+                    height: 54,
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () => _onAdvance(context, order),
+                      icon: const Icon(Icons.arrow_forward),
+                      label: Text('$action Order',
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w700)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                    ),
+                  ),
+                if (action != null && cancellable) const SizedBox(height: 8),
+                // Staff cancel — allowed only BEFORE delivery. The backend
+                // restores any deducted stock (see MarketingOrdersApi contract).
+                if (cancellable)
+                  SizedBox(
+                    height: 48,
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _onCancel(context, order),
+                      icon: const Icon(Icons.close, size: 18),
+                      label: const Text('Cancel Order',
+                          style: TextStyle(fontWeight: FontWeight.w700)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.error,
+                        side: const BorderSide(color: AppColors.error),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           );
         },
+      ),
+    );
+  }
+
+  /// The invoice is generated at ACCEPT time — visible from Confirmed onwards.
+  static bool _invoiceAvailable(MarketingOrderStatus s) => switch (s) {
+        MarketingOrderStatus.confirmed ||
+        MarketingOrderStatus.shipped ||
+        MarketingOrderStatus.outForDelivery ||
+        MarketingOrderStatus.delivered =>
+          true,
+        _ => false,
+      };
+
+  /// Staff may cancel any order BEFORE it is delivered (never after).
+  static bool _cancellable(MarketingOrderStatus s) =>
+      s != MarketingOrderStatus.delivered &&
+      s != MarketingOrderStatus.cancelled;
+
+  Future<void> _onAdvance(BuildContext context, MarketingOrder order) async {
+    // Shipped -> Out for Delivery: pick a real delivery agent.
+    if (order.status.next == MarketingOrderStatus.outForDelivery) {
+      final agent = await showAssignAgentSheet(context, order);
+      if (agent == null || !context.mounted) return;
+      final err = await _controller.assignAgent(order.id, agent);
+      if (!context.mounted) return;
+      showAppSnack(
+        context,
+        err ?? 'Assigned to ${agent.name} · Out for Delivery',
+        success: err == null,
+      );
+      return;
+    }
+    final next = order.status.next;
+    if (next == null) return;
+    // Awaited: an Accept that fails the server's stock check rolls back and
+    // shows the exact reason (e.g. "Insufficient stock for <product>…").
+    final err = await _controller.advance(order.id);
+    if (!context.mounted) return;
+    showAppSnack(
+      context,
+      err ?? 'Order ${order.id} moved to ${next.label}',
+      success: err == null,
+    );
+  }
+
+  Future<void> _onCancel(BuildContext context, MarketingOrder order) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancel this order?'),
+        content: Text(
+          'Order #${order.id} for ${order.buyer} will be cancelled. Any stock '
+          'reserved for it will be added back to inventory.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Keep order'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.error),
+            child: const Text('Cancel order'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    final err = await _controller.cancelOrder(order.id);
+    if (!context.mounted) return;
+    showAppSnack(
+      context,
+      err ?? 'Order cancelled — stock restored to inventory',
+      success: err == null,
+    );
+  }
+
+  /// "View Invoice" card, shown once the order has been accepted. Opens the
+  /// server-generated invoice PDF (preview + share/print) — the same document
+  /// the vendor sees in their panel.
+  Widget _invoiceCard(BuildContext context, MarketingOrder order) {
+    return _card(
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: AppColors.lightGreenBg,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.receipt_long,
+                color: AppColors.primary, size: 22),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Tax Invoice',
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.darkText)),
+                SizedBox(height: 2),
+                Text('Generated when the order was accepted',
+                    style:
+                        TextStyle(fontSize: 11.5, color: AppColors.greyText)),
+              ],
+            ),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => StaffInvoiceScreen(
+                  orderId: order.id,
+                  buyer: order.buyer,
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.visibility_outlined, size: 18),
+            label: const Text('View',
+                style: TextStyle(fontWeight: FontWeight.w700)),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.darkGreen,
+              side: const BorderSide(color: AppColors.primary),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -236,6 +387,21 @@ class OrderDetailsScreen extends StatelessWidget {
                           fontSize: 10,
                           fontWeight: FontWeight.w800,
                           color: AppColors.error)),
+                ),
+              // Audit badge: keyed in by marketing on the vendor's behalf.
+              if (order.isManual)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: MarketingColors.blue.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text('Manual',
+                      style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          color: MarketingColors.blue)),
                 ),
             ],
           ),

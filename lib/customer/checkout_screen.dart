@@ -110,7 +110,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
     // ---- Cash on Delivery: place + finalise straight away. ----
     if (_payment == PaymentMethod.cod) {
-      await _api.syncCartToServer(cart.items);
+      // Make the server cart EXACTLY match the on-screen cart (verified) —
+      // the backend builds the order from its cart, so on any mismatch the
+      // order is NOT placed (this is what used to double quantities).
+      final synced = await cart.pushToServer();
+      if (!synced) {
+        if (!mounted) return;
+        setState(() => _placing = false);
+        showAppSnack(
+            context,
+            'Could not confirm your cart with the server. '
+            'Check your connection and try again.',
+            success: false);
+        return;
+      }
       final (backendId, orderError) = await _api.placeOrderFromCart(
         address,
         couponCode: cart.appliedCoupon?.code,
@@ -140,7 +153,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       // creates a duplicate order.
       String? orderId = _pendingOrderId;
       if (orderId == null) {
-        await _api.syncCartToServer(cart.items);
+        // Same verified cart sync as the COD path — no order on a mismatch.
+        final synced = await cart.pushToServer();
+        if (!synced) {
+          if (!mounted) return;
+          setState(() => _placing = false);
+          showAppSnack(
+              context,
+              'Could not confirm your cart with the server. '
+              'Check your connection and try again.',
+              success: false);
+          return;
+        }
         final (newId, orderError) = await _api.placeOrderFromCart(
           address,
           couponCode: cart.appliedCoupon?.code,
@@ -559,7 +583,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           row('Delivery',
               cart.deliveryFee == 0 ? 'FREE' : formatRupees(cart.deliveryFee),
               free: cart.deliveryFee == 0),
-          row('GST (12%)', formatRupees(cart.gst, decimals: true)),
+          row('GST', 'Included in price'),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 10),
             child: Divider(color: AppColors.border, height: 1),

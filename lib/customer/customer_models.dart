@@ -358,6 +358,12 @@ extension OrderStatusX on OrderStatus {
         OrderStatus.cancelled => 'Cancelled',
       };
 
+  /// Status-pill text. A just-placed order is awaiting the marketing team's
+  /// review, so the pill reads "Pending Approval" (the timeline keeps "Order
+  /// Placed" as its first completed step).
+  String get pillLabel =>
+      this == OrderStatus.placed ? 'Pending Approval' : label;
+
   Color get color => switch (this) {
         OrderStatus.delivered => const Color(0xFF2E7D5E),
         OrderStatus.cancelled => const Color(0xFFE53935),
@@ -419,6 +425,7 @@ class Order {
     required this.gst,
     required this.discount,
     this.invoiceUrl,
+    this.invoiceNumber,
   });
 
   final String id;
@@ -435,6 +442,23 @@ class Order {
   /// Server-hosted invoice PDF (Cloudinary URL from the backend), when the
   /// backend generated one. Null → the app builds the invoice on-device.
   final String? invoiceUrl;
+
+  /// The REAL invoice number issued by the backend (e.g. "INV-1720340…"),
+  /// available once the backend populates the order's `invoice` document.
+  /// Null → the UI falls back to a derived reference.
+  final String? invoiceNumber;
+
+  /// BUSINESS RULE: the invoice exists only after the marketing team ACCEPTS
+  /// the order. While the order is still Pending (placed) — or was cancelled —
+  /// no invoice is shown anywhere: no button, no section, no invoice number.
+  bool get invoiceAvailable => switch (status) {
+        OrderStatus.confirmed ||
+        OrderStatus.shipped ||
+        OrderStatus.outForDelivery ||
+        OrderStatus.delivered =>
+          true,
+        _ => false,
+      };
 
   double get total => subtotal + deliveryFee + gst - discount;
 
@@ -471,6 +495,8 @@ class Order {
         deliveryFee: deliveryFee,
         gst: gst,
         discount: discount,
+        invoiceUrl: invoiceUrl,
+        invoiceNumber: invoiceNumber,
       );
 }
 

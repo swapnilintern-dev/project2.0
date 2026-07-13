@@ -1,15 +1,12 @@
 // =============================================================================
 // MediCaPlus — Invoice card (Order Details)
 //
-// Sits below the Invoice Summary. Shows the tax-invoice number and lets the
-// buyer:
-//   • Download PDF — builds the invoice on-device (see InvoicePdf) and opens the
-//     OS save/share sheet (Android + iOS + web, no storage permission → store
-//     safe).
-//   • Preview     — opens the rendered invoice in-app.
-//
-// Generation is fully local, so it works for every placed order (even offline)
-// and never depends on the backend.
+// Sits below the Bill Summary once the order has been ACCEPTED. Shows the
+// tax-invoice number and lets the buyer:
+//   • Download PDF — server invoice first (the official HTML-template PDF);
+//     if the backend has no PDF, the invoice is built on-device (InvoicePdf)
+//     so the download always succeeds. Opens the OS save/share sheet.
+//   • Preview     — opens the invoice in-app (same server-first logic).
 // =============================================================================
 
 import 'package:flutter/material.dart';
@@ -37,7 +34,13 @@ class _InvoiceCardState extends State<InvoiceCard> {
   final CustomerApi _api = CustomerApi();
   bool _busy = false;
 
-  String get _invoiceNo => InvoicePdf.invoiceNo(widget.order.id);
+  /// The REAL invoice number from the backend when available (populated
+  /// `invoice` document), falling back to a derived reference otherwise.
+  String get _invoiceNo {
+    final real = widget.order.invoiceNumber;
+    if (real != null && real.isNotEmpty) return real;
+    return InvoicePdf.invoiceNo(widget.order.id);
+  }
 
   @override
   void dispose() {
@@ -48,16 +51,22 @@ class _InvoiceCardState extends State<InvoiceCard> {
   Future<void> _download() async {
     if (_busy) return;
     setState(() => _busy = true);
-    // Server invoice only (GET /prev-invoice/:id → redirect → PDF).
+    // SERVER-ONLY (GET /prev-invoice/:id → redirect → PDF) — the official
+    // HTML-template document, so the downloaded invoice is always IDENTICAL
+    // to the previewed one. No on-device stand-in: if the server PDF isn't
+    // ready yet, the user is asked to try again in a moment.
     final (bytes, error) = await _api.fetchServerInvoice(widget.order);
     if (!mounted) return;
     setState(() => _busy = false);
     if (bytes == null || bytes.isEmpty) {
-      // Right after checkout the server may still be generating the PDF.
-      final msg = (error ?? '').toLowerCase().contains('invoice not found')
-          ? 'Your invoice is still being generated — try again in a few seconds.'
-          : (error ?? 'Could not download the invoice.');
-      showAppSnack(context, msg, success: false);
+      final stillGenerating =
+          (error ?? '').toLowerCase().contains('invoice not found');
+      showAppSnack(
+          context,
+          stillGenerating
+              ? 'The invoice is still being generated on the server — try again in a moment.'
+              : (error ?? 'Could not prepare the invoice. Try again.'),
+          success: false);
       return;
     }
     try {

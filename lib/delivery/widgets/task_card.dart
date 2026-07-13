@@ -9,15 +9,23 @@ class TaskCard extends StatelessWidget {
   const TaskCard({
     super.key,
     required this.task,
-    required this.onStartDelivery,
+    required this.onAction,
+    this.busy = false,
   });
 
   final DeliveryTask task;
-  final VoidCallback? onStartDelivery;
+
+  /// Advances the task (Pick Up for Shipped, Start Delivery for Out for
+  /// Delivery). Null disables the button.
+  final VoidCallback? onAction;
+
+  /// True while a backend call for this task is in flight.
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
     final isActive = task.status == DeliveryTaskStatus.active;
+    final actionLabel = task.status.actionLabel;
     final tagColor = switch (task.status) {
       DeliveryTaskStatus.active => AppColors.primary,
       DeliveryTaskStatus.next => AppPalette.info,
@@ -108,8 +116,7 @@ class TaskCard extends StatelessWidget {
           const SizedBox(height: 12),
           Row(
             children: [
-              _meta(Icons.near_me_outlined, '${task.distanceKm} km', isActive),
-              const SizedBox(width: 14),
+              // Distance/ETA aren't tracked by the backend — show item + COD.
               _meta(Icons.inventory_2_outlined, '${task.itemCount} items',
                   isActive),
               const SizedBox(width: 14),
@@ -117,25 +124,33 @@ class TaskCard extends StatelessWidget {
                   'COD ${formatRupees(task.codAmount)}', isActive),
             ],
           ),
-          if (isActive) ...[
+          if (actionLabel != null) ...[
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: onStartDelivery,
+                onPressed: busy ? null : onAction,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: AppColors.darkGreen,
+                  backgroundColor:
+                      isActive ? Colors.white : AppColors.primary,
+                  foregroundColor:
+                      isActive ? AppColors.darkGreen : Colors.white,
                   elevation: 0,
                   minimumSize: const Size(0, 44),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: const Text(
-                  'Start Delivery',
-                  style: TextStyle(fontWeight: FontWeight.w800),
-                ),
+                child: busy
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(
+                        actionLabel,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
               ),
             ),
           ],

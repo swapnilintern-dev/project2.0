@@ -45,12 +45,8 @@ class VendorApiService {
   /// `--dart-define=API_BASE_URL=...` at run time.
   static String get baseUrl => ApiConfig.baseUrl;
 
-  /// Vendor registration is pinned to the local backend only — it does NOT use
-  /// [ApiConfig.baseUrl]. Every other service still reads ApiConfig.
-  static const String _registerBaseUrl = 'http://localhost:3000';
-
   static Uri get _registerVendorUri =>
-      Uri.parse('$_registerBaseUrl/vsArogya/register-vendor');
+      Uri.parse('$baseUrl/vsArogya/register-vendor');
 
   /// Submits [model] to the backend. Never throws — always returns a result.
   Future<VendorApiResult> registerVendor(VendorRegistrationModel model) async {
@@ -83,11 +79,11 @@ class VendorApiService {
     try {
       final streamed = await request.send().timeout(_timeout);
       final response = await http.Response.fromStream(streamed);
-      print("=========================");
-      print("REGISTER API RESPONSE");
-      print("STATUS CODE : ${response.statusCode}");
-      print("BODY : ${response.body}");
-      print("=========================");
+      debugPrint("=========================");
+      debugPrint("REGISTER API RESPONSE");
+      debugPrint("STATUS CODE : ${response.statusCode}");
+      debugPrint("BODY : ${response.body}");
+      debugPrint("=========================");
       return _parseResponse(response);
     } on TimeoutException {
       return const VendorApiResult(

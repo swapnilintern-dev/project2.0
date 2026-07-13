@@ -218,10 +218,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                         child: _field(
                           icon: Icons.percent_outlined,
                           label: 'GST %',
-                          hint: '5',
+                          hint: '5 / 12 / 18 / 28',
                           controller: _gst,
                           keyboardType: TextInputType.number,
-                          validator: _percent,
+                          validator: _gstSlab,
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -430,6 +430,21 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     if (v == null || v.trim().isEmpty) return null; // optional, defaults apply
     final value = double.tryParse(v.trim());
     if (value == null || value < 0 || value > 100) return '0–100';
+    return null;
+  }
+
+  /// GST must be one of the government slabs the invoice summarises
+  /// (5 / 12 / 18 / 28, or 0 for tax-exempt). Any other value would show on
+  /// the item line but silently DROP OUT of the invoice's GST slab table and
+  /// CGST/SGST totals — so it's blocked here at entry.
+  String? _gstSlab(String? v) {
+    if (v == null || v.trim().isEmpty) return null; // defaults apply
+    final value = double.tryParse(v.trim());
+    if (value == null) return 'Invalid';
+    const slabs = [0, 5, 12, 18, 28];
+    if (value % 1 != 0 || !slabs.contains(value.toInt())) {
+      return '0/5/12/18/28';
+    }
     return null;
   }
 

@@ -18,6 +18,7 @@ import '../customer/customer_widgets.dart'
 import 'marketing_controllers.dart';
 import 'marketing_models.dart';
 import 'order_details_screen.dart';
+import 'reports_screen.dart';
 
 class MarketingDashboardScreen extends StatelessWidget {
   const MarketingDashboardScreen({super.key, required this.onOpenTab});
@@ -80,6 +81,17 @@ class MarketingDashboardScreen extends StatelessWidget {
                       onTap: () => onOpenTab(3),
                     ),
                   ],
+                ),
+              ),
+              // Full-width Reports entry — opens the report screen that
+              // downloads shareable Excel exports from the backend.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: _ReportsCard(
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => const MarketingReportsScreen()),
+                  ),
                 ),
               ),
               Padding(
@@ -202,6 +214,64 @@ class _StatCard extends StatelessWidget {
             Text(label,
                 style: const TextStyle(
                     fontSize: 12, color: AppColors.greyText)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-width "Reports" card shown under the stat grid — the entry point to
+/// [MarketingReportsScreen] where vendor / stock / order Excel reports are
+/// generated.
+class _ReportsCard extends StatelessWidget {
+  const _ReportsCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.border),
+          boxShadow: AppShadows.card,
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.lightGreenBg,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.assessment_outlined,
+                  color: AppColors.darkGreen, size: 22),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Reports',
+                      style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.darkText)),
+                  SizedBox(height: 2),
+                  Text('Generate vendor, stock & order reports (Excel)',
+                      style: TextStyle(
+                          fontSize: 11.5, color: AppColors.greyText)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded,
+                color: AppColors.greyText),
           ],
         ),
       ),

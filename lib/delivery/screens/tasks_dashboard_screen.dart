@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../vendor_registration_screen.dart' show AppColors;
 import '../../theme/app_theme.dart' show AppPalette;
-import '../delivery_mock_data.dart';
+import '../../services/live_refresh.dart';
+import '../../customer/customer_widgets.dart' show showAppSnack;
 import '../delivery_models.dart';
 import '../screens/delivery_verification_screen.dart';
 import '../widgets/stat_card.dart';
@@ -15,12 +16,29 @@ class TasksDashboardScreen extends StatefulWidget {
   State<TasksDashboardScreen> createState() => _TasksDashboardScreenState();
 }
 
-class _TasksDashboardScreenState extends State<TasksDashboardScreen> {
+class _TasksDashboardScreenState extends State<TasksDashboardScreen>
+    with LiveRefreshMixin {
+  /// Id of the task whose Pick Up call is in flight (so only its button spins).
+  String? _busyId;
+
+  DeliveryController get _ctrl => DeliveryController.instance;
+
   @override
   void initState() {
     super.initState();
-    DeliveryMockData.seed();
+    // Keep the dispatch queue live so orders the marketing/admin team ship
+    // surface here on their own.
+    startLiveRefresh();
   }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => _ctrl.refresh();
 
   String _greeting() {
     final hour = DateTime.now().hour;
@@ -29,69 +47,93 @@ class _TasksDashboardScreenState extends State<TasksDashboardScreen> {
     return 'Good evening';
   }
 
-  void _startDelivery(DeliveryTask task) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => DeliveryVerificationScreen(taskId: task.id),
-      ),
+  void _onAction(DeliveryTask task) {
+    if (task.status == DeliveryTaskStatus.active) {
+      // Out for Delivery -> open the confirm-delivery screen.
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => DeliveryVerificationScreen(taskId: task.id),
+        ),
+      );
+      return;
+    }
+    // Shipped -> pick up (Out for Delivery).
+    _pickUp(task);
+  }
+
+  Future<void> _pickUp(DeliveryTask task) async {
+    setState(() => _busyId = task.id);
+    final error = await _ctrl.pickUp(task.id);
+    if (!mounted) return;
+    setState(() => _busyId = null);
+    showAppSnack(
+      context,
+      error ?? 'Order #${_shortId(task.id)} picked up — out for delivery',
+      success: error == null,
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: DeliveryController.instance,
+      listenable: _ctrl,
       builder: (context, _) {
-        final ctrl = DeliveryController.instance;
-        final rider = ctrl.rider ?? DeliveryMockData.rider;
-        final tasks = ctrl.todayTasks;
+        final rider = _ctrl.rider;
+        final tasks = _ctrl.tasks;
 
-        return CustomScrollView(
-          physics: const BouncingScrollPhysics(
-            parent: AlwaysScrollableScrollPhysics(),
-          ),
-          slivers: [
-            SliverToBoxAdapter(child: _header(rider)),
-            SliverToBoxAdapter(child: _statsRow(ctrl)),
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-              sliver: SliverToBoxAdapter(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      "Today's Tasks",
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.darkText,
+        return RefreshIndicator(
+          color: AppColors.primary,
+          onRefresh: _ctrl.refresh,
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
+            ),
+            slivers: [
+              SliverToBoxAdapter(child: _header(rider)),
+              SliverToBoxAdapter(child: _statsRow(_ctrl)),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                sliver: SliverToBoxAdapter(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Dispatch Queue',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.darkText,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    if (tasks.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 32),
-                        child: Center(
-                          child: Text(
-                            'No tasks assigned for today.',
-                            style: TextStyle(color: AppColors.greyText),
+                      const SizedBox(height: 12),
+                      if (!_ctrl.isLoaded && tasks.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 40),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else if (tasks.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 32),
+                          child: Center(
+                            child: Text(
+                              'No orders ready for delivery right now.',
+                              style: TextStyle(color: AppColors.greyText),
+                            ),
                           ),
-                        ),
-                      )
-                    else
-                      for (final task in tasks)
-                        TaskCard(
-                          task: task,
-                          onStartDelivery: task.status ==
-                                  DeliveryTaskStatus.active
-                              ? () => _startDelivery(task)
-                              : null,
-                        ),
-                  ],
+                        )
+                      else
+                        for (final task in tasks)
+                          TaskCard(
+                            task: task,
+                            busy: _busyId == task.id,
+                            onAction: () => _onAction(task),
+                          ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         );
       },
     );
@@ -158,18 +200,24 @@ class _TasksDashboardScreenState extends State<TasksDashboardScreen> {
       child: Row(
         children: [
           DeliveryStatCard(
-            value: '${ctrl.todayDeliveryCount}',
-            label: 'Deliveries',
-            icon: Icons.local_shipping_outlined,
+            value: '${ctrl.activeTasks.length + ctrl.pickupTasks.length}',
+            label: 'Open Tasks',
+            icon: Icons.assignment_outlined,
           ),
           const SizedBox(width: 10),
           DeliveryStatCard(
-            value: '₹${ctrl.todayEarnings.round()}',
-            label: 'Earned',
-            icon: Icons.currency_rupee,
+            value: '${ctrl.deliveredThisSession}',
+            label: 'Delivered',
+            icon: Icons.check_circle_outline,
           ),
         ],
       ),
     );
   }
+}
+
+/// Short, readable order reference from a Mongo _id (last 6 chars, upper-case).
+String _shortId(String id) {
+  if (id.length <= 6) return id.toUpperCase();
+  return id.substring(id.length - 6).toUpperCase();
 }

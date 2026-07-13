@@ -36,19 +36,23 @@ class _InvoicePreviewScreenState extends State<InvoicePreviewScreen> {
     _future = _load();
   }
 
-  /// Fetches the server invoice, POLLING briefly when it isn't ready yet —
-  /// right after checkout the backend is still generating/linking the PDF, so
-  /// "Invoice not found" for the first few seconds is normal, not an error.
+  /// SERVER-ONLY invoice load. The backend is the single source of the
+  /// invoice PDF (the official HTML-template document) — nothing is rendered
+  /// on-device, so the invoice looks IDENTICAL on the first open and every
+  /// open after it.
+  ///
+  /// Right after checkout the server may still be generating the PDF
+  /// (Puppeteer + Cloudinary on a cold server can take a while), so "invoice
+  /// not found" is retried for up to ~1 minute before giving up with a
+  /// Try-again message.
   Future<(Uint8List?, String?)> _load() async {
     var result = await _api.fetchServerInvoice(widget.order);
     var attempt = 0;
-    // Render free tier pe PDF (22-page + cold Chrome) 30-60s le sakta hai —
-    // isliye ~90s tak har 5s me retry karo before giving up.
     while (mounted &&
         result.$1 == null &&
         (result.$2 ?? '').toLowerCase().contains('invoice not found') &&
-        attempt < 18) {
-      await Future.delayed(const Duration(seconds: 5));
+        attempt < 10) {
+      await Future.delayed(const Duration(seconds: 6));
       if (!mounted) break;
       result = await _api.fetchServerInvoice(widget.order);
       attempt++;
@@ -57,8 +61,8 @@ class _InvoicePreviewScreenState extends State<InvoicePreviewScreen> {
         (result.$2 ?? '').toLowerCase().contains('invoice not found')) {
       return (
         null,
-        'Your invoice is still being generated. Please try again in a few '
-        'seconds.'
+        'The invoice is still being generated on the server. '
+        'Please try again in a moment.',
       );
     }
     return result;
@@ -126,8 +130,11 @@ class _InvoicePreviewScreenState extends State<InvoicePreviewScreen> {
         children: [
           CircularProgressIndicator(color: AppColors.primary),
           SizedBox(height: 16),
-          Text('Loading invoice…',
-              style: TextStyle(color: AppColors.greyText, fontSize: 13.5)),
+          Text('Fetching your invoice from the server…\n'
+              'A brand-new invoice can take up to a minute to generate.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: AppColors.greyText, fontSize: 13.5, height: 1.5)),
         ],
       ),
     );
