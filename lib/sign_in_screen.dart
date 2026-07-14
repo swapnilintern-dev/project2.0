@@ -11,11 +11,14 @@ import 'auth/session.dart' show homeForRole;
 import 'delivery/delivery_main.dart';
 import 'delivery/delivery_api.dart';
 import 'delivery/delivery_models.dart' show DeliveryController;
+import 'outlet/outlet_auth.dart';
+import 'outlet/outlet_main.dart';
+import 'outlet/outlet_session.dart';
 
 /// The account types a user can sign in as. The role is decided by the account
 /// (returned by the backend at login) — there is no on-screen role picker.
 /// `vendor` is the B2B buyer (a pharmacy/clinic) who shops via the customer app.
-enum SignInRole { vendor, admin, delivery, marketing }
+enum SignInRole { vendor, admin, delivery, marketing, outletStaff }
 
 class SignInScreen extends StatefulWidget {
   const SignInScreen({super.key});
@@ -44,6 +47,18 @@ Future<void> _onSignIn() async {
   FocusScope.of(context).unfocus();
 
   if (!(_formKey.currentState?.validate() ?? false)) return;
+
+  // Outlet Staff demo login (backend role not live yet — see lib/outlet/
+  // outlet_auth.dart). Short-circuits to the outlet shell without hitting the
+  // API. Remove this block once the server returns role: "outlet".
+  if (matchesOutletDemoLogin(
+      _identifierCtrl.text.trim(), _passwordCtrl.text.trim())) {
+    OutletSession.instance.signIn(name: 'Outlet Staff');
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const OutletMain()),
+    );
+    return;
+  }
 
   setState(() => _isSubmitting = true);
 

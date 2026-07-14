@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:self/outlet/screens/outlet_order_tracking_screen%20(1).dart';
-import 'package:self/outlet/screens/outlet_stock_screen.dart';
 
 import 'splash_screen.dart';
 import 'theme/app_theme.dart';
-import 'outlet/screens/outlet_dashboard_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,7 +34,7 @@ class MediCaPlusApp extends StatelessWidget {
       // per-screen token migration is complete (avoids a broken half-dark UI).
       darkTheme: AppTheme.dark,
       themeMode: ThemeMode.light,
-      home: const OutletDashboardScreen(),
+      home: const SplashScreen(),
     );
   }
 }

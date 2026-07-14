@@ -20,6 +20,8 @@ import '../customer/customer_shell.dart';
 import '../delivery/delivery_main.dart';
 import '../delivery/delivery_models.dart' show DeliveryController;
 import '../marketing/marketing_role_main.dart';
+import '../outlet/outlet_main.dart';
+import '../outlet/outlet_session.dart';
 import '../services/auth_service.dart';
 import '../sign_in_screen.dart';
 
@@ -32,6 +34,13 @@ Widget homeForRole(String? roleRaw, {String? mobile, String? name}) {
   final role = (roleRaw ?? '').toLowerCase();
   if (role.contains('admin')) return const AdminRoleMain();
   if (role.contains('marketing')) return const MarketingRoleMain();
+  // Outlet Staff — physical-outlet operator (counter + delivery orders). Routes
+  // the same keyword way as the other roles once the backend returns
+  // role: "outlet". See lib/outlet/.
+  if (role.contains('outlet')) {
+    OutletSession.instance.signIn(name: name);
+    return const OutletMain();
+  }
   if (role.contains('delivery')) {
     // A delivery user in the Vendor collection (role == delivery).
     DeliveryController.instance.setAgent(mobile: mobile ?? '', name: name);
@@ -48,6 +57,8 @@ void logout(BuildContext context) {
   resetCustomerSession();
   // Clear the delivery agent's live session (identity + dispatch queue).
   DeliveryController.instance.reset();
+  // Clear the outlet staff session (identity) so the guard requires a fresh login.
+  OutletSession.instance.clear();
   // Drop the captured login cookie so the next account starts unauthenticated.
   AuthService.clearSession();
 

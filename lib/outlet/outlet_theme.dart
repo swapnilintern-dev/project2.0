@@ -34,7 +34,7 @@ class OutletColors {
 
   static List<BoxShadow> cardShadow = [
     BoxShadow(
-      color: grad1.withOpacity(0.06),
+      color: grad1.withValues(alpha: 0.06),
       blurRadius: 10,
       offset: const Offset(0, 2),
     ),
@@ -164,17 +164,24 @@ class OutletHeader extends StatelessWidget {
   }
 }
 
-// Shared bottom nav used by every outlet screen. Pass the current tab index.
+// Shared bottom nav for the outlet shell. Index-based: the shell owns the tab
+// state (IndexedStack) and passes [onTap] to switch — matching how the app's
+// other role shells navigate (no named routes).
 class OutletBottomNav extends StatelessWidget {
   final int currentIndex;
+  final ValueChanged<int> onTap;
 
-  const OutletBottomNav({super.key, required this.currentIndex});
+  const OutletBottomNav({
+    super.key,
+    required this.currentIndex,
+    required this.onTap,
+  });
 
   static const _items = [
-    {'icon': Icons.home_outlined, 'label': 'Home', 'route': '/outlet/dashboard'},
-    {'icon': Icons.inventory_2_outlined, 'label': 'Stock', 'route': '/outlet/stock'},
-    {'icon': Icons.receipt_long_outlined, 'label': 'Orders', 'route': '/outlet/order-tracking'},
-    {'icon': Icons.person_outline, 'label': 'Profile', 'route': '/outlet/profile'},
+    {'icon': Icons.home_outlined, 'label': 'Home'},
+    {'icon': Icons.inventory_2_outlined, 'label': 'Stock'},
+    {'icon': Icons.receipt_long_outlined, 'label': 'Orders'},
+    {'icon': Icons.person_outline, 'label': 'Profile'},
   ];
 
   @override
@@ -191,11 +198,7 @@ class OutletBottomNav extends StatelessWidget {
           final active = i == currentIndex;
           final item = _items[i];
           return InkWell(
-            onTap: () {
-              if (!active) {
-                Navigator.pushReplacementNamed(context, item['route'] as String);
-              }
-            },
+            onTap: () => onTap(i),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [

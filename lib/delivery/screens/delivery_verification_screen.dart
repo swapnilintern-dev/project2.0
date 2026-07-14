@@ -8,14 +8,21 @@
 // only — the authoritative action is the delivered status change.
 // =============================================================================
 
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../customer/customer_widgets.dart' show formatRupees;
 import '../../vendor_registration_screen.dart' show AppColors;
 import '../delivery_models.dart';
+
+/// How the agent settled the order's payment before delivering.
+///   [none]   — not collected yet ("Mark Delivered" stays disabled).
+///   [online] — customer paid online via QR / payment link (agent confirmed).
+///   [cash]   — online failed / declined, so the agent collected cash (COD).
+enum _DeliveryPayMode { none, online, cash }
 
 class DeliveryVerificationScreen extends StatefulWidget {
   const DeliveryVerificationScreen({super.key, required this.taskId});
@@ -34,7 +41,170 @@ class _DeliveryVerificationScreenState
   bool _signatureCaptured = false;
   bool _submitting = false;
 
+  /// Payment must be settled (online OR cash) before the order can be delivered.
+  _DeliveryPayMode _pay = _DeliveryPayMode.none;
+
   bool get _photoTaken => _photoBytes != null;
+  bool get _paymentCollected => _pay != _DeliveryPayMode.none;
+
+  // ---------------------------------------------------------------------------
+  // PAYMENT COLLECTION (delivery role)
+  //
+  // The agent collects the order amount before marking it delivered. Online is
+  // offered first (QR + payment link); if it fails/declines, the agent falls
+  // back to cash (COD). Payment is confirmed locally by the agent here — the
+  // QR / link strings below are placeholders; a real Razorpay QR + Payment Link
+  // come from the backend when it's wired.
+  // ---------------------------------------------------------------------------
+
+  /// UPI intent the customer scans (amount + order reference prefilled).
+  String _upiIntent(DeliveryTask task) =>
+      'upi://pay?pa=vsarogya@okhdfc&pn=VS%20Arogya'
+      '&am=${task.codAmount.toStringAsFixed(2)}&cu=INR&tn=Order%20${task.id}';
+
+  /// Shareable payment link (placeholder — replace with the backend link).
+  String _payLink(DeliveryTask task) => 'https://rzp.io/i/vsarogya-${task.id}';
+
+  void _setPaid(_DeliveryPayMode mode) {
+    setState(() => _pay = mode);
+    _snack(mode == _DeliveryPayMode.cash
+        ? 'Cash payment collected'
+        : 'Online payment confirmed');
+  }
+
+  /// Bottom sheet: QR to scan (online). Agent confirms once the customer pays.
+  Future<void> _showQrSheet(DeliveryTask task) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => _PaymentSheet(
+        title: 'Scan to pay',
+        subtitle: 'Customer scans with any UPI app',
+        amount: task.codAmount,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: QrImageView(
+            data: _upiIntent(task),
+            version: QrVersions.auto,
+            size: 210,
+            backgroundColor: Colors.white,
+            eyeStyle: const QrEyeStyle(
+              eyeShape: QrEyeShape.square,
+              color: AppColors.darkGreen,
+            ),
+            dataModuleStyle: const QrDataModuleStyle(
+              dataModuleShape: QrDataModuleShape.square,
+              color: AppColors.darkText,
+            ),
+          ),
+        ),
+        onConfirm: () {
+          Navigator.of(context).pop();
+          _setPaid(_DeliveryPayMode.online);
+        },
+      ),
+    );
+  }
+
+  /// Bottom sheet: shareable/copyable payment link (online).
+  Future<void> _showLinkSheet(DeliveryTask task) async {
+    final link = _payLink(task);
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => _PaymentSheet(
+        title: 'Payment link',
+        subtitle: 'Send this to the customer to pay online',
+        amount: task.codAmount,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: AppColors.pageBg,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  link,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.darkGreen,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: link));
+                  _snack('Payment link copied');
+                },
+                icon: const Icon(Icons.copy_rounded, size: 18),
+                color: AppColors.greyText,
+                tooltip: 'Copy',
+              ),
+              IconButton(
+                onPressed: () =>
+                    Share.share(link, subject: 'VS Arogya payment link'),
+                icon: const Icon(Icons.share_rounded, size: 18),
+                color: AppColors.greyText,
+                tooltip: 'Share',
+              ),
+            ],
+          ),
+        ),
+        onConfirm: () {
+          Navigator.of(context).pop();
+          _setPaid(_DeliveryPayMode.online);
+        },
+      ),
+    );
+  }
+
+  /// Cash fallback (COD) — used when the online payment fails or is declined.
+  Future<void> _collectCash(DeliveryTask task) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Collect cash (COD)'),
+        content: Text(
+          'Confirm you collected ${formatRupees(task.codAmount)} in cash '
+          'from the customer.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Not yet'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Cash collected'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) _setPaid(_DeliveryPayMode.cash);
+  }
 
   /// Opens the device camera (Android + iOS + web) and keeps the captured
   /// image as bytes so the thumbnail renders on every platform (no dart:io).
@@ -78,6 +248,11 @@ class _DeliveryVerificationScreenState
   }
 
   Future<void> _complete(DeliveryTask task) async {
+    // Payment must be settled first (online or cash) — locked gate.
+    if (!_paymentCollected) {
+      _snack('Collect the payment before marking delivered', error: true);
+      return;
+    }
     final allVerified = _items(task).every((i) => i.verified);
     if (!allVerified) {
       _snack('Verify all items before completing', error: true);
@@ -130,6 +305,10 @@ class _DeliveryVerificationScreenState
               _sectionTitle('Verify Items'),
               const SizedBox(height: 10),
               _itemsCard(task, items),
+              const SizedBox(height: 16),
+              _sectionTitle('Collect Payment'),
+              const SizedBox(height: 10),
+              _paymentCard(task),
               const SizedBox(height: 16),
               _sectionTitle('Proof of Delivery (optional)'),
               const SizedBox(height: 10),
@@ -196,31 +375,62 @@ class _DeliveryVerificationScreenState
           ),
           bottomNavigationBar: SafeArea(
             minimum: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            child: SizedBox(
-              height: 54,
-              child: ElevatedButton(
-                onPressed: _submitting ? null : () => _complete(task),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // "Mark Delivered" is disabled until payment is settled.
+                if (!_paymentCollected)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.lock_outline,
+                            size: 15, color: AppColors.greyText),
+                        SizedBox(width: 6),
+                        Text(
+                          'Collect payment to enable delivery',
+                          style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.greyText),
+                        ),
+                      ],
+                    ),
+                  ),
+                SizedBox(
+                  height: 54,
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: (_submitting || !_paymentCollected)
+                        ? null
+                        : () => _complete(task),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor:
+                          AppColors.greyText.withValues(alpha: 0.35),
+                      disabledForegroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: _submitting
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2.4, color: Colors.white),
+                          )
+                        : const Text(
+                            'Mark Delivered',
+                            style: TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w800),
+                          ),
                   ),
                 ),
-                child: _submitting
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2.4, color: Colors.white),
-                      )
-                    : const Text(
-                        'Mark Delivered',
-                        style: TextStyle(
-                            fontSize: 15, fontWeight: FontWeight.w800),
-                      ),
-              ),
+              ],
             ),
           ),
         );
@@ -275,6 +485,164 @@ class _DeliveryVerificationScreenState
         fontSize: 15,
         fontWeight: FontWeight.w800,
         color: AppColors.darkText,
+      ),
+    );
+  }
+
+  /// Payment collection card: amount due, current status, and the three ways to
+  /// collect — QR + payment link (online), with Cash (COD) as the fallback.
+  Widget _paymentCard(DeliveryTask task) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'Amount to collect',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.greyText),
+              ),
+              const Spacer(),
+              Text(
+                formatRupees(task.codAmount),
+                style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.darkText),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _paymentStatusRow(),
+          const SizedBox(height: 14),
+          // Online options.
+          Row(
+            children: [
+              Expanded(
+                child: _payOption(
+                  icon: Icons.qr_code_2_rounded,
+                  label: 'Show QR',
+                  selected: _pay == _DeliveryPayMode.online,
+                  onTap: () => _showQrSheet(task),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _payOption(
+                  icon: Icons.link_rounded,
+                  label: 'Payment link',
+                  selected: _pay == _DeliveryPayMode.online,
+                  onTap: () => _showLinkSheet(task),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          // Cash fallback (full width so it reads as the alternative path).
+          _payOption(
+            icon: Icons.payments_outlined,
+            label: 'Collect cash (COD)',
+            selected: _pay == _DeliveryPayMode.cash,
+            onTap: () => _collectCash(task),
+            fullWidth: true,
+          ),
+          if (!_paymentCollected) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'Tip: if the online payment fails, use Collect cash to proceed.',
+              style: TextStyle(fontSize: 11.5, color: AppColors.greyText),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _paymentStatusRow() {
+    final collected = _paymentCollected;
+    final label = switch (_pay) {
+      _DeliveryPayMode.online => 'Paid online',
+      _DeliveryPayMode.cash => 'Cash collected',
+      _DeliveryPayMode.none => 'Not collected yet',
+    };
+    final color = collected ? AppColors.darkGreen : AppColors.greyText;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: collected ? AppColors.lightGreenBg : AppColors.pageBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+            color: collected ? AppColors.primary : AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            collected ? Icons.check_circle : Icons.info_outline,
+            size: 18,
+            color: color,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: TextStyle(
+                fontSize: 13, fontWeight: FontWeight.w700, color: color),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _payOption({
+    required IconData icon,
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+    bool fullWidth = false,
+  }) {
+    return Material(
+      color: selected ? AppColors.lightGreenBg : AppColors.lighterGreen,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+                color: selected ? AppColors.primary : AppColors.border),
+          ),
+          child: Row(
+            mainAxisAlignment:
+                fullWidth ? MainAxisAlignment.center : MainAxisAlignment.center,
+            children: [
+              Icon(icon,
+                  size: 20,
+                  color: selected ? AppColors.primary : AppColors.darkGreen),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: selected ? AppColors.darkGreen : AppColors.greyText,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -416,6 +784,104 @@ class _DeliveryVerificationScreenState
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Reusable online-payment bottom sheet (QR or link). Shows the amount, the
+/// payment [child] (QR image / link row), and a "Payment received" confirm.
+/// Renders identically on Android + iOS (Material sheet, SafeArea-padded).
+class _PaymentSheet extends StatelessWidget {
+  const _PaymentSheet({
+    required this.title,
+    required this.subtitle,
+    required this.amount,
+    required this.child,
+    required this.onConfirm,
+  });
+
+  final String title;
+  final String subtitle;
+  final double amount;
+  final Widget child;
+  final VoidCallback onConfirm;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 12,
+          bottom: 20 + MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Grab handle.
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.darkText),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12.5, color: AppColors.greyText),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              formatRupees(amount),
+              style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.darkGreen),
+            ),
+            const SizedBox(height: 18),
+            child,
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton.icon(
+                onPressed: onConfirm,
+                icon: const Icon(Icons.check_circle_outline, size: 18),
+                label: const Text(
+                  'Payment received',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close',
+                  style: TextStyle(color: AppColors.greyText)),
+            ),
+          ],
         ),
       ),
     );
