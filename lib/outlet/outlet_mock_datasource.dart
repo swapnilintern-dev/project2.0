@@ -62,6 +62,14 @@ class MockOutletDataSource implements OutletDataSource {
   }
 
   @override
+  Future<List<OutletVendor>> fetchVerifiedVendors() async {
+    await Future<void>.delayed(_latency);
+    // Every seeded vendor is admin-approved — a live datasource returns
+    // GET /all-vendors filtered to approvalStatus "Approved".
+    return _seedVendors;
+  }
+
+  @override
   Future<List<OutletOrder>> fetchOrders() async {
     await Future<void>.delayed(_latency);
     _reconcilePayments();
@@ -359,5 +367,50 @@ final List<OutletStockItem> _seedDistrictStock = const [
     isOwnOutlet: false,
     outletName: 'Sandur Outlet',
     district: 'Ballari',
+  ),
+];
+
+/// Admin-approved vendors the outlet can place manual orders for. A live
+/// datasource replaces this with GET /all-vendors (approvalStatus "Approved").
+final List<OutletVendor> _seedVendors = const [
+  OutletVendor(
+    id: 'ven-1',
+    storeName: 'Sri Sai Medicals',
+    contactPerson: 'Ravi Kumar',
+    phone: '9876500011',
+    address: 'Gandhi Nagar, Main Road',
+    city: 'Ballari',
+    state: 'Karnataka',
+    pincode: '583101',
+  ),
+  OutletVendor(
+    id: 'ven-2',
+    storeName: 'Hospet Pharma',
+    contactPerson: 'Anita Rao',
+    phone: '9876500022',
+    address: 'Station Road',
+    city: 'Hospet',
+    state: 'Karnataka',
+    pincode: '583201',
+  ),
+  OutletVendor(
+    id: 'ven-3',
+    storeName: 'Sandur Health Care',
+    contactPerson: 'Mahesh Patil',
+    phone: '9876500033',
+    address: 'Market Street',
+    city: 'Sandur',
+    state: 'Karnataka',
+    pincode: '583119',
+  ),
+  OutletVendor(
+    id: 'ven-4',
+    storeName: 'Janatha Drug House',
+    contactPerson: 'Suresh N',
+    phone: '9876500044',
+    address: 'Cowl Bazar',
+    city: 'Ballari',
+    state: 'Karnataka',
+    pincode: '583102',
   ),
 ];

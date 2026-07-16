@@ -34,22 +34,14 @@ class _OutletManualOrderScreenState extends State<OutletManualOrderScreen> {
   final _repo = OutletRepository();
   final _cart = OutletCart.instance;
 
-  final _formKey = GlobalKey<FormState>();
-  final _nameCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
-  final _addressCtrl = TextEditingController();
+  /// The verified vendor this order is placed for (replaces the old free-text
+  /// walk-in name/phone). Chosen from the searchable picker; the vendor's
+  /// registered phone + address are used automatically.
+  OutletVendor? _vendor;
 
   OutletOrderType _type = OutletOrderType.counter;
   OutletPaymentMethod _payment = OutletPaymentMethod.qr;
   bool _submitting = false;
-
-  @override
-  void dispose() {
-    _nameCtrl.dispose();
-    _phoneCtrl.dispose();
-    _addressCtrl.dispose();
-    super.dispose();
-  }
 
   Future<void> _submit() async {
     if (_submitting) return; // guard against double-tap
@@ -57,7 +49,15 @@ class _OutletManualOrderScreenState extends State<OutletManualOrderScreen> {
       _toast('Add at least one item to the cart.');
       return;
     }
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+    final vendor = _vendor;
+    if (vendor == null) {
+      _toast('Select a verified vendor for this order.');
+      return;
+    }
+    if (_type.needsAddress && !vendor.hasAddress) {
+      _toast('This vendor has no registered address for delivery.');
+      return;
+    }
 
     // Snapshot everything BEFORE the await so clearing the cart afterwards
     // can't affect the request that's already been built.
@@ -65,10 +65,9 @@ class _OutletManualOrderScreenState extends State<OutletManualOrderScreen> {
       type: _type,
       paymentMethod: _payment,
       lines: _cart.lines,
-      customer: OutletCustomerInfo(
-        name: _nameCtrl.text.trim(),
-        phone: _phoneCtrl.text.trim(),
-        address: _type.needsAddress ? _addressCtrl.text.trim() : null,
+      customer: OutletCustomerInfo.fromVendor(
+        vendor,
+        includeAddress: _type.needsAddress,
       ),
       idempotencyKey: _cart.idempotencyKey,
     );
@@ -107,32 +106,29 @@ class _OutletManualOrderScreenState extends State<OutletManualOrderScreen> {
       body: ListenableBuilder(
         listenable: _cart,
         builder: (context, _) {
-          return Form(
-            key: _formKey,
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
-              children: [
-                _sectionTitle('Cart', '${_cart.itemCount} item(s)'),
-                const SizedBox(height: 8),
-                if (_cart.isEmpty) _emptyCart() else _cartCard(),
-                const SizedBox(height: 10),
-                _addProductButton(),
-                const SizedBox(height: 18),
-                _sectionTitle('Customer', ''),
-                const SizedBox(height: 8),
-                _customerCard(),
-                const SizedBox(height: 18),
-                _sectionTitle('Fulfilment', ''),
-                const SizedBox(height: 8),
-                _fulfilmentCard(),
-                const SizedBox(height: 18),
-                _sectionTitle('Payment', 'QR / link only'),
-                const SizedBox(height: 8),
-                _paymentCard(),
-                const SizedBox(height: 22),
-                _submitButton(),
-              ],
-            ),
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+            children: [
+              _sectionTitle('Cart', '${_cart.itemCount} item(s)'),
+              const SizedBox(height: 8),
+              if (_cart.isEmpty) _emptyCart() else _cartCard(),
+              const SizedBox(height: 10),
+              _addProductButton(),
+              const SizedBox(height: 18),
+              _sectionTitle('Vendor', 'Verified only'),
+              const SizedBox(height: 8),
+              _vendorCard(),
+              const SizedBox(height: 18),
+              _sectionTitle('Fulfilment', ''),
+              const SizedBox(height: 8),
+              _fulfilmentCard(),
+              const SizedBox(height: 18),
+              _sectionTitle('Payment', 'QR / link only'),
+              const SizedBox(height: 8),
+              _paymentCard(),
+              const SizedBox(height: 22),
+              _submitButton(),
+            ],
           );
         },
       ),
@@ -285,29 +281,160 @@ class _OutletManualOrderScreenState extends State<OutletManualOrderScreen> {
     );
   }
 
-  Widget _customerCard() {
+  /// The vendor block. Empty → a tap-to-select card; chosen → the vendor's
+  /// registered details (read-only) with a "Change" action. Replaces the old
+  /// free-text customer name/phone: an outlet order is always for a verified
+  /// vendor whose profile supplies the phone + delivery address.
+  Widget _vendorCard() {
+    final v = _vendor;
+    if (v == null) {
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _pickVendor,
+          borderRadius: BorderRadius.circular(14),
+          child: _card(
+            child: Row(
+              children: const [
+                Icon(Icons.storefront_outlined, color: OutletColors.grad1),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Text('Select a verified vendor',
+                      style: OutletTextStyles.prodName),
+                ),
+                Icon(Icons.arrow_forward_ios_rounded,
+                    size: 16, color: OutletColors.textMuted),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     return _card(
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _field(
-            controller: _nameCtrl,
-            label: 'Customer name',
-            icon: Icons.person_outline,
-            validator: (v) =>
-                (v == null || v.trim().isEmpty) ? 'Name is required' : null,
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: OutletColors.badgeGreenBg,
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: const Icon(Icons.storefront_rounded,
+                    color: OutletColors.grad1, size: 21),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(v.displayName, style: OutletTextStyles.prodName),
+                    if (v.contactPerson.isNotEmpty &&
+                        v.contactPerson != v.displayName) ...[
+                      const SizedBox(height: 2),
+                      Text(v.contactPerson, style: OutletTextStyles.prodSub),
+                    ],
+                  ],
+                ),
+              ),
+              TextButton(
+                onPressed: _pickVendor,
+                child: const Text('Change',
+                    style: TextStyle(
+                        color: OutletColors.grad1,
+                        fontWeight: FontWeight.w700)),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
-          _field(
-            controller: _phoneCtrl,
-            label: 'Phone number',
-            icon: Icons.phone_outlined,
-            keyboardType: TextInputType.phone,
-            validator: (v) {
-              final t = (v ?? '').trim();
-              if (t.isEmpty) return 'Phone is required';
-              if (t.length < 10) return 'Enter a valid phone number';
-              return null;
-            },
+          const Divider(height: 18, color: OutletColors.border),
+          _vendorLine(Icons.phone_outlined, v.phone.isEmpty ? '—' : v.phone),
+          if (v.city.isNotEmpty || v.pincode.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _vendorLine(
+              Icons.location_city_outlined,
+              [v.city, v.pincode].where((p) => p.isNotEmpty).join(' · '),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _vendorLine(IconData icon, String text) => Row(
+        children: [
+          Icon(icon, size: 17, color: OutletColors.textMuted),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text, style: OutletTextStyles.prodSub)),
+        ],
+      );
+
+  Future<void> _pickVendor() async {
+    final picked = await showModalBottomSheet<OutletVendor>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: OutletColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (_) => const _OutletVendorPickerSheet(),
+    );
+    if (picked != null && mounted) setState(() => _vendor = picked);
+  }
+
+  /// Read-only delivery-address preview shown when DELIVERY is chosen. The
+  /// address always comes from the selected vendor's registered profile — staff
+  /// never type it (option A).
+  Widget _deliveryAddressPreview() {
+    final v = _vendor;
+    final IconData icon;
+    final Color color;
+    final String text;
+    if (v == null) {
+      icon = Icons.info_outline;
+      color = OutletColors.textMuted;
+      text = 'Select a vendor to load the delivery address.';
+    } else if (!v.hasAddress) {
+      icon = Icons.warning_amber_rounded;
+      color = OutletColors.danger;
+      text = 'This vendor has no registered address for delivery.';
+    } else {
+      icon = Icons.location_on_outlined;
+      color = OutletColors.grad1;
+      text = v.fullAddress;
+    }
+    final hasAddr = v?.hasAddress ?? false;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: OutletColors.bg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: OutletColors.border),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Delivery address (from vendor)',
+                    style: OutletTextStyles.statLabel),
+                const SizedBox(height: 2),
+                Text(
+                  text,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: hasAddr ? OutletColors.textDark : color,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -325,21 +452,11 @@ class _OutletManualOrderScreenState extends State<OutletManualOrderScreen> {
               _typeSeg(OutletOrderType.delivery, Icons.local_shipping_outlined),
             ],
           ),
-          // Address ONLY for delivery (locked rule #2).
+          // Address ONLY for delivery (locked rule #2) — read-only, taken from
+          // the selected vendor's registered profile (option A).
           if (_type.needsAddress) ...[
             const SizedBox(height: 14),
-            _field(
-              controller: _addressCtrl,
-              label: 'Delivery address',
-              icon: Icons.location_on_outlined,
-              maxLines: 2,
-              validator: (v) {
-                if (!_type.needsAddress) return null;
-                return (v == null || v.trim().isEmpty)
-                    ? 'Address is required for delivery'
-                    : null;
-              },
-            ),
+            _deliveryAddressPreview(),
           ],
         ],
       ),
@@ -469,46 +586,6 @@ class _OutletManualOrderScreenState extends State<OutletManualOrderScreen> {
     );
   }
 
-  Widget _field({
-    required TextEditingController controller,
-    required String label,
-    required IconData icon,
-    String? Function(String?)? validator,
-    TextInputType? keyboardType,
-    int maxLines = 1,
-  }) {
-    return TextFormField(
-      controller: controller,
-      validator: validator,
-      keyboardType: keyboardType,
-      maxLines: maxLines,
-      style: const TextStyle(fontSize: 14, color: OutletColors.textDark),
-      decoration: InputDecoration(
-        labelText: label,
-        labelStyle: const TextStyle(color: OutletColors.textMid, fontSize: 13),
-        prefixIcon: Icon(icon, size: 20, color: OutletColors.textMuted),
-        filled: true,
-        fillColor: OutletColors.bg,
-        isDense: true,
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: OutletColors.border),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: OutletColors.success),
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: OutletColors.danger),
-        ),
-        focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: OutletColors.danger),
-        ),
-      ),
-    );
-  }
 }
 
 // =============================================================================
@@ -647,6 +724,140 @@ class _OutletProductPickerSheetState extends State<_OutletProductPickerSheet> {
               ? const Icon(Icons.add_circle_outline, color: OutletColors.grad1)
               : null),
       onTap: selectable ? () => Navigator.of(context).pop(s) : null,
+    );
+  }
+}
+
+// =============================================================================
+// Vendor picker sheet — searchable list of admin-approved vendors. Replaces the
+// old walk-in name field: an outlet order is always placed for a verified
+// vendor. Pops with the chosen vendor, whose registered phone + address the
+// order then uses.
+// =============================================================================
+
+class _OutletVendorPickerSheet extends StatefulWidget {
+  const _OutletVendorPickerSheet();
+
+  @override
+  State<_OutletVendorPickerSheet> createState() =>
+      _OutletVendorPickerSheetState();
+}
+
+class _OutletVendorPickerSheetState extends State<_OutletVendorPickerSheet> {
+  final _repo = OutletRepository();
+  late final Future<List<OutletVendor>> _future = _repo.fetchVerifiedVendors();
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: SizedBox(
+        height: MediaQuery.of(context).size.height * 0.75,
+        child: Column(
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(top: 12, bottom: 14),
+              decoration: BoxDecoration(
+                color: OutletColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const Text('Select verified vendor',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: TextField(
+                autofocus: false,
+                onChanged: (v) => setState(() => _query = v),
+                decoration: InputDecoration(
+                  hintText: 'Search vendor…',
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  isDense: true,
+                  filled: true,
+                  fillColor: OutletColors.bg,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              child: FutureBuilder<List<OutletVendor>>(
+                future: _future,
+                builder: (context, snap) {
+                  if (snap.connectionState == ConnectionState.waiting) {
+                    return const Center(
+                        child: CircularProgressIndicator(
+                            color: OutletColors.success));
+                  }
+                  final q = _query.trim().toLowerCase();
+                  final list = (snap.data ?? const [])
+                      .where((v) =>
+                          q.isEmpty ||
+                          v.displayName.toLowerCase().contains(q) ||
+                          v.contactPerson.toLowerCase().contains(q) ||
+                          v.phone.contains(q) ||
+                          v.city.toLowerCase().contains(q))
+                      .toList();
+                  if (list.isEmpty) {
+                    return const Center(
+                      child: Text('No matching vendors',
+                          style: OutletTextStyles.prodSub),
+                    );
+                  }
+                  return ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                    itemCount: list.length,
+                    separatorBuilder: (_, _) =>
+                        const Divider(height: 1, color: OutletColors.border),
+                    itemBuilder: (context, i) => _row(list[i]),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _row(OutletVendor v) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: OutletColors.badgeGreenBg,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Icon(Icons.storefront_rounded,
+            color: OutletColors.grad1, size: 20),
+      ),
+      title: Text(v.displayName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: OutletColors.textDark)),
+      subtitle: Text(
+        [
+          if (v.phone.isNotEmpty) v.phone,
+          if (v.city.isNotEmpty) v.city,
+          if (v.pincode.isNotEmpty) v.pincode,
+        ].join(' · '),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: OutletTextStyles.prodSub,
+      ),
+      trailing: const Icon(Icons.add_circle_outline, color: OutletColors.grad1),
+      onTap: () => Navigator.of(context).pop(v),
     );
   }
 }

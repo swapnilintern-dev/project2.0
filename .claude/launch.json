@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "portfolio",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "C:/Portfolio", "run", "dev"],
+      "port": 5173
+    },
+    {
       "name": "krveo-web",
       "runtimeExecutable": "cmd",
       "runtimeArgs": ["/c", "cd /d C:\\swapnil2\\sport && flutter run -d web-server --web-port 8099"],

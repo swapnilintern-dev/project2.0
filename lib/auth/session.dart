@@ -15,6 +15,8 @@
 import 'package:flutter/material.dart';
 
 import '../admin/admin_main.dart';
+import '../agent/agent_main.dart';
+import '../agent/agent_session.dart';
 import '../customer/customer_controllers.dart';
 import '../customer/customer_shell.dart';
 import '../delivery/delivery_main.dart';
@@ -46,6 +48,16 @@ Widget homeForRole(String? roleRaw, {String? mobile, String? name}) {
     DeliveryController.instance.setAgent(mobile: mobile ?? '', name: name);
     return const DeliveryMain();
   }
+  // Area Agent — pincode-scoped order monitor. Checked AFTER delivery so a
+  // "delivery agent" role never mis-routes here. The demo login sets the
+  // AgentSession (name + pincode) before this runs; the production path (backend
+  // returns role: "agent") falls back to signing in with the response name.
+  if (role.contains('agent')) {
+    if (!AgentSession.instance.isSignedIn) {
+      AgentSession.instance.signIn(name: name);
+    }
+    return const AgentMain();
+  }
   return const CustomerShell();
 }
 
@@ -59,6 +71,8 @@ void logout(BuildContext context) {
   DeliveryController.instance.reset();
   // Clear the outlet staff session (identity) so the guard requires a fresh login.
   OutletSession.instance.clear();
+  // Clear the Area Agent session (identity) so the next login starts clean.
+  AgentSession.instance.clear();
   // Drop the captured login cookie so the next account starts unauthenticated.
   AuthService.clearSession();
 

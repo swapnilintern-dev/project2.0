@@ -27,6 +27,11 @@ abstract class OutletDataSource {
   /// into one list. Distinguish rows via [OutletStockItem.isOwnOutlet].
   Future<List<OutletStockItem>> fetchStock();
 
+  /// The admin-approved vendors an outlet order can be placed for. Only
+  /// verified (approvalStatus "Approved") vendors are returned; the manual-order
+  /// screen shows these in its picker instead of a typed walk-in name.
+  Future<List<OutletVendor>> fetchVerifiedVendors();
+
   /// Creates a manual order in [OutletOrderStatus.awaitingPayment].
   ///
   /// Honours [CreateOrderRequest.idempotencyKey]: a repeat call with the same
@@ -80,6 +85,9 @@ class OutletRepository {
   final OutletDataSource _ds;
 
   Future<List<OutletStockItem>> fetchStock() => _ds.fetchStock();
+
+  Future<List<OutletVendor>> fetchVerifiedVendors() =>
+      _ds.fetchVerifiedVendors();
 
   Future<OutletOrder> createOrder(CreateOrderRequest request) =>
       _ds.createOrder(request);

@@ -162,37 +162,133 @@ class OutletCustomerInfo {
     required this.name,
     required this.phone,
     this.address,
+    this.vendorId = '',
   });
 
   final String name;
   final String phone;
   final String? address;
 
+  /// The verified vendor this order is placed for. Outlet orders are always
+  /// created against an admin-approved vendor (chosen from the picker), so
+  /// [name] / [phone] / [address] are sourced from that vendor's registered
+  /// profile rather than typed by hand.
+  final String vendorId;
+
   bool get hasAddress => (address ?? '').trim().isNotEmpty;
+
+  /// Builds the customer block from a selected [OutletVendor]. The delivery
+  /// address is attached only for DELIVERY orders (locked rule #2) and comes
+  /// straight from the vendor's registered address.
+  factory OutletCustomerInfo.fromVendor(
+    OutletVendor vendor, {
+    bool includeAddress = false,
+  }) =>
+      OutletCustomerInfo(
+        name: vendor.displayName,
+        phone: vendor.phone,
+        address: includeAddress && vendor.fullAddress.isNotEmpty
+            ? vendor.fullAddress
+            : null,
+        vendorId: vendor.id,
+      );
 
   factory OutletCustomerInfo.fromJson(Map<String, dynamic> json) =>
       OutletCustomerInfo(
         name: (json['name'] ?? '').toString(),
         phone: (json['phone'] ?? json['mobile'] ?? '').toString(),
         address: json['address']?.toString(),
+        vendorId: (json['vendorId'] ?? json['vendor'] ?? '').toString(),
       );
 
   Map<String, dynamic> toJson() => {
         'name': name,
         'phone': phone,
         if (hasAddress) 'address': address,
+        if (vendorId.isNotEmpty) 'vendorId': vendorId,
       };
 
   OutletCustomerInfo copyWith({
     String? name,
     String? phone,
     String? address,
+    String? vendorId,
   }) =>
       OutletCustomerInfo(
         name: name ?? this.name,
         phone: phone ?? this.phone,
         address: address ?? this.address,
+        vendorId: vendorId ?? this.vendorId,
       );
+}
+
+// -----------------------------------------------------------------------------
+// VENDOR (the admin-approved buyer an outlet order is placed for)
+// -----------------------------------------------------------------------------
+
+/// A verified (admin-approved) vendor shown in the manual-order picker. Mirrors
+/// the fields the backend keeps on a vendor account (store_name /
+/// contact_person_name / mobile_no / full_address / city / state / pin_code),
+/// so a LiveOutletDataSource can map GET /all-vendors (approvalStatus
+/// "Approved") straight onto it. Only approved vendors are ever returned.
+class OutletVendor {
+  const OutletVendor({
+    required this.id,
+    required this.storeName,
+    required this.contactPerson,
+    required this.phone,
+    this.address = '',
+    this.city = '',
+    this.state = '',
+    this.pincode = '',
+  });
+
+  final String id;
+  final String storeName;
+  final String contactPerson;
+  final String phone;
+  final String address;
+  final String city;
+  final String state;
+  final String pincode;
+
+  /// Best label for the vendor — store name, falling back to the contact.
+  String get displayName => storeName.trim().isNotEmpty
+      ? storeName
+      : (contactPerson.trim().isNotEmpty ? contactPerson : 'Vendor');
+
+  bool get hasAddress => fullAddress.isNotEmpty;
+
+  /// The registered address as one line (street, city, state, pincode).
+  String get fullAddress => [address, city, state, pincode]
+      .map((p) => p.trim())
+      .where((p) => p.isNotEmpty)
+      .join(', ');
+
+  factory OutletVendor.fromJson(Map<String, dynamic> json) => OutletVendor(
+        id: (json['id'] ?? json['_id'] ?? '').toString(),
+        storeName: (json['storeName'] ?? json['store_name'] ?? '').toString(),
+        contactPerson:
+            (json['contactPerson'] ?? json['contact_person_name'] ?? '')
+                .toString(),
+        phone: (json['phone'] ?? json['mobile_no'] ?? json['mobile'] ?? '')
+            .toString(),
+        address: (json['address'] ?? json['full_address'] ?? '').toString(),
+        city: (json['city'] ?? '').toString(),
+        state: (json['state'] ?? '').toString(),
+        pincode: (json['pincode'] ?? json['pin_code'] ?? '').toString(),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'storeName': storeName,
+        'contactPerson': contactPerson,
+        'phone': phone,
+        'address': address,
+        'city': city,
+        'state': state,
+        'pincode': pincode,
+      };
 }
 
 // -----------------------------------------------------------------------------
