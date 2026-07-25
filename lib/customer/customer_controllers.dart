@@ -13,7 +13,6 @@ import 'package:flutter/foundation.dart';
 
 import 'customer_api.dart';
 import 'customer_models.dart';
-import 'customer_mock_data.dart';
 
 /// The cart. Holds line items and exposes invoice maths.
 class CartController extends ChangeNotifier {
@@ -28,8 +27,9 @@ class CartController extends ChangeNotifier {
   Coupon? _coupon;
   Coupon? get appliedCoupon => _coupon;
 
-  /// Coupons available to apply, loaded from the backend (mock as fallback).
-  List<Coupon> _availableCoupons = MockData.coupons;
+  /// Coupons available to apply — always the live backend list. Empty until
+  /// [loadCoupons] first succeeds; no local seed codes.
+  List<Coupon> _availableCoupons = const [];
 
   /// Refreshes the available coupons from the backend. Call when the cart /
   /// checkout opens so [applyCoupon] validates real, active codes.
@@ -474,8 +474,17 @@ class AddressController extends ChangeNotifier {
   AddressController._();
   static final AddressController instance = AddressController._();
 
-  /// Addresses the user added this session (not yet persisted server-side).
+  final CustomerApi _api = CustomerApi();
+
+  /// The user's saved address book. Mirrors the backend
+  /// (GET/POST/PUT/DELETE /vsArogya/addresses): every mutation updates this
+  /// list optimistically and then replaces it with the server's answer, so
+  /// what's shown is what the account actually holds.
   final List<Address> _local = [];
+
+  /// True once [hydrate] has successfully loaded the server list.
+  bool _hydrated = false;
+  bool get isHydrated => _hydrated;
 
   /// Real addresses derived from the user's past orders (GET /get-order).
   List<Address> _derived = const [];
@@ -535,8 +544,34 @@ class AddressController extends ChangeNotifier {
     _local.clear();
     _derived = const [];
     _defaultId = null;
+    _hydrated = false;
     notifyListeners();
   }
+
+  /// Loads the saved address book from the backend. Offline-safe: on failure
+  /// the current list is kept and the next hydrate tries again.
+  Future<void> hydrate() async {
+    final server = await _api.getAddresses();
+    if (server != null) _applyServer(server);
+  }
+
+  /// Replaces the saved list with the server's authoritative answer (every
+  /// address endpoint returns the full updated list).
+  void _applyServer(List<Address> server) {
+    _local
+      ..clear()
+      ..addAll(server);
+    for (final a in server) {
+      if (a.isDefault) _defaultId = a.id;
+    }
+    _hydrated = true;
+    notifyListeners();
+  }
+
+  /// Whether [id] is a real backend subdocument id (as opposed to a
+  /// this-session temp id or an order-derived read-only entry).
+  static bool _isServerId(String id) =>
+      id.isNotEmpty && !id.startsWith('loc-') && !id.startsWith('ord-');
 
   void add(Address address) {
     final id = address.id.isEmpty
@@ -548,6 +583,10 @@ class AddressController extends ChangeNotifier {
       _defaultId = id;
     }
     notifyListeners();
+    // Persist to the account; the server's answer replaces the temp entry.
+    unawaited(_api.addAddress(address).then((server) {
+      if (server != null) _applyServer(server);
+    }));
   }
 
   void update(Address address) {
@@ -555,17 +594,32 @@ class AddressController extends ChangeNotifier {
     if (i >= 0) _local[i] = address; // order-derived entries are read-only
     if (address.isDefault) _defaultId = address.id;
     notifyListeners();
+    if (_isServerId(address.id)) {
+      unawaited(_api.updateAddress(address).then((server) {
+        if (server != null) _applyServer(server);
+      }));
+    }
   }
 
   void remove(String id) {
     _local.removeWhere((a) => a.id == id);
     if (_defaultId == id) _defaultId = null;
     notifyListeners();
+    if (_isServerId(id)) {
+      unawaited(_api.deleteAddress(id).then((server) {
+        if (server != null) _applyServer(server);
+      }));
+    }
   }
 
   void setDefault(String id) {
     _defaultId = id;
     notifyListeners();
+    if (_isServerId(id)) {
+      unawaited(_api.setDefaultAddress(id).then((server) {
+        if (server != null) _applyServer(server);
+      }));
+    }
   }
 }
 

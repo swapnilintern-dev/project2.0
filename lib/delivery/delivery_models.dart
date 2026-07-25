@@ -276,23 +276,29 @@ class DeliveryController extends ChangeNotifier {
 
   String? _agentMobile;
   String? _agentName;
+
+  /// The agent's JWT from POST /agent-login — required by the doorstep
+  /// payment endpoints (they are role-gated to "delivery" server-side).
+  String? _token;
   final List<DeliveryTask> _tasks = [];
   bool _loading = false;
   bool _loaded = false;
   int _deliveredThisSession = 0;
 
   String? get agentMobile => _agentMobile;
+  String? get token => _token;
   List<DeliveryTask> get tasks => List.unmodifiable(_tasks);
   bool get isLoading => _loading;
   bool get isLoaded => _loaded;
   int get deliveredThisSession => _deliveredThisSession;
 
-  /// Records the signed-in agent (from the login screen). The backend's
-  /// agent-login returns only success, so the name is optional (we show the
-  /// mobile when it's unknown).
-  void setAgent({required String mobile, String? name}) {
+  /// Records the signed-in agent (from the login screen). Name is optional
+  /// (we show the mobile when it's unknown); the token authenticates the
+  /// doorstep payment calls.
+  void setAgent({required String mobile, String? name, String? token}) {
     _agentMobile = mobile;
     _agentName = (name != null && name.trim().isNotEmpty) ? name.trim() : null;
+    _token = (token != null && token.trim().isNotEmpty) ? token.trim() : null;
     notifyListeners();
   }
 

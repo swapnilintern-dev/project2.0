@@ -41,6 +41,10 @@ class OrderDetailsScreen extends StatefulWidget {
 
 class _OrderDetailsScreenState extends State<OrderDetailsScreen>
     with LiveRefreshMixin {
+  /// Backs the pull-to-refresh gesture. The order also auto-syncs via
+  /// [LiveRefreshMixin], so the timeline stays live with no manual action.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -81,6 +85,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen>
             style: TextStyle(fontWeight: FontWeight.w800)),
       ),
       body: RefreshIndicator(
+        key: _refreshKey,
         color: AppColors.primary,
         onRefresh: OrdersController.instance.refresh,
         child: ListenableBuilder(

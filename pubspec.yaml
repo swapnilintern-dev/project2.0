@@ -3,7 +3,6 @@ description: "MediCaPlus — B2B medicine ordering & delivery platform (customer
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
-
 # The following defines the version and build number for your application.
 # A version number is three numbers separated by dots, like 1.2.43
 # followed by an optional build number separated by a +.
@@ -36,7 +35,15 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   # Camera / gallery image selection for document uploads (Android + iOS).
+  # Also used for multi-image + video picking on the product media screen.
   image_picker: ^1.0.7
+
+  # Promotional-video playback (product details) — Android + iOS.
+  video_player: ^2.9.2
+
+  # Video compression, thumbnail generation and media info (duration / size)
+  # for the product promotional video (Android + iOS).
+  video_compress: ^3.1.2
 
   # HTTP client + MediaType (Content-Type) for multipart uploads to the API.
   http: ^1.6.0

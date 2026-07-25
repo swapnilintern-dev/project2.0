@@ -11,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_widgets.dart';
+import '../theme/video_player_view.dart';
 import 'catalog.dart';
 import 'customer_api.dart';
 import 'customer_controllers.dart';
@@ -30,6 +31,10 @@ class ProductDetailsScreen extends StatefulWidget {
 class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
   int _qty = 1;
   bool _adding = false;
+
+  // Media carousel (images + optional video slide).
+  final PageController _mediaController = PageController();
+  int _mediaPage = 0;
 
   // --- inline search (the top search bar filters the catalogue live) ---
   final CustomerApi _api = CustomerApi();
@@ -54,6 +59,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     _searchFocus.removeListener(_onFocusChanged);
     _searchFocus.dispose();
     _searchCtrl.dispose();
+    _mediaController.dispose();
     super.dispose();
   }
 
@@ -297,22 +303,129 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     );
   }
 
-  /// The product hero image, shown below the search app bar.
+  /// The product media, shown below the search app bar: a swipeable carousel of
+  /// every image plus (when present) a final "video" slide. A page indicator
+  /// tracks position; images pinch-to-zoom; the video slide opens the player.
   Widget _buildImage() {
-    return Container(
-      height: 280,
-      width: double.infinity,
-      color: AppColors.lighterGreen,
-      child: Hero(
-        tag: 'product-${_p.id}',
-        child: Center(
-          child: AppNetworkImage(
-            url: _p.imageUrl,
-            fit: BoxFit.contain,
-            fallback: Icon(_p.icon, size: 120, color: AppColors.primary),
+    final images = _p.imageUrls.isNotEmpty
+        ? _p.imageUrls
+        : (_p.imageUrl != null ? [_p.imageUrl!] : const <String>[]);
+    final slideCount = images.length + (_p.hasVideo ? 1 : 0);
+
+    // No media at all → the icon fallback (unchanged behaviour).
+    if (slideCount == 0) {
+      return Container(
+        height: 280,
+        width: double.infinity,
+        color: AppColors.lighterGreen,
+        child: Hero(
+          tag: 'product-${_p.id}',
+          child: Center(
+            child: Icon(_p.icon, size: 120, color: AppColors.primary),
           ),
         ),
+      );
+    }
+
+    return Container(
+      color: AppColors.lighterGreen,
+      child: Column(
+        children: [
+          SizedBox(
+            height: 280,
+            child: PageView.builder(
+              controller: _mediaController,
+              itemCount: slideCount,
+              onPageChanged: (i) => setState(() => _mediaPage = i),
+              itemBuilder: (context, i) {
+                final isVideoSlide = _p.hasVideo && i == images.length;
+                if (isVideoSlide) return _videoSlide();
+                return _imageSlide(images[i], isFirst: i == 0);
+              },
+            ),
+          ),
+          if (slideCount > 1) ...[
+            const SizedBox(height: 10),
+            _pageDots(slideCount),
+            const SizedBox(height: 8),
+          ],
+        ],
       ),
+    );
+  }
+
+  Widget _imageSlide(String url, {required bool isFirst}) {
+    final image = InteractiveViewer(
+      minScale: 1,
+      maxScale: 4,
+      child: Center(
+        child: AppNetworkImage(
+          url: url,
+          fit: BoxFit.contain,
+          fallback: Icon(_p.icon, size: 120, color: AppColors.primary),
+        ),
+      ),
+    );
+    // Keep the shared-element hero on the primary image only.
+    return isFirst ? Hero(tag: 'product-${_p.id}', child: image) : image;
+  }
+
+  Widget _videoSlide() {
+    return GestureDetector(
+      onTap: () => Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => VideoPlayerScreen(
+          networkUrl: _p.videoUrl,
+          title: _p.title,
+        ),
+      )),
+      child: Container(
+        color: Colors.black,
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.15),
+                shape: BoxShape.circle,
+              ),
+              padding: const EdgeInsets.all(16),
+              child: const Icon(Icons.play_arrow, color: Colors.white, size: 48),
+            ),
+            const SizedBox(height: 12),
+            const Text('Watch product video',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _pageDots(int count) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(count, (i) {
+        final active = i == _mediaPage;
+        final isVideo = _p.hasVideo && i == count - 1;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          margin: const EdgeInsets.symmetric(horizontal: 3),
+          width: active ? 20 : 8,
+          height: 8,
+          decoration: BoxDecoration(
+            color: active
+                ? AppColors.primary
+                : AppColors.primary.withValues(alpha: 0.3),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: isVideo && !active
+              ? const Icon(Icons.play_arrow, size: 7, color: Colors.white)
+              : null,
+        );
+      }),
     );
   }
 

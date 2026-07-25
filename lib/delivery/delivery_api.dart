@@ -114,6 +114,69 @@ class DeliveryApi {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // DOORSTEP PAYMENT — server-minted Razorpay payment link + server-verified
+  // paid state. The agent's phone never composes a payment string and never
+  // asserts "paid": both come from the backend (rolePaymentController.js).
+  // ---------------------------------------------------------------------------
+
+  /// Asks the server for the order's Razorpay payment link (creating one if
+  /// needed) — POST /vsArogya/delivery/payment-link/:id. Returns
+  /// `(link, alreadyPaid, error)`; `link` is null when the order is already
+  /// paid or on failure.
+  Future<(String?, bool, String?)> createDoorstepPaymentLink(
+    String orderId, {
+    required String? token,
+  }) async {
+    final url = '$baseUrl/vsArogya/delivery/payment-link/$orderId';
+    try {
+      debugPrint('[Delivery] POST $url');
+      final res = await _client
+          .post(Uri.parse(url), headers: _authHeaders(token))
+          .timeout(_timeout);
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      if (res.statusCode < 200 ||
+          res.statusCode >= 300 ||
+          body['success'] != true) {
+        return (
+          null,
+          false,
+          (body['message'] ?? 'Could not create the payment link').toString()
+        );
+      }
+      return (body['paymentLink']?.toString(), body['paid'] == true, null);
+    } catch (e) {
+      debugPrint('[Delivery] payment-link failed: $e');
+      return (null, false, 'Could not reach the server. Check your connection.');
+    }
+  }
+
+  /// Whether the server (via Razorpay) has confirmed the order as paid —
+  /// GET /vsArogya/delivery/payment-status/:id. Returns null on failure so the
+  /// caller keeps polling instead of treating an outage as "unpaid".
+  Future<bool?> doorstepPaymentPaid(
+    String orderId, {
+    required String? token,
+  }) async {
+    final url = '$baseUrl/vsArogya/delivery/payment-status/$orderId';
+    try {
+      final res = await _client
+          .get(Uri.parse(url), headers: _authHeaders(token))
+          .timeout(_timeout);
+      if (res.statusCode < 200 || res.statusCode >= 300) return null;
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      if (body['success'] != true) return null;
+      return body['paid'] == true;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Map<String, String> _authHeaders(String? token) => {
+        'Content-Type': 'application/json',
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      };
+
   /// Shipped -> Out for Delivery (agent accepts / picks up the order).
   Future<bool> pickUp(String orderId) =>
       _put('/vsArogya/outof-delivery/$orderId');

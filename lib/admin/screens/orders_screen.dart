@@ -16,6 +16,7 @@
 import 'package:flutter/material.dart';
 
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../../services/live_refresh.dart';
 import '../../marketing/invoice_screen.dart' show StaffInvoiceScreen;
 import '../admin_api.dart';
 import '../admin_common.dart';
@@ -28,7 +29,8 @@ class AdminOrdersScreen extends StatefulWidget {
   State<AdminOrdersScreen> createState() => _AdminOrdersScreenState();
 }
 
-class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
+class _AdminOrdersScreenState extends State<AdminOrdersScreen>
+    with LiveRefreshMixin {
   final AdminApi _api = AdminApi();
 
   // All orders are fetched live from the backend — no dummy/seed data.
@@ -50,8 +52,19 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
   @override
   void initState() {
     super.initState();
-    _loadOrders();
+    // Load on open, then keep the marketplace order monitor live (poll +
+    // app-resume) so new orders + status changes surface on their own.
+    startLiveRefresh();
   }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => _loadOrders();
 
   /// Loads every marketplace order from the backend (GET /all-orders).
   Future<void> _loadOrders() async {
@@ -193,12 +206,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : IconButton(
-                      icon: const Icon(Icons.refresh, size: 20),
-                      tooltip: 'Refresh',
-                      onPressed: _loadOrders,
-                      visualDensity: VisualDensity.compact,
-                    ),
+                  : null,
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),

@@ -11,6 +11,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../services/product_media.dart';
+
 /// A purchasable medicine / healthcare product.
 @immutable
 class Product {
@@ -23,6 +25,8 @@ class Product {
     this.mrp,
     required this.category,
     this.imageUrl,
+    this.imageUrls = const [],
+    this.videoUrl,
     this.icon = Icons.medication_outlined,
     this.rating = 4.5,
     this.reviewCount = 0,
@@ -39,7 +43,17 @@ class Product {
   final double price;
   final double? mrp;
   final String category;
+
+  /// The primary image URL (first image), or null. Kept for the many call-sites
+  /// that show a single thumbnail.
   final String? imageUrl;
+
+  /// Every product image URL, in display order (drives the details carousel).
+  final List<String> imageUrls;
+
+  /// The promotional video URL, or null when the product has none.
+  final String? videoUrl;
+
   final IconData icon;
   final double rating;
   final int reviewCount;
@@ -47,6 +61,8 @@ class Product {
   final int stockCount;
   final String? badge;
   final String packInfo;
+
+  bool get hasVideo => videoUrl != null && videoUrl!.isNotEmpty;
 
   /// Percentage discount versus MRP (0 when there is no MRP).
   int get discountPercent {
@@ -56,15 +72,17 @@ class Product {
   }
 
   factory Product.fromJson(Map<String, dynamic> json) {
-    // Backend image is an array of { url, publicId }.
-    String? image;
-    final raw = json['image'];
-    if (raw is List && raw.isNotEmpty) {
-      final first = raw.first;
-      if (first is Map && first['url'] is String) image = first['url'] as String;
-    } else if (raw is String) {
-      image = raw;
-    }
+    // Backend `image` is an ordered array of { url, publicId }; `video` is an
+    // optional { url, publicId }. Tolerates a bare string / list of strings and
+    // a cached `imageUrls` list (from toJson round-trips) — prefer the full
+    // cached list over the scalar `image` so nothing is dropped.
+    final cachedList = json['imageUrls'];
+    final rawImages = (cachedList is List && cachedList.isNotEmpty)
+        ? cachedList
+        : json['image'];
+    final images = ProductMedia.parseImages(rawImages);
+    final imageUrls = images.map((m) => m.url).toList();
+    final video = ProductMedia.parseVideo(json['video'] ?? json['videoUrl']);
     return Product(
       id: (json['_id'] ?? json['id'] ?? '').toString(),
       title: (json['title'] ?? '').toString(),
@@ -73,7 +91,9 @@ class Product {
       price: _toDouble(json['price']),
       mrp: json['mrp'] == null ? null : _toDouble(json['mrp']),
       category: _normalizeCategory(json['category']),
-      imageUrl: image,
+      imageUrl: imageUrls.isNotEmpty ? imageUrls.first : null,
+      imageUrls: imageUrls,
+      videoUrl: video?.url,
       rating: json['rating'] == null ? 4.5 : _toDouble(json['rating']),
       reviewCount: _toInt(json['reviewCount']),
       // Backend sends `stock` (number). Derive availability from it so the
@@ -98,6 +118,8 @@ class Product {
         'mrp': mrp,
         'category': category,
         'image': imageUrl,
+        'imageUrls': imageUrls,
+        'videoUrl': videoUrl,
         'rating': rating,
         'reviewCount': reviewCount,
         'inStock': inStock,
@@ -115,6 +137,8 @@ class Product {
     double? mrp,
     String? category,
     String? imageUrl,
+    List<String>? imageUrls,
+    String? videoUrl,
     IconData? icon,
     double? rating,
     int? reviewCount,
@@ -132,6 +156,8 @@ class Product {
       mrp: mrp ?? this.mrp,
       category: category ?? this.category,
       imageUrl: imageUrl ?? this.imageUrl,
+      imageUrls: imageUrls ?? this.imageUrls,
+      videoUrl: videoUrl ?? this.videoUrl,
       icon: icon ?? this.icon,
       rating: rating ?? this.rating,
       reviewCount: reviewCount ?? this.reviewCount,
@@ -225,6 +251,27 @@ class Category {
   final IconData icon;
   final Color color;
 }
+
+/// The app's canonical category taxonomy. Backend products carry a free-form
+/// `category` string which [_normalizeCategory] maps onto these three ids, so
+/// the chips here always line up with what the server sends.
+const List<Category> kCategories = [
+  Category(
+      id: 'injections',
+      name: 'Lifesaving Injections',
+      icon: Icons.vaccines,
+      color: Color(0xFF3B82F6)),
+  Category(
+      id: 'vaccines',
+      name: 'Vaccines',
+      icon: Icons.health_and_safety,
+      color: Color(0xFF4CAF82)),
+  Category(
+      id: 'medicine',
+      name: 'Medicine',
+      icon: Icons.medication,
+      color: Color(0xFF8B5CF6)),
+];
 
 /// One line in the cart: a [Product] plus a quantity.
 @immutable

@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../services/live_refresh.dart';
 import 'customer_controllers.dart';
 import 'customer_widgets.dart';
 import 'product_card.dart';
@@ -20,14 +21,28 @@ class SavedItemsScreen extends StatefulWidget {
   State<SavedItemsScreen> createState() => _SavedItemsScreenState();
 }
 
-class _SavedItemsScreenState extends State<SavedItemsScreen> {
+class _SavedItemsScreenState extends State<SavedItemsScreen>
+    with LiveRefreshMixin {
+  /// Backs the pull-to-refresh gesture. The saved list also auto-syncs via
+  /// [LiveRefreshMixin], so nothing needs a manual refresh.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
-    // Always pull the latest saved list from the backend on open, so a login
-    // on any device shows all previously-saved items here.
-    WishlistController.instance.refresh();
+    // Always pull the latest saved list from the backend on open, then keep it
+    // live so items saved on any device show up here on their own.
+    startLiveRefresh();
   }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => WishlistController.instance.refresh();
 
   @override
   Widget build(BuildContext context) {
@@ -41,6 +56,7 @@ class _SavedItemsScreenState extends State<SavedItemsScreen> {
             style: TextStyle(fontWeight: FontWeight.w800)),
       ),
       body: RefreshIndicator(
+        key: _refreshKey,
         color: AppColors.primary,
         onRefresh: WishlistController.instance.refresh,
         child: ListenableBuilder(

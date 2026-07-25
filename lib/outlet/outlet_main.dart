@@ -17,6 +17,8 @@
 import 'package:flutter/material.dart';
 
 import '../auth/session.dart' show logout;
+import '../services/live_refresh.dart';
+import 'outlet_api.dart';
 import 'outlet_cart.dart';
 import 'outlet_models.dart';
 import 'outlet_session.dart';
@@ -193,81 +195,274 @@ class _CartBar extends StatelessWidget {
   }
 }
 
-/// Minimal profile tab — signed-in identity + sign out. Fleshed out later if
-/// needed; for now it gives the shell a working logout entry point.
-class _OutletProfileTab extends StatelessWidget {
+/// Profile tab — the outlet's full account, fetched live from the backend
+/// (GET /vsArogya/outlet-profile/:id) so every field stays in sync with what
+/// marketing registered. A demo (non-live) session falls back to the identity
+/// captured at sign-in. Always ends with a sign-out action.
+class _OutletProfileTab extends StatefulWidget {
+  @override
+  State<_OutletProfileTab> createState() => _OutletProfileTabState();
+}
+
+class _OutletProfileTabState extends State<_OutletProfileTab>
+    with LiveRefreshMixin {
+  final _api = OutletApi();
+
+  OutletAccount? _profile;
+  bool _loading = false;
+  String? _error;
+
+  // The profile changes rarely — a slow poll keeps it fresh without noise.
+  @override
+  Duration get liveRefreshInterval => const Duration(seconds: 30);
+
+  @override
+  void initState() {
+    super.initState();
+    // First load, then keep it live (poll + app-resume); immediate: false avoids
+    // a duplicate fetch on open.
+    _load();
+    startLiveRefresh(immediate: false);
+  }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => _load();
+
+  Future<void> _load() async {
+    final session = OutletSession.instance;
+
+    // Demo login (no backend id) — show what we captured at sign-in.
+    if (!session.isLive) {
+      setState(() {
+        _profile = OutletAccount(
+          id: '',
+          outletName: session.outletName ?? 'Outlet',
+          ownerName: session.staffName ?? 'Outlet Staff',
+          city: session.district ?? '',
+        );
+        _loading = false;
+        _error = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final (profile, error) = await _api.fetchProfile(session.outletId!);
+    if (!mounted) return;
+
+    setState(() {
+      _loading = false;
+      if (error != null) {
+        _error = error;
+      } else {
+        _profile = profile;
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final session = OutletSession.instance;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const OutletHeader(title: 'Profile', subtitle: 'Outlet Staff account'),
+        OutletHeader(
+          title: 'Profile',
+          subtitle: 'Outlet Staff account',
+        ),
         Expanded(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(14, 8, 14, 24),
-            children: [
-              OutletCardOverlay(
-                child: Row(
-                  children: [
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: const BoxDecoration(
-                        color: OutletColors.badgeGreenBg,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.person_rounded,
-                          color: OutletColors.grad1),
+          child: RefreshIndicator(
+            onRefresh: _load,
+            color: OutletColors.success,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(14, 8, 14, 24),
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                _identityCard(),
+                if (_loading && _profile == null)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 40),
+                    child: Center(
+                      child: CircularProgressIndicator(
+                          color: OutletColors.success),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(session.staffName ?? 'Outlet Staff',
-                              style: OutletTextStyles.sectionTitle),
-                          const SizedBox(height: 2),
-                          Text(session.outletLabel,
-                              style: OutletTextStyles.prodSub),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: () => logout(context),
-                  borderRadius: BorderRadius.circular(14),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: OutletColors.white,
-                      borderRadius: BorderRadius.circular(14),
-                      boxShadow: OutletColors.cardShadow,
-                    ),
-                    child: Row(
-                      children: const [
-                        Icon(Icons.logout_rounded, color: OutletColors.danger),
-                        SizedBox(width: 12),
-                        Text('Sign out',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              color: OutletColors.danger,
-                            )),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
+                  )
+                else if (_error != null && _profile == null)
+                  _errorBox(_error!)
+                else if (_profile != null) ...[
+                  const SizedBox(height: 12),
+                  _detailsCard(_profile!),
+                ],
+                const SizedBox(height: 12),
+                _signOutButton(),
+              ],
+            ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _identityCard() {
+    final p = _profile;
+    final name = p?.ownerName.isNotEmpty == true
+        ? p!.ownerName
+        : (OutletSession.instance.staffName ?? 'Outlet Staff');
+    final subtitle = p != null && p.outletName.isNotEmpty
+        ? p.outletName
+        : OutletSession.instance.outletLabel;
+
+    return OutletCardOverlay(
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: const BoxDecoration(
+              color: OutletColors.badgeGreenBg,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.person_rounded, color: OutletColors.grad1),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name, style: OutletTextStyles.sectionTitle),
+                const SizedBox(height: 2),
+                Text(subtitle, style: OutletTextStyles.prodSub),
+              ],
+            ),
+          ),
+          if (p != null)
+            OutletBadge(
+              label: p.isActive ? 'Active' : 'Inactive',
+              bg: p.isActive
+                  ? OutletColors.badgeGreenBg
+                  : OutletColors.badgeRedBg,
+              fg: p.isActive ? OutletColors.success : OutletColors.danger,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _detailsCard(OutletAccount p) {
+    final rows = <Widget>[
+      if (p.outletName.isNotEmpty)
+        _infoRow(Icons.storefront_outlined, 'Outlet name', p.outletName),
+      if (p.ownerName.isNotEmpty)
+        _infoRow(Icons.person_outline, 'Owner', p.ownerName),
+      if (p.mobileNo.isNotEmpty)
+        _infoRow(Icons.call_outlined, 'Mobile', p.mobileNo),
+      if (p.email.isNotEmpty)
+        _infoRow(Icons.mail_outline, 'Email', p.email),
+      if (p.gstNumber.isNotEmpty)
+        _infoRow(Icons.receipt_long_outlined, 'GST number', p.gstNumber),
+      if (p.fullAddress.isNotEmpty)
+        _infoRow(Icons.location_on_outlined, 'Address', p.fullAddress),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      decoration: BoxDecoration(
+        color: OutletColors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: OutletColors.cardShadow,
+      ),
+      child: Column(
+        children: [
+          for (int i = 0; i < rows.length; i++) ...[
+            if (i > 0) const Divider(height: 1, color: OutletColors.border),
+            rows[i],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _infoRow(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: OutletColors.grad2),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: OutletTextStyles.prodSub),
+                const SizedBox(height: 2),
+                Text(value, style: OutletTextStyles.prodName),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _errorBox(String message) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 32, 4, 8),
+      child: Column(
+        children: [
+          const Icon(Icons.cloud_off_rounded,
+              color: OutletColors.textMuted, size: 34),
+          const SizedBox(height: 10),
+          Text(message,
+              textAlign: TextAlign.center,
+              style: OutletTextStyles.prodSub),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _signOutButton() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => logout(context),
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: OutletColors.white,
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: OutletColors.cardShadow,
+          ),
+          child: Row(
+            children: const [
+              Icon(Icons.logout_rounded, color: OutletColors.danger),
+              SizedBox(width: 12),
+              Text('Sign out',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: OutletColors.danger,
+                  )),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

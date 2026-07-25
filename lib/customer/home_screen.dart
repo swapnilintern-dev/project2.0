@@ -18,7 +18,6 @@ import '../services/live_refresh.dart';
 import 'catalog.dart';
 import 'customer_api.dart';
 import 'customer_controllers.dart';
-import 'customer_mock_data.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
 import 'product_card.dart';
@@ -37,6 +36,11 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with LiveRefreshMixin {
   final CustomerApi _api = CustomerApi();
+
+  /// Backs the pull-to-refresh gesture. The catalogue + banners also auto-sync
+  /// via [LiveRefreshMixin], so nothing needs a manual refresh.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
+
   List<Product> _products = [];
   List<PromoBanner> _banners = [];
   bool _loading = true;
@@ -110,6 +114,7 @@ class _HomeScreenState extends State<HomeScreen> with LiveRefreshMixin {
     return SafeArea(
       bottom: false,
       child: RefreshIndicator(
+        key: _refreshKey,
         color: AppColors.primary,
         onRefresh: _load,
         child: ListView(
@@ -240,6 +245,8 @@ class _HomeScreenState extends State<HomeScreen> with LiveRefreshMixin {
         child: Skeleton(height: 150, radius: 18),
       );
     }
+    // No published banners (or offline with nothing cached) — hide the strip.
+    if (_banners.isEmpty) return const SizedBox.shrink();
     return PromoCarousel(
       banners: _banners,
       onTap: (banner) {
@@ -253,7 +260,7 @@ class _HomeScreenState extends State<HomeScreen> with LiveRefreshMixin {
   }
 
   Widget _categories() {
-    final cats = MockData.categories;
+    final cats = kCategories;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

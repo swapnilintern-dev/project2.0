@@ -17,6 +17,8 @@ import '../outlet_enums.dart';
 import '../outlet_models.dart';
 import '../outlet_repository.dart';
 import '../outlet_theme.dart';
+import '../../services/live_refresh.dart';
+import 'outlet_invoice_screen.dart';
 import 'outlet_payment_screen.dart';
 
 class OutletOrderDetailScreen extends StatefulWidget {
@@ -29,10 +31,28 @@ class OutletOrderDetailScreen extends StatefulWidget {
       _OutletOrderDetailScreenState();
 }
 
-class _OutletOrderDetailScreenState extends State<OutletOrderDetailScreen> {
+class _OutletOrderDetailScreenState extends State<OutletOrderDetailScreen>
+    with LiveRefreshMixin {
   final _repo = OutletRepository();
   late OutletOrder _order = widget.order;
   bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Keep the order status live (poll + app-resume) so a payment/status change
+    // made elsewhere surfaces here on its own — no manual refresh.
+    startLiveRefresh(immediate: false);
+  }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => _refresh();
 
   Future<void> _refresh() async {
     try {
@@ -79,6 +99,18 @@ class _OutletOrderDetailScreenState extends State<OutletOrderDetailScreen> {
         foregroundColor: Colors.white,
         title: Text('Order ${o.id}'),
         elevation: 0,
+        actions: [
+          IconButton(
+            tooltip: 'View invoice',
+            icon: const Icon(Icons.receipt_long_rounded),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => OutletInvoiceScreen(
+                    orderId: o.id, buyer: o.customer.name),
+              ),
+            ),
+          ),
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: _refresh,
@@ -263,8 +295,73 @@ class _OutletOrderDetailScreenState extends State<OutletOrderDetailScreen> {
     );
   }
 
+  /// Status panel for an order the team fulfils. Shows the SERVER's own status
+  /// word rather than the outlet-vocabulary approximation, so staff read what
+  /// actually happened.
+  Widget _teamFulfilledNote(OutletOrder o) {
+    final label =
+        o.serverStatusLabel.isEmpty ? o.status.label : o.serverStatusLabel;
+    final done = o.status == OutletOrderStatus.delivered;
+    final stopped = o.status == OutletOrderStatus.cancelled;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: OutletColors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: OutletColors.cardShadow,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            stopped
+                ? Icons.cancel_outlined
+                : done
+                    ? Icons.check_circle_rounded
+                    : Icons.hourglass_bottom_rounded,
+            size: 20,
+            color: stopped
+                ? OutletColors.danger
+                : done
+                    ? OutletColors.success
+                    : OutletColors.textMuted,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Status: $label',
+                    style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                        color: OutletColors.textDark)),
+                const SizedBox(height: 3),
+                Text(
+                  stopped
+                      ? 'This order was cancelled.'
+                      : done
+                          ? 'Delivered to ${o.customer.name}.'
+                          : 'Placed for ${o.customer.name}. The team confirms, '
+                              'invoices and delivers it — nothing to do here.',
+                  style: const TextStyle(
+                      fontSize: 12, height: 1.35, color: OutletColors.textMuted),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _actions() {
     final o = _order;
+    // Placed for a vendor through the manual-order API: the team confirms,
+    // invoices and delivers it. "Collect payment" is impossible here
+    // (/create-payment 403s — the order belongs to the vendor, not us) and
+    // "mark handed over" isn't ours to do. Show what's happening instead.
+    if (o.teamFulfilled) return _teamFulfilledNote(o);
     if (o.isAwaitingPayment) {
       return _GradientButton(
         icon: Icons.qr_code_2_rounded,

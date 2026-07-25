@@ -11,6 +11,7 @@ import 'auth/session.dart' show homeForRole;
 import 'delivery/delivery_main.dart';
 import 'delivery/delivery_api.dart';
 import 'delivery/delivery_models.dart' show DeliveryController;
+import 'outlet/outlet_api.dart';
 import 'outlet/outlet_auth.dart';
 import 'outlet/outlet_main.dart';
 import 'outlet/outlet_session.dart';
@@ -79,15 +80,48 @@ Future<void> _onSignIn() async {
       final agentRes =
           await DeliveryApi().agentLogin(mobile, _passwordCtrl.text.trim());
       if (!mounted) return;
-      setState(() => _isSubmitting = false);
       if (agentRes['success'] == true) {
-        DeliveryController.instance.setAgent(mobile: mobile);
+        setState(() => _isSubmitting = false);
+        DeliveryController.instance.setAgent(
+          mobile: mobile,
+          name: agentRes['name']?.toString(),
+          token: agentRes['token']?.toString(),
+        );
         AuthService.phone = mobile;
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const DeliveryMain()),
         );
         return;
       }
+
+      // ...or an OUTLET — outlets are their own collection with their own
+      // login (POST /outlet-login), so try that before giving up. On success
+      // OutletApi has already populated OutletSession (incl. the outlet id
+      // every outlet-scoped call needs).
+      final (outlet, _) = await OutletApi().login(
+        mobileNo: mobile,
+        password: _passwordCtrl.text.trim(),
+      );
+      if (!mounted) return;
+      setState(() => _isSubmitting = false);
+
+      if (outlet != null) {
+        if (!outlet.isActive) {
+          OutletSession.instance.clear();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text(
+                    'This outlet is marked inactive. Please contact support.')),
+          );
+          return;
+        }
+        AuthService.phone = mobile;
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const OutletMain()),
+        );
+        return;
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(response['message'] ?? 'Login Failed')),
       );

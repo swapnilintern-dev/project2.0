@@ -57,6 +57,9 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen>
     with LiveRefreshMixin {
   final DeliveryApi _api = DeliveryApi();
 
+  /// Lets the app-bar refresh button trigger the same pull-to-refresh spinner.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
+
   List<DeliveredRecord> _all = [];
   bool _loaded = false;
   HistoryRange _range = HistoryRange.today;
@@ -110,6 +113,7 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen>
           _summaryCard(list.length),
           Expanded(
             child: RefreshIndicator(
+              key: _refreshKey,
               color: AppColors.primary,
               onRefresh: _load,
               child: (!_loaded && _all.isEmpty)

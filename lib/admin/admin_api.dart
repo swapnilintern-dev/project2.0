@@ -295,6 +295,37 @@ class AdminApi {
     }
   }
 
+  /// The master catalogue (GET /all-products) — the same list the customer
+  /// shop sells from — mapped into admin rows. Returns null on failure so the
+  /// screen can keep its current list / show an error state.
+  Future<List<AdminProduct>?> getAllProducts() async {
+    try {
+      final res = await _client
+          .get(Uri.parse('$baseUrl/vsArogya/all-products'), headers: _headers)
+          .timeout(_timeout);
+      if (res.statusCode < 200 || res.statusCode >= 300) return null;
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final list = (body['products'] as List?) ?? const [];
+      return list.whereType<Map<String, dynamic>>().map((j) {
+        final id = (j['_id'] ?? '').toString();
+        final stock = (j['quantity'] as num?)?.toInt() ?? 0;
+        return AdminProduct(
+          id: id,
+          name: (j['title'] ?? 'Product').toString(),
+          // No SKU field server-side — show the tail of the Mongo id so rows
+          // are still individually identifiable/searchable.
+          sku: id.length >= 6 ? id.substring(id.length - 6).toUpperCase() : id,
+          price: _numOf(j['price']),
+          stock: stock,
+          category: (j['category'] ?? '').toString(),
+          active: stock > 0,
+        );
+      }).toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Advances an order to [next] via the matching backend endpoint. Only the
   /// forward transitions the server supports are mapped. Returns true on ok.
   Future<bool> advanceOrder(String id, AdminOrderStatus next) async {
@@ -334,6 +365,7 @@ class AdminApi {
         brand: (p['brand'] ?? p['category'] ?? '').toString(),
         quantity: qty,
         price: _numOf(it['orderPrice'] ?? p['price']),
+        category: (p['category'] ?? '').toString(),
       ));
     }
     final addr =
@@ -354,6 +386,7 @@ class AdminApi {
       placedAt: DateTime.tryParse((j['createdAt'] ?? '').toString()),
       phone: (addr['phoneNo'] ?? user['mobile_no'] ?? '').toString(),
       address: address,
+      city: (addr['city'] ?? '').toString().trim(),
       paymentMethod: (j['paymentMethod'] ?? '').toString(),
     );
   }
@@ -504,6 +537,11 @@ class AdminApi {
       storePhotoUrl: docUrl('store_pic'),
       vendorType: (j['vendor_type'] ?? '').toString(),
       shopType: (j['shop_type'] ?? '').toString(),
+      // Absent on pre-existing documents → treated as admin-registered.
+      registrationSource:
+          (j['registrationSource'] ?? 'admin').toString().toLowerCase(),
+      createdAt:
+          j['createdAt'] is String ? DateTime.tryParse(j['createdAt']) : null,
       docs: [
         VendorDoc('Store Photo', hasDoc('store_pic'),
             url: docUrl('store_pic')),

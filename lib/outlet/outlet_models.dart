@@ -36,6 +36,13 @@ class OutletStockItem {
     this.category = '',
     this.outletName = '',
     this.district = '',
+    this.mrp = 0,
+    this.imageUrl = '',
+    this.expiry,
+    this.batch = '',
+    this.gstPercent = 0,
+    this.discountPercent = 0,
+    this.hsnCode = '',
   });
 
   final String id;
@@ -45,8 +52,46 @@ class OutletStockItem {
   final String packSize;
   final String category;
 
+  /// The selling price charged at billing (GST-inclusive, matching the invoice).
   final double price;
   final int qtyAvailable;
+
+  // --- Billing / POS display fields (populated from the server product; all
+  // optional so existing callers that don't set them keep working) ---
+
+  /// Printed maximum retail price. 0 when the product has none set.
+  final double mrp;
+
+  /// First product image URL, or '' when none.
+  final String imageUrl;
+
+  /// Batch expiry date, when the product carries one.
+  final DateTime? expiry;
+
+  /// Batch number, or '' when none.
+  final String batch;
+
+  /// GST slab % embedded in [price] (prices are GST-inclusive).
+  final double gstPercent;
+
+  /// Discount % off MRP, informational for the summary.
+  final double discountPercent;
+
+  /// HSN code, shown on the invoice.
+  final String hsnCode;
+
+  /// The saving vs MRP for one unit (0 when there is no higher MRP).
+  double get mrpSaving => mrp > price ? mrp - price : 0;
+
+  /// True when this batch expires within the next 90 days (or already has).
+  /// Mirrors the backend `isExpiringSoon` rule so the Outlet POS shows the same
+  /// red "Expiring Soon" alert the Marketing role sees. Computed from [expiry]
+  /// on the current date — no timer, always live.
+  bool get isExpiringSoon {
+    final e = expiry;
+    if (e == null) return false;
+    return e.difference(DateTime.now()).inDays <= 90;
+  }
 
   /// True for the staff's OWN outlet stock (actionable). False for district
   /// stock, which is READ-ONLY — no add-to-cart, no edit (locked rule #1).
@@ -72,6 +117,13 @@ class OutletStockItem {
       isOwnOutlet: json['isOwnOutlet'] as bool? ?? isOwnOutlet,
       outletName: (json['outletName'] ?? json['outlet'] ?? '').toString(),
       district: (json['district'] ?? '').toString(),
+      mrp: _toDouble(json['mrp']),
+      imageUrl: (json['imageUrl'] ?? json['image'] ?? '').toString(),
+      expiry: json['expiry'] == null ? null : _toDate(json['expiry']),
+      batch: (json['batch'] ?? json['batch_no'] ?? '').toString(),
+      gstPercent: _toDouble(json['gstPercent']),
+      discountPercent: _toDouble(json['discountPercent']),
+      hsnCode: (json['hsnCode'] ?? '').toString(),
     );
   }
 
@@ -85,6 +137,13 @@ class OutletStockItem {
         'isOwnOutlet': isOwnOutlet,
         'outletName': outletName,
         'district': district,
+        'mrp': mrp,
+        'imageUrl': imageUrl,
+        if (expiry != null) 'expiry': expiry!.toIso8601String(),
+        'batch': batch,
+        'gstPercent': gstPercent,
+        'discountPercent': discountPercent,
+        'hsnCode': hsnCode,
       };
 
   OutletStockItem copyWith({int? qtyAvailable}) => OutletStockItem(
@@ -97,6 +156,13 @@ class OutletStockItem {
         isOwnOutlet: isOwnOutlet,
         outletName: outletName,
         district: district,
+        mrp: mrp,
+        imageUrl: imageUrl,
+        expiry: expiry,
+        batch: batch,
+        gstPercent: gstPercent,
+        discountPercent: discountPercent,
+        hsnCode: hsnCode,
       );
 }
 
@@ -349,6 +415,8 @@ class OutletOrder {
     required this.createdAt,
     this.idempotencyKey = '',
     this.paidAt,
+    this.teamFulfilled = false,
+    this.serverStatusLabel = '',
   });
 
   final String id;
@@ -366,6 +434,19 @@ class OutletOrder {
 
   /// When the server confirmed payment. Null until [status] reaches paid.
   final DateTime? paidAt;
+
+  /// True for orders that live in the VENDOR pipeline — placed by this outlet
+  /// through the manual-order API, then confirmed, invoiced and delivered by
+  /// the team. The outlet only watches these: it must not be offered "collect
+  /// payment" or "mark handed over", because neither is its job and neither is
+  /// possible against that API.
+  final bool teamFulfilled;
+
+  /// The server's own status string ("Pending", "Confirm Order", "Shipped", …)
+  /// for a [teamFulfilled] order. [status] is the nearest outlet-vocabulary
+  /// equivalent for colouring and ordering; this is what actually happened, so
+  /// it is what the detail screen shows the user.
+  final String serverStatusLabel;
 
   int get itemCount => lines.fold(0, (sum, l) => sum + l.qty);
 
@@ -422,6 +503,8 @@ class OutletOrder {
         createdAt: createdAt,
         idempotencyKey: idempotencyKey,
         paidAt: paidAt ?? this.paidAt,
+        teamFulfilled: teamFulfilled,
+        serverStatusLabel: serverStatusLabel,
       );
 }
 

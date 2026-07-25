@@ -18,8 +18,23 @@ class OutletSession {
   String? outletName;
   String? district;
 
+  /// The signed-in outlet's `_id` from the backend. Every outlet-scoped call
+  /// needs it (GET /outlet-products/:id), so a real session is only usable once
+  /// this is set. Null for the local demo login.
+  String? outletId;
+
+  /// Session auth captured from POST /outlet-login. [token] is the reliable
+  /// path (the server's cookie is httpOnly + sameSite:strict, so it never comes
+  /// back on web); [cookie] is kept for parity with AuthService.
+  String? token;
+  String? cookie;
+
   /// True once an outlet staff member has signed in this session.
   bool get isSignedIn => (outletName ?? '').isNotEmpty;
+
+  /// True when this session is backed by a real backend login (not the local
+  /// demo hook) — i.e. outlet-scoped API calls can actually be made.
+  bool get isLive => (outletId ?? '').isNotEmpty;
 
   /// A friendly label for the header ("Ballari Outlet · Ballari").
   String get outletLabel {
@@ -28,15 +43,28 @@ class OutletSession {
     return d.isEmpty ? o : '$o · $d';
   }
 
-  void signIn({String? name, String? outlet, String? district}) {
+  void signIn({
+    String? name,
+    String? outlet,
+    String? district,
+    String? outletId,
+    String? token,
+    String? cookie,
+  }) {
     staffName = name;
     outletName = outlet ?? 'Ballari Outlet';
     this.district = district ?? 'Ballari';
+    this.outletId = outletId;
+    this.token = token;
+    this.cookie = cookie;
   }
 
   void clear() {
     staffName = null;
     outletName = null;
     district = null;
+    outletId = null;
+    token = null;
+    cookie = null;
   }
 }

@@ -21,6 +21,9 @@ class _TasksDashboardScreenState extends State<TasksDashboardScreen>
   /// Id of the task whose Pick Up call is in flight (so only its button spins).
   String? _busyId;
 
+  /// Lets the header refresh button trigger the same pull-to-refresh spinner.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
+
   DeliveryController get _ctrl => DeliveryController.instance;
 
   @override
@@ -82,6 +85,7 @@ class _TasksDashboardScreenState extends State<TasksDashboardScreen>
         final tasks = _ctrl.tasks;
 
         return RefreshIndicator(
+          key: _refreshKey,
           color: AppColors.primary,
           onRefresh: _ctrl.refresh,
           child: CustomScrollView(

@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../../services/live_refresh.dart';
 import '../admin_api.dart';
 import '../admin_common.dart';
 import '../admin_models.dart';
@@ -29,15 +30,52 @@ class DeliveryManagementScreen extends StatefulWidget {
       _DeliveryManagementScreenState();
 }
 
-class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
+class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
+    with LiveRefreshMixin {
   final _name = TextEditingController();
   final _mobile = TextEditingController();
   final _email = TextEditingController();
 
   bool _saving = false;
 
+  /// The real delivery agents on the platform (users with role "delivery"),
+  /// fetched live for the stat strip. Null until the first load answers.
+  List<PlatformUser>? _agents;
+
+  @override
+  void initState() {
+    super.initState();
+    // Load on open, then keep the agent stat strip live (poll + app-resume).
+    startLiveRefresh();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => _loadAgents();
+
+  Future<void> _loadAgents() async {
+    final users = await AdminApi().getAllPlatformUsers();
+    if (!mounted || users == null) return;
+    setState(() {
+      _agents = users.where((u) => u.kind == UserKind.agent).toList();
+    });
+  }
+
+  /// Distinct cities the agents cover (from their profile city rows).
+  int get _citiesCovered {
+    final cities = <String>{};
+    for (final a in _agents ?? const <PlatformUser>[]) {
+      for (final i in a.info) {
+        if (i.label == 'City' && i.value.trim().isNotEmpty) {
+          cities.add(i.value.trim().toLowerCase());
+        }
+      }
+    }
+    return cities.length;
+  }
+
   @override
   void dispose() {
+    stopLiveRefresh();
     _name.dispose();
     _mobile.dispose();
     _email.dispose();
@@ -178,25 +216,20 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
         physics: adminScroll,
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
         children: [
+          // Live counts from the backend user directory (role "delivery").
           Row(
             children: [
               Expanded(
                   child: MiniStat(
-                      value: '$kAgentsTotal',
+                      value: _agents == null ? '—' : '${_agents!.length}',
                       label: 'Agents',
                       color: AdminColors.purple)),
               const SizedBox(width: 10),
               Expanded(
                   child: MiniStat(
-                      value: '$kAgentsOnDuty',
-                      label: 'On Duty',
+                      value: _agents == null ? '—' : '$_citiesCovered',
+                      label: 'Cities Covered',
                       color: AppColors.primary)),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: MiniStat(
-                      value: '$kAgentsPending',
-                      label: 'Pending',
-                      color: AdminColors.orange)),
             ],
           ),
           const SizedBox(height: 24),

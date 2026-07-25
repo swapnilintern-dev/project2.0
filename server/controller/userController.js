@@ -35,12 +35,12 @@ export const registerVendor = async (req, res) => {
     const drug_lic_copy = req.files?.drug_lic_copy?.[0];
 
 
-    if (!store_name || !mobile_no || !email || !vendor_type || !shop_type || !store_name || 
-        
-       !contact_person_name || !mobile_no || 
-       !email || !full_address || !city || !state || !pin_code 
-       || !gst_status ||!drug_lic_ex_date || !drug_lic_no 
-       
+    if (!store_name || !mobile_no || !email || !vendor_type || !shop_type || !store_name ||
+
+      !contact_person_name || !mobile_no ||
+      !email || !full_address || !city || !state || !pin_code
+      || !gst_status || !drug_lic_ex_date || !drug_lic_no
+
     ) {
       return res.status(400).json({
         success: false,
@@ -169,44 +169,44 @@ export const registerVendor = async (req, res) => {
 
       `
     });
-    
-  //   console.log(" resend api is " , process.env.RESEND_API_KEY ) ;
 
-  //   const resend = new Resend(process.env.RESEND_API_KEY);
+    //   console.log(" resend api is " , process.env.RESEND_API_KEY ) ;
+
+    //   const resend = new Resend(process.env.RESEND_API_KEY);
 
 
-  //   const { data, error } = await resend.emails.send({
-  //   from: process.env.RESEND_FROM_EMAIL ,
-  //     to: [email],
-  //     subject: "Vendor Registration",
-  //     html: `
-  //   <h1>Hi ${contact_person_name}</h1>
+    //   const { data, error } = await resend.emails.send({
+    //   from: process.env.RESEND_FROM_EMAIL ,
+    //     to: [email],
+    //     subject: "Vendor Registration",
+    //     html: `
+    //   <h1>Hi ${contact_person_name}</h1>
 
-  //   <p>🎉 Your vendor registration has been successfully received.</p>
+    //   <p>🎉 Your vendor registration has been successfully received.</p>
 
-  //   <p>Your application is currently under review.</p>
+    //   <p>Your application is currently under review.</p>
 
-  //   <p>
-  //     We'll notify you via email once the verification process
-  //     is complete.
-  //   </p>
+    //   <p>
+    //     We'll notify you via email once the verification process
+    //     is complete.
+    //   </p>
 
-  //   <p>
-  //     Thank you for being part of our growing network 🚀🎉
-  //   </p>
+    //   <p>
+    //     Thank you for being part of our growing network 🚀🎉
+    //   </p>
 
-  //   <p>
-  //     Warm Regards,<br>
-  //     Team: VS Arogya
-  //   </p>
-  // `
-  //   });
+    //   <p>
+    //     Warm Regards,<br>
+    //     Team: VS Arogya
+    //   </p>
+    // `
+    //   });
 
-  //   if (error) {
-  //     console.error("Resend email error:", error);
-  //   } else {
-  //     console.log("Email sent successfully:", data);
-  //   }
+    //   if (error) {
+    //     console.error("Resend email error:", error);
+    //   } else {
+    //     console.log("Email sent successfully:", data);
+    //   }
 
 
     console.log("email info is :", info);
@@ -274,7 +274,7 @@ export const login = async (req, res) => {
 
     // Buyers/vendors can only log in once an admin approves them. Staff
     // accounts (admin / marketing / delivery) skip this approval gate.
-    const staffRoles = ["admin", "marketing", "delivery"];
+    const staffRoles = ["admin", "marketing", "delivery", "agent", "outlet"];
     if (!staffRoles.includes((user.role || "").toLowerCase()) &&
       user.approvalStatus !== "Approved") {
       const msg = user.approvalStatus === "Rejected"
@@ -283,10 +283,15 @@ export const login = async (req, res) => {
       return res.status(403).json({ success: false, message: msg });
     }
 
-    // token genrate
+    // token genrate — carry the user's REAL role (admin/marketing/delivery/
+    // agent/buyer), not a hardcoded "vendor", so role-guarded routes can trust
+    // the token.
     const token = jwt.sign(
 
-      { userId: user._id },
+      {
+        id: user._id,
+        role: user.role || "vendor"
+      },
       process.env.SECRET_KEY,
       { expiresIn: "1d" }
     );
@@ -306,13 +311,23 @@ export const login = async (req, res) => {
         message: "Login success ",
         success: true,
         role: user.role,
-        token
+        token,
+        // Additive fields (ignored by roles that don't need them). The Area
+        // Agent role scopes its pincode-wise order/vendor calls on these.
+        id: user._id,
+        pincode: user.pin_code,
+        name: user.contact_person_name || user.store_name
       });
 
   }
   catch (er) {
 
     console.log(er, "error is :");
+    return res.status(500)
+      .json({
+        message: "Internal server error ",
+        success: false
+      });
   }
 };
 
@@ -379,3 +394,148 @@ export const deleteAccount = async (req, res) => {
       });
   }
 }
+
+
+// -----------------------------------------------------------------------------
+// ADDRESS BOOK (customer app) — the buyer's saved delivery addresses, stored on
+// their own Vendor document. All four are scoped to the token's user; nobody
+// can read or edit another account's addresses.
+//   GET    /vsArogya/addresses            → { success, addresses }
+//   POST   /vsArogya/addresses            → create   (body = address fields)
+//   PUT    /vsArogya/addresses/:addressId → update / set default
+//   DELETE /vsArogya/addresses/:addressId → remove
+// -----------------------------------------------------------------------------
+
+// Keeps at most one default: marking one address default unmarks the rest.
+const applyDefault = (vendor, defaultId) => {
+  vendor.addresses.forEach((a) => {
+    a.isDefault = a._id.toString() === defaultId;
+  });
+};
+
+export const getAddresses = async (req, res) => {
+  try {
+    const vendor = await Vendor.findById(req.id).select("addresses");
+    if (!vendor) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    return res.status(200).json({ success: true, addresses: vendor.addresses });
+  } catch (er) {
+    console.log("getAddresses error:", er);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+export const addAddress = async (req, res) => {
+  try {
+    const { label, fullName, phone, line1, city, state, pincode, isDefault } = req.body;
+    if (!line1 || !String(line1).trim()) {
+      return res.status(400).json({ success: false, message: "Address line is required" });
+    }
+
+    const vendor = await Vendor.findById(req.id);
+    if (!vendor) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    vendor.addresses.push({
+      label: label || "Home",
+      fullName: fullName || "",
+      phone: phone || "",
+      line1: String(line1).trim(),
+      city: city || "",
+      state: state || "",
+      pincode: pincode || "",
+      isDefault: false
+    });
+
+    const created = vendor.addresses[vendor.addresses.length - 1];
+    // First address (or an explicit request) becomes the default.
+    if (isDefault === true || vendor.addresses.length === 1) {
+      applyDefault(vendor, created._id.toString());
+    }
+    await vendor.save();
+
+    return res.status(201).json({
+      success: true,
+      message: "Address saved",
+      address: created,
+      addresses: vendor.addresses
+    });
+  } catch (er) {
+    console.log("addAddress error:", er);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+export const updateAddress = async (req, res) => {
+  try {
+    const vendor = await Vendor.findById(req.id);
+    if (!vendor) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const addr = vendor.addresses.id(req.params.addressId);
+    if (!addr) {
+      return res.status(404).json({ success: false, message: "Address not found" });
+    }
+
+    const { label, fullName, phone, line1, city, state, pincode, isDefault } = req.body;
+    if (line1 !== undefined) {
+      if (!String(line1).trim()) {
+        return res.status(400).json({ success: false, message: "Address line is required" });
+      }
+      addr.line1 = String(line1).trim();
+    }
+    if (label !== undefined) addr.label = label;
+    if (fullName !== undefined) addr.fullName = fullName;
+    if (phone !== undefined) addr.phone = phone;
+    if (city !== undefined) addr.city = city;
+    if (state !== undefined) addr.state = state;
+    if (pincode !== undefined) addr.pincode = pincode;
+    if (isDefault === true) applyDefault(vendor, addr._id.toString());
+
+    await vendor.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Address updated",
+      address: addr,
+      addresses: vendor.addresses
+    });
+  } catch (er) {
+    console.log("updateAddress error:", er);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+export const deleteAddress = async (req, res) => {
+  try {
+    const vendor = await Vendor.findById(req.id);
+    if (!vendor) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const addr = vendor.addresses.id(req.params.addressId);
+    if (!addr) {
+      return res.status(404).json({ success: false, message: "Address not found" });
+    }
+
+    const wasDefault = addr.isDefault === true;
+    addr.deleteOne();
+    // Removing the default promotes the first remaining address.
+    if (wasDefault && vendor.addresses.length > 0) {
+      applyDefault(vendor, vendor.addresses[0]._id.toString());
+    }
+    await vendor.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Address removed",
+      addresses: vendor.addresses
+    });
+  } catch (er) {
+    console.log("deleteAddress error:", er);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};

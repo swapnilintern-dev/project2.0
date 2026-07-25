@@ -28,9 +28,10 @@ class _AddressesScreenState extends State<AddressesScreen> {
   @override
   void initState() {
     super.initState();
-    // The address book is built from the user's REAL past-order addresses, so
-    // make sure the orders are loaded (this feeds AddressController via
-    // syncFromOrders). Session-added addresses show immediately regardless.
+    // The saved address book lives on the user's backend account — load it.
+    AddressController.instance.hydrate();
+    // Past-order addresses supplement the saved list (via syncFromOrders), so
+    // make sure orders are loaded too.
     if (!OrdersController.instance.isLoaded) {
       OrdersController.instance.refresh();
     }

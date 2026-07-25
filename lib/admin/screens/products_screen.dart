@@ -1,14 +1,18 @@
 // =============================================================================
 // MediCaPlus — Admin · Products (pushed from Overview)
 //
-// The master catalogue. A SKU stat strip (total / active / low / out), search,
-// and product rows with price, a colour-coded stock label and an availability
-// toggle. "Add" opens the Add New Product form.
+// The master catalogue, fetched LIVE from the backend (GET /all-products —
+// the same list the customer shop sells from). A SKU stat strip (total /
+// active / low / out) computed from that list, search, and product rows with
+// price and a colour-coded stock label. "Add" opens the Add New Product form.
+// Pull-to-refresh reloads the list.
 // =============================================================================
 
 import 'package:flutter/material.dart';
 
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../../services/live_refresh.dart';
+import '../admin_api.dart';
 import '../admin_common.dart';
 import '../admin_main.dart';
 import '../admin_models.dart';
@@ -21,10 +25,40 @@ class AdminProductsScreen extends StatefulWidget {
   State<AdminProductsScreen> createState() => _AdminProductsScreenState();
 }
 
-class _AdminProductsScreenState extends State<AdminProductsScreen> {
-  // TODO: GET /api/admin/products
-  final List<AdminProduct> _products = kProducts;
+class _AdminProductsScreenState extends State<AdminProductsScreen>
+    with LiveRefreshMixin {
+  final AdminApi _api = AdminApi();
+
+  List<AdminProduct> _products = const [];
+  bool _loading = true;
   String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    // Load on open, then keep the master catalogue live (poll + app-resume) so
+    // stock/price changes from any role appear on their own.
+    startLiveRefresh();
+  }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => _load();
+
+  Future<void> _load() async {
+    final fetched = await _api.getAllProducts();
+    if (!mounted) return;
+    setState(() {
+      // Offline-safe: keep the current list when the fetch fails.
+      if (fetched != null) _products = fetched;
+      _loading = false;
+    });
+  }
 
   List<AdminProduct> get _filtered {
     if (_query.isEmpty) return _products;
@@ -35,6 +69,10 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
             p.sku.toLowerCase().contains(q))
         .toList();
   }
+
+  int get _lowCount =>
+      _products.where((p) => p.stock > 0 && p.stock <= 20).length;
+  int get _outCount => _products.where((p) => p.stock == 0).length;
 
   @override
   Widget build(BuildContext context) {
@@ -48,14 +86,18 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
         titleSpacing: 16,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            Text('Products',
+          children: [
+            const Text('Products',
                 style: TextStyle(
                     fontSize: 19,
                     fontWeight: FontWeight.w800,
                     color: AppColors.darkText)),
-            Text('312 SKUs listed',
-                style: TextStyle(fontSize: 12, color: AppColors.greyText)),
+            Text(
+                _loading && _products.isEmpty
+                    ? 'Loading catalogue…'
+                    : '${_products.length} SKUs listed',
+                style:
+                    const TextStyle(fontSize: 12, color: AppColors.greyText)),
           ],
         ),
         actions: [
@@ -67,10 +109,11 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
               expand: false,
               height: 40,
               onPressed: () async {
-                final created = await adminPush<bool>(
-                    context, const AddProductScreen());
+                final created =
+                    await adminPush<bool>(context, const AddProductScreen());
                 if (created == true && context.mounted) {
                   adminSnack(context, 'Product added to catalogue');
+                  _load();
                 }
               },
             ),
@@ -93,41 +136,54 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
               children: [
                 Expanded(
                     child: MiniStat(
-                        value: '$kSkusTotal',
+                        value: '${_products.length}',
                         label: 'Total',
                         color: AppColors.darkText)),
                 const SizedBox(width: 10),
                 Expanded(
                     child: MiniStat(
-                        value: '$kSkusActive',
+                        value: '${_products.length - _outCount}',
                         label: 'Active',
                         color: AppColors.primary)),
                 const SizedBox(width: 10),
                 Expanded(
                     child: MiniStat(
-                        value: '$kSkusLow',
+                        value: '$_lowCount',
                         label: 'Low',
                         color: AdminColors.orange)),
                 const SizedBox(width: 10),
                 Expanded(
                     child: MiniStat(
-                        value: '$kSkusOut',
+                        value: '$_outCount',
                         label: 'Out',
                         color: AdminColors.red)),
               ],
             ),
           ),
           Expanded(
-            child: list.isEmpty
-                ? const AdminEmpty(label: 'No products found')
-                : ListView.builder(
-                    physics: adminScroll,
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                    itemCount: list.length,
-                    itemBuilder: (_, i) => _ProductRow(
-                      product: list[i],
-                      onToggle: (v) => setState(() => list[i].active = v),
-                    ),
+            child: _loading && _products.isEmpty
+                ? const Center(
+                    child: CircularProgressIndicator(strokeWidth: 2.5))
+                : RefreshIndicator(
+                    color: AppColors.primary,
+                    onRefresh: _load,
+                    child: list.isEmpty
+                        ? ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            children: const [
+                              SizedBox(height: 80),
+                              AdminEmpty(label: 'No products found'),
+                            ],
+                          )
+                        : ListView.builder(
+                            physics: const AlwaysScrollableScrollPhysics(
+                                parent: adminScroll),
+                            padding:
+                                const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                            itemCount: list.length,
+                            itemBuilder: (_, i) =>
+                                _ProductRow(product: list[i]),
+                          ),
                   ),
           ),
         ],
@@ -137,9 +193,8 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
 }
 
 class _ProductRow extends StatelessWidget {
-  const _ProductRow({required this.product, required this.onToggle});
+  const _ProductRow({required this.product});
   final AdminProduct product;
-  final ValueChanged<bool> onToggle;
 
   @override
   Widget build(BuildContext context) {
@@ -178,8 +233,12 @@ class _ProductRow extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                         color: AppColors.darkText)),
                 const SizedBox(height: 2),
-                Text(product.sku,
-                    style: const TextStyle(fontSize: 11, color: AppColors.greyText)),
+                Text(
+                    product.category.isEmpty
+                        ? product.sku
+                        : '${product.category} · ${product.sku}',
+                    style: const TextStyle(
+                        fontSize: 11, color: AppColors.greyText)),
                 const SizedBox(height: 6),
                 Row(
                   children: [
@@ -194,11 +253,6 @@ class _ProductRow extends StatelessWidget {
                 ),
               ],
             ),
-          ),
-          Switch.adaptive(
-            value: product.active,
-            activeThumbColor: AppColors.primary,
-            onChanged: onToggle,
           ),
         ],
       ),

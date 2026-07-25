@@ -14,6 +14,7 @@ import '../outlet_models.dart';
 import '../outlet_repository.dart';
 import '../outlet_session.dart';
 import '../outlet_theme.dart';
+import '../../services/live_refresh.dart';
 import 'outlet_order_detail_screen.dart';
 
 /// Coarse status buckets for the filter chips.
@@ -47,15 +48,38 @@ class OutletOrdersScreen extends StatefulWidget {
   State<OutletOrdersScreen> createState() => _OutletOrdersScreenState();
 }
 
-class _OutletOrdersScreenState extends State<OutletOrdersScreen> {
+class _OutletOrdersScreenState extends State<OutletOrdersScreen>
+    with LiveRefreshMixin {
   final _repo = OutletRepository();
+
+  /// Backs the pull-to-refresh gesture. The list also auto-syncs via
+  /// [LiveRefreshMixin], so new orders + status changes surface on their own.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
+
   late Future<List<OutletOrder>> _future;
   _OrderFilter _filter = _OrderFilter.all;
 
   @override
   void initState() {
     super.initState();
+    // First load drives the FutureBuilder spinner; then poll silently so the
+    // list stays live (immediate: false avoids a duplicate fetch on open).
     _future = _repo.fetchOrders();
+    startLiveRefresh(immediate: false);
+  }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  /// Silent background sync — fetches then swaps in an already-resolved future
+  /// so the list never flashes the centered loader mid-poll.
+  @override
+  Future<void> onLiveRefresh() async {
+    final orders = await _repo.fetchOrders();
+    if (mounted) setState(() => _future = Future.value(orders));
   }
 
   Future<void> _refresh() async {
@@ -75,10 +99,14 @@ class _OutletOrdersScreenState extends State<OutletOrdersScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        OutletHeader(title: 'Orders', subtitle: OutletSession.instance.outletLabel),
+        OutletHeader(
+          title: 'Orders',
+          subtitle: OutletSession.instance.outletLabel,
+        ),
         _filterChips(),
         Expanded(
           child: RefreshIndicator(
+            key: _refreshKey,
             onRefresh: _refresh,
             color: OutletColors.success,
             child: FutureBuilder<List<OutletOrder>>(

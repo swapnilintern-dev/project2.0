@@ -31,7 +31,6 @@ class _MarketingOrdersScreenState extends State<MarketingOrdersScreen>
     with LiveRefreshMixin {
   MarketingOrderStatus _filter = MarketingOrderStatus.pending;
   String _query = '';
-  bool _refreshing = false;
 
   MarketingOrdersController get _controller => MarketingOrdersController.instance;
 
@@ -51,15 +50,6 @@ class _MarketingOrdersScreenState extends State<MarketingOrdersScreen>
 
   @override
   Future<void> onLiveRefresh() => _controller.refresh();
-
-  /// Re-fetches all orders from the backend (GET /all-orders) with feedback.
-  Future<void> _doRefresh() async {
-    setState(() => _refreshing = true);
-    await _controller.refresh();
-    if (!mounted) return;
-    setState(() => _refreshing = false);
-    showAppSnack(context, 'Orders updated', success: true);
-  }
 
   /// Opens the manual-order flow (vendor phoned the order in). On success the
   /// pipeline refreshes so the new Pending order appears immediately.
@@ -118,7 +108,7 @@ class _MarketingOrdersScreenState extends State<MarketingOrdersScreen>
                   );
                 }
                 return RefreshIndicator(
-                  onRefresh: _doRefresh,
+                  onRefresh: _controller.refresh,
                   child: ListView.separated(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -195,32 +185,13 @@ class _MarketingOrdersScreenState extends State<MarketingOrdersScreen>
                 style: const TextStyle(color: Colors.white70, fontSize: 12)),
             const SizedBox(height: 2),
           ],
-          Row(
+          const Row(
             children: [
-              const Text('Orders',
+              Text('Orders',
                   style: TextStyle(
                       color: Colors.white,
                       fontSize: 24,
                       fontWeight: FontWeight.w800)),
-              const Spacer(),
-              Material(
-                color: Colors.white.withValues(alpha: 0.18),
-                shape: const CircleBorder(),
-                clipBehavior: Clip.antiAlias,
-                child: IconButton(
-                  icon: _refreshing
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Icon(Icons.refresh, color: Colors.white, size: 20),
-                  tooltip: 'Refresh orders',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: _refreshing ? null : _doRefresh,
-                ),
-              ),
             ],
           ),
           const SizedBox(height: 14),

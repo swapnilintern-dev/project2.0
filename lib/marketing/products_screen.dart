@@ -7,13 +7,13 @@
 // inactive-reason banner. An "Add Medicine" FAB opens the Add Medicine form.
 // =============================================================================
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../services/live_refresh.dart';
 import '../theme/app_theme.dart' show AppShadows;
 import '../customer/customer_widgets.dart' show formatRupees, EmptyState;
+import '../widgets/expiry_alert.dart';
 import 'marketing_controllers.dart';
 import 'marketing_models.dart';
 import 'add_product_screen.dart';
@@ -28,7 +28,8 @@ class MarketingProductsScreen extends StatefulWidget {
       _MarketingProductsScreenState();
 }
 
-class _MarketingProductsScreenState extends State<MarketingProductsScreen> {
+class _MarketingProductsScreenState extends State<MarketingProductsScreen>
+    with LiveRefreshMixin {
   String _query = '';
   _ListingFilter _filter = _ListingFilter.all;
   String _category = 'All Categories';
@@ -36,12 +37,26 @@ class _MarketingProductsScreenState extends State<MarketingProductsScreen> {
   MarketingProductsController get _controller =>
       MarketingProductsController.instance;
 
+  /// Backs the pull-to-refresh gesture. The inventory also auto-syncs via
+  /// [LiveRefreshMixin], so stock changes surface with no manual refresh.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
-    // Load the live inventory from the backend (falls back to seed on failure).
-    unawaited(_controller.refresh());
+    // Load the live inventory on open, then keep it in sync (poll + app-resume)
+    // so stock/listing changes from any role appear on their own.
+    startLiveRefresh();
   }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => _controller.refresh();
 
   @override
   Widget build(BuildContext context) {
@@ -69,37 +84,66 @@ class _MarketingProductsScreenState extends State<MarketingProductsScreen> {
               child: ListenableBuilder(
                 listenable: _controller,
                 builder: (context, _) {
-                  // First load in flight and nothing cached yet → spinner (not
-                  // an empty state, and never dummy data).
-                  if (!_controller.isLoaded && _controller.products.isEmpty) {
-                    return const Center(
-                      child: CircularProgressIndicator(color: AppColors.primary),
-                    );
-                  }
                   final products = _visible();
-                  if (products.isEmpty) {
-                    return EmptyState(
-                      icon: Icons.medication_outlined,
-                      title: 'No medicines',
-                      message: _query.isEmpty
-                          ? 'Add your first medicine to the inventory.'
-                          : 'No medicines match "$_query".',
-                    );
-                  }
-                  return ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-                    itemCount: products.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 12),
-                    itemBuilder: (context, i) => _MedicineCard(
-                      product: products[i],
-                      onToggle: () => _controller.toggleActive(products[i].id),
-                      onEdit: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              AddMedicineScreen(existing: products[i]),
-                        ),
-                      ),
-                    ),
+                  return RefreshIndicator(
+                    key: _refreshKey,
+                    color: AppColors.primary,
+                    onRefresh: _controller.refresh,
+                    // First load in flight and nothing cached yet → spinner (not
+                    // an empty state, and never dummy data).
+                    child: (!_controller.isLoaded &&
+                            _controller.products.isEmpty)
+                        ? ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            children: [
+                              SizedBox(
+                                height:
+                                    MediaQuery.of(context).size.height * 0.6,
+                                child: const Center(
+                                  child: CircularProgressIndicator(
+                                      color: AppColors.primary),
+                                ),
+                              ),
+                            ],
+                          )
+                        : products.isEmpty
+                            ? ListView(
+                                physics:
+                                    const AlwaysScrollableScrollPhysics(),
+                                children: [
+                                  SizedBox(
+                                    height: MediaQuery.of(context).size.height *
+                                        0.6,
+                                    child: EmptyState(
+                                      icon: Icons.medication_outlined,
+                                      title: 'No medicines',
+                                      message: _query.isEmpty
+                                          ? 'Add your first medicine to the inventory.'
+                                          : 'No medicines match "$_query".',
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : ListView.separated(
+                                physics:
+                                    const AlwaysScrollableScrollPhysics(),
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 8, 16, 96),
+                                itemCount: products.length,
+                                separatorBuilder: (_, _) =>
+                                    const SizedBox(height: 12),
+                                itemBuilder: (context, i) => _MedicineCard(
+                                  product: products[i],
+                                  onToggle: () =>
+                                      _controller.toggleActive(products[i].id),
+                                  onEdit: () => Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => AddMedicineScreen(
+                                          existing: products[i]),
+                                    ),
+                                  ),
+                                ),
+                              ),
                   );
                 },
               ),
@@ -403,6 +447,10 @@ class _MedicineCard extends StatelessWidget {
                       fontSize: 12.5, color: AppColors.greyText)),
             ],
           ),
+          if (product.isExpiringSoon) ...[
+            const SizedBox(height: 10),
+            const ExpiryAlertBanner(),
+          ],
           if (!product.active && (product.inactiveReason?.isNotEmpty ?? false)) ...[
             const SizedBox(height: 10),
             Container(

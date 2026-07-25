@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'services/vendor_api_service.dart';
+import 'shared/form_validators.dart';
 
 
 // =============================================================================
@@ -530,15 +531,7 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
                       keyboardType: TextInputType.phone,
                       maxLength: 10,
                       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      validator: (v) {
-                        if (v == null || v.trim().isEmpty) {
-                          return 'Mobile number is required';
-                        }
-                        if (v.trim().length != 10) {
-                          return 'Enter a valid 10-digit number';
-                        }
-                        return null;
-                      },
+                      validator: FormValidators.mobile,
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -550,15 +543,7 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
                       controller: _emailCtrl,
                       hint: 'name@email.com',
                       keyboardType: TextInputType.emailAddress,
-                      validator: (v) {
-                        if (v == null || v.trim().isEmpty) {
-                          return 'Email is required';
-                        }
-                        final ok = RegExp(
-                          r'^[\w.\-]+@([\w\-]+\.)+[\w\-]{2,}$',
-                        ).hasMatch(v.trim());
-                        return ok ? null : 'Enter a valid email';
-                      },
+                      validator: FormValidators.email,
                     ),
                   ),
                 ],
@@ -609,13 +594,7 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
                 keyboardType: TextInputType.number,
                 maxLength: 6,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                validator: (v) {
-                  if (v == null || v.trim().isEmpty) {
-                    return 'Pin Code is required';
-                  }
-                  if (v.trim().length != 6) return 'Enter a valid 6-digit pin';
-                  return null;
-                },
+                validator: FormValidators.pincode,
               ),
             ],
           ),
@@ -656,16 +635,7 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
                   maxLength: 15,
                   textCapitalization: TextCapitalization.characters,
                   inputFormatters: [_UpperCaseFormatter()],
-                  validator: (v) {
-                    if (!_gstRegistered) return null;
-                    if (v == null || v.trim().isEmpty) {
-                      return 'GSTIN is required';
-                    }
-                    if (v.trim().length != 15) {
-                      return 'GSTIN must be 15 characters';
-                    }
-                    return null;
-                  },
+                  validator: (v) => _gstRegistered ? FormValidators.gstin(v) : null,
                 ),
               _AppTextField(
                 label: 'Drug License Number',
@@ -1037,10 +1007,9 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
     );
   }
 
-  // Shared "required" validator factory.
-  String? Function(String?) _requiredValidator(String field) {
-    return (v) => (v == null || v.trim().isEmpty) ? '$field is required' : null;
-  }
+  // Shared "required" validator factory (canonical rule in FormValidators).
+  String? Function(String?) _requiredValidator(String field) =>
+      FormValidators.required(field);
 }
 
 // =============================================================================

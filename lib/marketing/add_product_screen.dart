@@ -7,16 +7,15 @@
 // passed). Saving routes through MarketingProductsController.
 // =============================================================================
 
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
 import '../customer/customer_widgets.dart' show showAppSnack;
+import '../widgets/expiry_alert.dart';
 import 'marketing_controllers.dart';
 import 'marketing_models.dart';
+import 'product_media_editor.dart';
 
 class AddMedicineScreen extends StatefulWidget {
   const AddMedicineScreen({super.key, this.existing});
@@ -45,13 +44,22 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   late final TextEditingController _sell;
   late final TextEditingController _stock;
   late final TextEditingController _lowThreshold;
+  late final TextEditingController _batch;
 
   late String _category;
   late bool _active;
 
-  /// The picked product image (required when adding; optional when editing).
-  XFile? _image;
+  /// The selected batch expiry date (mandatory). Null until picked.
+  DateTime? _expiry;
+
+  /// Set true once the form is submitted, so the expiry picker can show its
+  /// "required" error inline the same way the TextFormFields do.
+  bool _submitted = false;
+
+  /// Owns the image + video selection (see [ProductMediaEditor]).
+  late final ProductMediaController _media;
   bool _saving = false;
+  double _progress = 0;
 
   bool get _isEdit => widget.existing != null;
 
@@ -59,6 +67,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   void initState() {
     super.initState();
     final e = widget.existing;
+    _media = ProductMediaController(existing: e);
     _name = TextEditingController(text: e?.name ?? '');
     _code = TextEditingController(text: e?.code ?? '');
     _brand = TextEditingController(text: e?.brand ?? '');
@@ -73,6 +82,8 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     _sell = TextEditingController(text: e?.price.toString() ?? '');
     _stock = TextEditingController(text: e?.stock.toString() ?? '');
     _lowThreshold = TextEditingController(text: (e?.lowThreshold ?? 10).toString());
+    _batch = TextEditingController(text: e?.batchNo ?? '');
+    _expiry = e?.expiryDate;
     // Always start on a category that exists in the (3-item) list, so the
     // dropdown never gets a value with no matching item.
     final existingCategory = e?.category;
@@ -89,9 +100,11 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     for (final c in [
       _name, _code, _brand, _manufacturer, _marketedBy, _description,
       _mrp, _packOf, _hsn, _gst, _discount, _sell, _stock, _lowThreshold,
+      _batch,
     ]) {
       c.dispose();
     }
+    _media.dispose();
     super.dispose();
   }
 
@@ -113,10 +126,14 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
           children: [
             _introCard(),
+            if (_isEdit && (widget.existing?.isExpiringSoon ?? false)) ...[
+              const SizedBox(height: 12),
+              const ExpiryAlertBanner(),
+            ],
             const SizedBox(height: 16),
-            _sectionHeader(Icons.image_outlined, 'Product Image'),
+            _sectionHeader(Icons.perm_media_outlined, 'Product Media'),
             const SizedBox(height: 8),
-            _imageCard(),
+            ProductMediaEditor(controller: _media),
             const SizedBox(height: 16),
             _sectionHeader(Icons.info_outline, 'Basic Details'),
             const SizedBox(height: 8),
@@ -283,6 +300,24 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               ),
             ),
             const SizedBox(height: 16),
+            _sectionHeader(Icons.event_note_outlined, 'Batch & Expiry'),
+            const SizedBox(height: 8),
+            _card(
+              child: Column(
+                children: [
+                  _field(
+                    icon: Icons.tag_outlined,
+                    label: 'Batch Number',
+                    hint: 'e.g. BCH240701A',
+                    controller: _batch,
+                    validator: _required,
+                  ),
+                  _gap(),
+                  _expiryPickerField(),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
             _sectionHeader(Icons.settings_outlined, 'Settings'),
             const SizedBox(height: 8),
             _card(
@@ -311,13 +346,29 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   // ---------------------------------------------------------------------------
 
   Future<void> _submit() async {
-    if (!(_formKey.currentState?.validate() ?? false)) {
+    // Prevent duplicate submission while an upload is in flight.
+    if (_saving) return;
+    setState(() => _submitted = true);
+    final formOk = _formKey.currentState?.validate() ?? false;
+    // Expiry lives outside the Form (it's a picker), so it is checked here.
+    if (!formOk || _expiry == null) {
       showAppSnack(context, 'Please fix the highlighted fields',
           success: false);
       return;
     }
-    if (!_isEdit && _image == null) {
-      showAppSnack(context, 'Please add a product image', success: false);
+    // New stock must not already be expired (the backend enforces this too).
+    if (!_isEdit) {
+      final today = DateTime.now();
+      final startOfToday = DateTime(today.year, today.month, today.day);
+      if (_expiry!.isBefore(startOfToday)) {
+        showAppSnack(context, 'Expiry date cannot be in the past',
+            success: false);
+        return;
+      }
+    }
+    if (!_media.hasImages) {
+      showAppSnack(context, 'Please add at least one product image',
+          success: false);
       return;
     }
     final existing = widget.existing;
@@ -341,41 +392,54 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       gstPercent: double.tryParse(_gst.text.trim()) ?? 0,
       discountPercent: double.tryParse(_discount.text.trim()) ?? 0,
       lowThreshold: int.tryParse(_lowThreshold.text.trim()) ?? 10,
+      batchNo: _batch.text.trim(),
+      expiryDate: _expiry,
       inactiveReason: _active ? null : (existing?.inactiveReason),
       icon: existing?.icon ?? Icons.medication_liquid_outlined,
     );
 
     final controller = MarketingProductsController.instance;
-    setState(() => _saving = true);
-
-    if (_isEdit) {
-      // Sync the edit to the backend (sends a new image only if one was picked).
-      final ok = await controller.updateRemote(product, image: _image);
-      if (!mounted) return;
-      setState(() => _saving = false);
-      if (ok) {
-        showAppSnack(context, '${product.name} updated');
-        Navigator.of(context).pop();
-      } else {
-        showAppSnack(
-          context,
-          'Could not update. Check your connection and try again.',
-          success: false,
-        );
-      }
-      return;
+    setState(() {
+      _saving = true;
+      _progress = 0;
+    });
+    void onProgress(double p) {
+      if (mounted) setState(() => _progress = p);
     }
 
-    final ok = await controller.addRemote(product, _image!);
+    final bool ok;
+    if (_isEdit) {
+      // Sync the edit: keep/reorder existing images, upload any new ones, and
+      // replace / remove / keep the video — all in one request.
+      ok = await controller.updateRemote(
+        product,
+        keptImages: _media.keptImages,
+        newImages: _media.newImageFiles,
+        video: _media.videoToUpload,
+        removeVideo: _media.removeVideo,
+        onProgress: onProgress,
+      );
+    } else {
+      ok = await controller.addRemote(
+        product,
+        images: _media.newImageFiles,
+        video: _media.videoToUpload,
+        onProgress: onProgress,
+      );
+    }
+
     if (!mounted) return;
     setState(() => _saving = false);
     if (ok) {
-      showAppSnack(context, '${product.name} added to inventory');
+      showAppSnack(context,
+          _isEdit ? '${product.name} updated' : '${product.name} added to inventory');
       Navigator.of(context).pop();
     } else {
       showAppSnack(
         context,
-        'Could not add product. Check your connection and try again.',
+        _isEdit
+            ? 'Could not update. Check your connection and try again.'
+            : 'Could not add product. Check your connection and try again.',
         success: false,
       );
     }
@@ -499,100 +563,6 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     );
   }
 
-  Widget _imageCard() {
-    final existingUrl = widget.existing?.imageUrl;
-    Widget preview;
-    if (_image != null) {
-      preview = FutureBuilder<Uint8List>(
-        future: _image!.readAsBytes(),
-        builder: (context, snap) => snap.hasData
-            ? Image.memory(snap.data!,
-                fit: BoxFit.fill, width: double.infinity, height: 160)
-            : const SizedBox(
-                height: 160,
-                child: Center(child: CircularProgressIndicator()),
-              ),
-      );
-    } else if (existingUrl != null && existingUrl.isNotEmpty) {
-      preview = Image.network(existingUrl,
-          fit: BoxFit.cover,
-          width: double.infinity,
-          height: 160,
-          errorBuilder: (_, _, _) => _imagePlaceholder());
-    } else {
-      preview = _imagePlaceholder();
-    }
-
-    return _card(
-      child: Column(
-        children: [
-          ClipRRect(borderRadius: BorderRadius.circular(12), child: preview),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _pickImage(ImageSource.camera),
-                  icon: const Icon(Icons.camera_alt_outlined, size: 18),
-                  label: const Text('Camera'),
-                  style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.darkGreen),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _pickImage(ImageSource.gallery),
-                  icon: const Icon(Icons.photo_library_outlined, size: 18),
-                  label: const Text('Gallery'),
-                  style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.darkGreen),
-                ),
-              ),
-            ],
-          ),
-          if (!_isEdit)
-            const Padding(
-              padding: EdgeInsets.only(top: 6, left: 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Image is required for a new medicine',
-                    style:
-                        TextStyle(fontSize: 11.5, color: AppColors.greyText)),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _imagePlaceholder() => Container(
-        height: 160,
-        width: double.infinity,
-        color: AppColors.pageBg,
-        child: const Center(
-          child: Icon(Icons.add_photo_alternate_outlined,
-              size: 44, color: AppColors.greyText),
-        ),
-      );
-
-  Future<void> _pickImage(ImageSource source) async {
-    try {
-      final picker = ImagePicker();
-      final file = await picker.pickImage(
-        source: source,
-        maxWidth: 1200,
-        maxHeight: 1200,
-        imageQuality: 85,
-      );
-      if (file != null) setState(() => _image = file);
-    } catch (e) {
-      if (mounted) {
-        showAppSnack(context, 'Could not open ${source.name}', success: false);
-      }
-    }
-  }
-
   Widget _sectionHeader(IconData icon, String title) {
     return Row(
       children: [
@@ -638,6 +608,84 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     );
   }
 
+  /// The mandatory expiry-date picker, styled to match the form's text fields.
+  /// Shows a red "Required" error once the form has been submitted with no date.
+  Widget _expiryPickerField() {
+    final hasError = _submitted && _expiry == null;
+    final borderColor = hasError ? AppColors.error : AppColors.border;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: _pickExpiry,
+          borderRadius: BorderRadius.circular(12),
+          child: InputDecorator(
+            decoration: InputDecoration(
+              labelText: 'Expiry Date',
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              floatingLabelStyle: const TextStyle(
+                  color: AppColors.primary, fontWeight: FontWeight.w600),
+              prefixIcon: const Icon(Icons.event_outlined,
+                  size: 19, color: AppColors.greyText),
+              filled: true,
+              fillColor: AppColors.pageBg,
+              isDense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: borderColor),
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: borderColor),
+              ),
+            ),
+            child: Text(
+              _expiry == null ? 'Select expiry date' : _formatDate(_expiry!),
+              style: TextStyle(
+                fontSize: 14,
+                color: _expiry == null
+                    ? AppColors.greyText
+                    : AppColors.darkText,
+              ),
+            ),
+          ),
+        ),
+        if (hasError)
+          const Padding(
+            padding: EdgeInsets.only(top: 6, left: 12),
+            child: Text('Required',
+                style: TextStyle(color: AppColors.error, fontSize: 11)),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _pickExpiry() async {
+    final now = DateTime.now();
+    // Adding new stock cannot expire in the past; when editing historical data
+    // allow any date so an existing record can be corrected.
+    final first = _isEdit ? DateTime(now.year - 5) : DateTime(now.year, now.month, now.day);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _expiry ?? DateTime(now.year, now.month, now.day),
+      firstDate: first,
+      lastDate: DateTime(now.year + 15),
+      helpText: 'Select expiry date',
+    );
+    if (picked != null) setState(() => _expiry = picked);
+  }
+
+  /// Formats a date as "31 Dec 2027".
+  String _formatDate(DateTime d) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${d.day.toString().padLeft(2, '0')} ${months[d.month - 1]} ${d.year}';
+  }
+
   Widget _toggleRow({
     required IconData icon,
     required String title,
@@ -675,21 +723,26 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   }
 
   Widget _submitButton() {
+    final pct = (_progress * 100).clamp(0, 100).round();
     return SizedBox(
       width: double.infinity,
       height: 54,
       child: ElevatedButton.icon(
         onPressed: _saving ? null : _submit,
         icon: _saving
-            ? const SizedBox(
+            ? SizedBox(
                 width: 18,
                 height: 18,
                 child: CircularProgressIndicator(
-                    strokeWidth: 2.5, color: Colors.white))
+                    strokeWidth: 2.5,
+                    color: Colors.white,
+                    value: _progress > 0 && _progress < 1 ? _progress : null))
             : Icon(_isEdit ? Icons.save_outlined : Icons.add),
         label: Text(
             _saving
-                ? 'Saving…'
+                ? (_progress > 0 && _progress < 1
+                    ? 'Uploading… $pct%'
+                    : 'Saving…')
                 : (_isEdit ? 'Save Changes' : 'Add to Inventory'),
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
         style: ElevatedButton.styleFrom(

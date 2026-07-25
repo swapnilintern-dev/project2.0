@@ -29,6 +29,10 @@ class _MarketingCouponsScreenState extends State<MarketingCouponsScreen>
   MarketingCouponsController get _controller =>
       MarketingCouponsController.instance;
 
+  /// Backs the pull-to-refresh gesture. The list also auto-syncs via
+  /// [LiveRefreshMixin], so no manual refresh is needed.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -66,26 +70,52 @@ class _MarketingCouponsScreenState extends State<MarketingCouponsScreen>
               listenable: _controller,
               builder: (context, _) {
                 final coupons = _controller.coupons;
-                if (!_controller.isLoaded && coupons.isEmpty) {
-                  return const Center(
-                    child: CircularProgressIndicator(color: AppColors.primary),
-                  );
-                }
-                if (coupons.isEmpty) {
-                  return const EmptyState(
-                    icon: Icons.local_offer_outlined,
-                    title: 'No coupons yet',
-                    message: 'Create a campaign to launch your first coupon.',
-                  );
-                }
-                return ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
-                  itemCount: coupons.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 12),
-                  itemBuilder: (context, i) => _CouponCard(
-                    coupon: coupons[i],
-                    onToggle: () => _controller.toggleActive(coupons[i].code),
-                  ),
+                return RefreshIndicator(
+                  key: _refreshKey,
+                  color: AppColors.primary,
+                  onRefresh: _controller.refresh,
+                  child: (!_controller.isLoaded && coupons.isEmpty)
+                      ? ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children: [
+                            SizedBox(
+                              height: MediaQuery.of(context).size.height * 0.6,
+                              child: const Center(
+                                child: CircularProgressIndicator(
+                                    color: AppColors.primary),
+                              ),
+                            ),
+                          ],
+                        )
+                      : coupons.isEmpty
+                          ? ListView(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              children: [
+                                SizedBox(
+                                  height:
+                                      MediaQuery.of(context).size.height * 0.6,
+                                  child: const EmptyState(
+                                    icon: Icons.local_offer_outlined,
+                                    title: 'No coupons yet',
+                                    message:
+                                        'Create a campaign to launch your first coupon.',
+                                  ),
+                                ),
+                              ],
+                            )
+                          : ListView.separated(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding:
+                                  const EdgeInsets.fromLTRB(16, 14, 16, 24),
+                              itemCount: coupons.length,
+                              separatorBuilder: (_, _) =>
+                                  const SizedBox(height: 12),
+                              itemBuilder: (context, i) => _CouponCard(
+                                coupon: coupons[i],
+                                onToggle: () =>
+                                    _controller.toggleActive(coupons[i].code),
+                              ),
+                            ),
                 );
               },
             ),

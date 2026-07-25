@@ -44,6 +44,10 @@ class _MarketingBannersScreenState extends State<MarketingBannersScreen>
   final ImagePicker _picker = ImagePicker();
   final _nameCtrl = TextEditingController();
 
+  /// Backs the pull-to-refresh gesture. The list also auto-syncs via
+  /// [LiveRefreshMixin], so no manual refresh is needed.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
+
   XFile? _image;
   Uint8List? _preview; // decoded bytes for the on-screen preview (web + mobile)
   String _category = _bannerCategories.keys.first;
@@ -140,6 +144,7 @@ class _MarketingBannersScreenState extends State<MarketingBannersScreen>
         builder: (context, _) {
           final banners = _controller.banners;
           return RefreshIndicator(
+            key: _refreshKey,
             color: AppColors.primary,
             onRefresh: _controller.refresh,
             child: ListView(

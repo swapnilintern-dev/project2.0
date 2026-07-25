@@ -27,7 +27,6 @@ import '../services/api_config.dart';
 import '../services/auth_service.dart';
 import 'catalog.dart';
 import 'customer_models.dart';
-import 'customer_mock_data.dart';
 import 'invoice_pdf.dart';
 
 /// The details returned by the backend when a Razorpay order is created —
@@ -100,11 +99,11 @@ class CustomerApi {
         return products;
       }
     } catch (_) {
-      // ignored — fall through to the cache / mock data below
+      // ignored — fall through to the cached backend list below
     }
-    if (Catalog.all.isNotEmpty) return Catalog.all;
-    Catalog.setProducts(MockData.products); // offline seed
-    return MockData.products;
+    // Offline / server error: show the last list the backend actually sent
+    // (possibly empty on a cold start) — never seeded fake products.
+    return Catalog.all;
   }
 
   /// Promotional banners for the home carousel.
@@ -122,12 +121,14 @@ class CustomerApi {
             .whereType<Map<String, dynamic>>()
             .map(PromoBanner.fromJson)
             .toList();
-        if (parsed.isNotEmpty) return parsed;
+        return parsed;
       }
     } catch (_) {
-      // ignored — fall through to mock banners
+      // ignored — fall through to the empty list below
     }
-    return MockData.banners;
+    // Offline / server error: no banners. The home screen hides the carousel
+    // rather than showing promos marketing never published.
+    return const [];
   }
 
   // ---------------------------------------------------------------------------
@@ -728,20 +729,84 @@ class CustomerApi {
   }
 
   // ---------------------------------------------------------------------------
-  // ADDRESSES  (TODO backend: CRUD under /vsArogya/addresses)
+  // ADDRESS BOOK — persisted on the user's own backend account.
+  //   GET    /vsArogya/addresses            → { success, addresses }
+  //   POST   /vsArogya/addresses            → create
+  //   PUT    /vsArogya/addresses/:id        → update / set default
+  //   DELETE /vsArogya/addresses/:id        → remove
+  // Every mutating call answers with the FULL updated list, which each method
+  // returns so the controller can mirror the server state exactly. All return
+  // null on failure so callers keep their current list (offline-safe).
   // ---------------------------------------------------------------------------
 
-  Future<List<Address>> getAddresses() async {
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-    return MockData.addresses;
+  Future<List<Address>?> getAddresses() =>
+      _addressCall('GET', '$baseUrl/vsArogya/addresses');
+
+  Future<List<Address>?> addAddress(Address a) => _addressCall(
+        'POST',
+        '$baseUrl/vsArogya/addresses',
+        body: _addressBody(a),
+      );
+
+  Future<List<Address>?> updateAddress(Address a) => _addressCall(
+        'PUT',
+        '$baseUrl/vsArogya/addresses/${a.id}',
+        body: _addressBody(a),
+      );
+
+  /// Marks [addressId] as the default (the server unmarks the rest).
+  Future<List<Address>?> setDefaultAddress(String addressId) => _addressCall(
+        'PUT',
+        '$baseUrl/vsArogya/addresses/$addressId',
+        body: {'isDefault': true},
+      );
+
+  Future<List<Address>?> deleteAddress(String addressId) =>
+      _addressCall('DELETE', '$baseUrl/vsArogya/addresses/$addressId');
+
+  static Map<String, dynamic> _addressBody(Address a) => {
+        'label': a.label,
+        'fullName': a.fullName,
+        'phone': a.phone,
+        'line1': a.line1,
+        'city': a.city,
+        'state': a.state,
+        'pincode': a.pincode,
+        'isDefault': a.isDefault,
+      };
+
+  Future<List<Address>?> _addressCall(
+    String method,
+    String url, {
+    Map<String, dynamic>? body,
+  }) async {
+    try {
+      final req = http.Request(method, Uri.parse(url));
+      req.headers.addAll(_headers);
+      if (body != null) req.body = jsonEncode(body);
+      final res =
+          await http.Response.fromStream(await _client.send(req).timeout(_timeout))
+              .timeout(_timeout);
+      if (res.statusCode < 200 || res.statusCode >= 300) return null;
+      final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+      if (decoded['success'] != true) return null;
+      final list = (decoded['addresses'] as List?) ?? const [];
+      return list
+          .whereType<Map<String, dynamic>>()
+          .map(Address.fromJson)
+          .toList();
+    } catch (_) {
+      return null;
+    }
   }
 
   // ---------------------------------------------------------------------------
   // COUPONS  (GET /vsArogya/coupons — only active, non-expired are returned)
   // ---------------------------------------------------------------------------
 
-  /// Active coupons the customer can apply at checkout. Falls back to the local
-  /// mock coupons when the server is unreachable.
+  /// Active coupons the customer can apply at checkout. Returns an empty list
+  /// when the server is unreachable — a code the backend doesn't know must
+  /// never validate locally.
   Future<List<Coupon>> getCoupons() async {
     try {
       final res = await _client
@@ -755,12 +820,12 @@ class CustomerApi {
             .where((c) => c['active'] != false && c['expired'] != true)
             .map(Coupon.fromJson)
             .toList();
-        if (parsed.isNotEmpty) return parsed;
+        return parsed;
       }
     } catch (_) {
-      // ignored — fall back to mock coupons
+      // ignored — fall through to the empty list below
     }
-    return MockData.coupons;
+    return const [];
   }
 
   void dispose() => _client.close();

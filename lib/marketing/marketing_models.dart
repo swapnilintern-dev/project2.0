@@ -13,6 +13,7 @@
 import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../services/product_media.dart';
 
 /// Status-only accent colours not present in the shared palette.
 class MarketingColors {
@@ -239,12 +240,17 @@ class InventoryProduct {
     this.prescriptionRequired = false,
     this.inactiveReason,
     this.icon = Icons.medication_liquid_outlined,
+    // --- Batch & expiry (managed by marketing; see BATCH_EXPIRY) ---
+    this.batchNo = '',
+    this.expiryDate,
+    this.isExpiringSoon = false,
     // --- Customer-facing display fields (shown in the shopping app) ---
     this.rating = 4.5,
     this.reviewCount = 0,
     this.badge,
     this.packInfo = '',
-    this.imageUrl,
+    this.images = const [],
+    this.video,
   });
 
   final String id;
@@ -268,13 +274,43 @@ class InventoryProduct {
   final String? inactiveReason;
   final IconData icon;
 
+  /// Manufacturing batch number (e.g. "BCH240701A").
+  final String batchNo;
+
+  /// The batch's expiry date, or null when the product has none stored.
+  final DateTime? expiryDate;
+
+  /// True when the backend flags this batch as expiring within 90 days. The
+  /// server computes it live from the current date (see the `isExpiringSoon`
+  /// virtual), so it is always up to date without any client timer.
+  final bool isExpiringSoon;
+
   // Customer-facing display fields. These have no effect on the inventory
   // workflow; they decorate the same record when it appears in the shop.
   final double rating;
   final int reviewCount;
   final String? badge; // e.g. NEW / BEST SELLER / LOW STOCK
   final String packInfo; // e.g. "Strip of 15 tablets"
-  final String? imageUrl;
+
+  /// Ordered product images (`images.first` is the primary/thumbnail). Carries
+  /// the Cloudinary publicId so the Edit flow can keep/delete each one.
+  final List<ProductMedia> images;
+
+  /// The optional promotional video, or null when the product has none.
+  final ProductMedia? video;
+
+  /// The primary image URL (first image), or null when the product has none.
+  /// Kept so the many existing call-sites that read a single image URL still
+  /// work unchanged.
+  String? get imageUrl => images.isNotEmpty ? images.first.url : null;
+
+  /// Every image URL, in display order.
+  List<String> get imageUrls => images.map((m) => m.url).toList();
+
+  /// The promotional video URL, or null.
+  String? get videoUrl => video?.url;
+
+  bool get hasVideo => video != null && video!.url.isNotEmpty;
 
   StockStatus get stockStatus {
     if (stock <= 0) return StockStatus.out;
@@ -318,11 +354,16 @@ class InventoryProduct {
     String? inactiveReason,
     bool clearInactiveReason = false,
     IconData? icon,
+    String? batchNo,
+    DateTime? expiryDate,
+    bool? isExpiringSoon,
     double? rating,
     int? reviewCount,
     String? badge,
     String? packInfo,
-    String? imageUrl,
+    List<ProductMedia>? images,
+    ProductMedia? video,
+    bool clearVideo = false,
   }) {
     return InventoryProduct(
       id: id,
@@ -346,11 +387,15 @@ class InventoryProduct {
       inactiveReason:
           clearInactiveReason ? null : (inactiveReason ?? this.inactiveReason),
       icon: icon ?? this.icon,
+      batchNo: batchNo ?? this.batchNo,
+      expiryDate: expiryDate ?? this.expiryDate,
+      isExpiringSoon: isExpiringSoon ?? this.isExpiringSoon,
       rating: rating ?? this.rating,
       reviewCount: reviewCount ?? this.reviewCount,
       badge: badge ?? this.badge,
       packInfo: packInfo ?? this.packInfo,
-      imageUrl: imageUrl ?? this.imageUrl,
+      images: images ?? this.images,
+      video: clearVideo ? null : (video ?? this.video),
     );
   }
 }
@@ -499,5 +544,49 @@ class MarketingCoupon {
         redemptions: redemptions,
         active: active ?? this.active,
         expired: expired,
+      );
+}
+
+// =============================================================================
+// OUTLET (a physical shop we run — marketing registers it and stocks it)
+// =============================================================================
+
+/// One outlet from GET /vsArogya/outlets. Mirrors the server's Outlet document
+/// (model/outletregistersModel.js) minus the password.
+class MarketingOutlet {
+  const MarketingOutlet({
+    required this.id,
+    required this.name,
+    required this.pin,
+    this.ownerName = '',
+    this.mobileNo = '',
+    this.city = '',
+    this.state = '',
+    this.status = 'Active',
+  });
+
+  final String id;
+  final String name;
+  final String pin;
+  final String ownerName;
+  final String mobileNo;
+  final String city;
+  final String state;
+  final String status;
+
+  bool get isActive => status.toLowerCase() != 'inactive';
+
+  /// Label for the dropdown row — e.g. "Sai Medical  ·  411001".
+  String get dropdownLabel => '$name  ·  $pin';
+
+  factory MarketingOutlet.fromJson(Map<String, dynamic> j) => MarketingOutlet(
+        id: (j['_id'] ?? j['id'] ?? '').toString(),
+        name: (j['outletName'] ?? '').toString(),
+        pin: (j['pincode'] ?? '').toString(),
+        ownerName: (j['ownerName'] ?? '').toString(),
+        mobileNo: (j['mobileNo'] ?? '').toString(),
+        city: (j['city'] ?? '').toString(),
+        state: (j['state'] ?? '').toString(),
+        status: (j['status'] ?? 'Active').toString(),
       );
 }

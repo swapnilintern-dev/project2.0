@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 
 import '../../account_deletion/account_deletion_controller.dart';
 import '../../account_deletion/admin_deletion_requests_screen.dart';
+import '../../services/live_refresh.dart';
 import '../../vendor_registration_screen.dart' show AppColors;
 import '../admin_common.dart';
 import '../admin_main.dart';
@@ -26,7 +27,8 @@ class AdminUsersScreen extends StatefulWidget {
   State<AdminUsersScreen> createState() => _AdminUsersScreenState();
 }
 
-class _AdminUsersScreenState extends State<AdminUsersScreen> {
+class _AdminUsersScreenState extends State<AdminUsersScreen>
+    with LiveRefreshMixin {
   int _tab = 0;
   String _query = '';
 
@@ -36,11 +38,23 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   @override
   void initState() {
     super.initState();
-    // Fetch the live directory (vendors + delivery agents) from the backend.
+    // Fetch the live directory (vendors + delivery agents) from the backend,
+    // deferred a frame so the first load never notifies during build. Then keep
+    // it live via the poll + app-resume (immediate: false avoids a double load).
     WidgetsBinding.instance.addPostFrameCallback((_) {
       AdminUsersController.instance.load();
     });
+    startLiveRefresh(immediate: false);
   }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => AdminUsersController.instance.load();
 
   // Reads from the live user store so fetches/deletions reflect immediately.
   List<PlatformUser> _filteredFor(int tab) {

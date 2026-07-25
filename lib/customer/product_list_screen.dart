@@ -11,9 +11,9 @@ import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_widgets.dart';
+import '../services/live_refresh.dart';
 import 'catalog.dart';
 import 'customer_api.dart';
-import 'customer_mock_data.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
 import 'product_card.dart';
@@ -46,10 +46,15 @@ class ProductListScreen extends StatefulWidget {
   State<ProductListScreen> createState() => _ProductListScreenState();
 }
 
-class _ProductListScreenState extends State<ProductListScreen> {
+class _ProductListScreenState extends State<ProductListScreen>
+    with LiveRefreshMixin {
   final CustomerApi _api = CustomerApi();
   final TextEditingController _searchCtrl = TextEditingController();
   final Debouncer _searchDebouncer = Debouncer();
+
+  /// Backs the pull-to-refresh gesture. The catalogue also auto-syncs via
+  /// [LiveRefreshMixin], so results stay live with no manual refresh.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
 
   List<Product> _all = [];
   bool _loading = true;
@@ -64,17 +69,24 @@ class _ProductListScreenState extends State<ProductListScreen> {
     _query = widget.initialQuery ?? '';
     _searchCtrl.text = _query;
     _load();
-    // Keep results in sync with the shared catalogue/stock store.
+    // Keep results in sync with the shared catalogue/stock store, and poll the
+    // backend so newly-published/restocked medicines appear on their own.
     Catalog.listenable.addListener(_onCatalogChanged);
+    startLiveRefresh(immediate: false);
   }
 
   @override
   void dispose() {
+    stopLiveRefresh();
     Catalog.listenable.removeListener(_onCatalogChanged);
     _searchCtrl.dispose();
     _searchDebouncer.dispose();
     super.dispose();
   }
+
+  // Catalogue polling every 20s keeps the shop fresh without hammering the API.
+  @override
+  Duration get liveRefreshInterval => const Duration(seconds: 20);
 
   void _onCatalogChanged() {
     if (!mounted) return;
@@ -83,6 +95,18 @@ class _ProductListScreenState extends State<ProductListScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
+    final products = await _api.getProducts();
+    if (!mounted) return;
+    setState(() {
+      _all = products;
+      _loading = false;
+    });
+  }
+
+  /// Silent background sync — refetches the catalogue without flashing the
+  /// skeleton loaders (used by the poll timer + app-resume).
+  @override
+  Future<void> onLiveRefresh() async {
     final products = await _api.getProducts();
     if (!mounted) return;
     setState(() {
@@ -156,7 +180,14 @@ class _ProductListScreenState extends State<ProductListScreen> {
       children: [
         _searchBar(),
         _filterRow(),
-        Expanded(child: _grid()),
+        Expanded(
+          child: RefreshIndicator(
+            key: _refreshKey,
+            color: AppColors.primary,
+            onRefresh: _load,
+            child: _grid(),
+          ),
+        ),
       ],
     );
 
@@ -175,8 +206,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
   }
 
   String _categoryName(String id) =>
-      MockData.categories.firstWhere((c) => c.id == id,
-          orElse: () => MockData.categories.first).name;
+      kCategories.firstWhere((c) => c.id == id,
+          orElse: () => kCategories.first).name;
 
   Widget _searchBar() {
     return Padding(
@@ -226,7 +257,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               children: [
                 _chip('All', _category == null, () => setState(() => _category = null)),
-                for (final c in MockData.categories)
+                for (final c in kCategories)
                   _chip(c.name, _category == c.id,
                       () => setState(() => _category = c.id)),
               ],
@@ -317,7 +348,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
             Expanded(
               child: GridView.builder(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                physics: const BouncingScrollPhysics(),
+                physics: const AlwaysScrollableScrollPhysics(
+                    parent: BouncingScrollPhysics()),
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: crossAxisCount,
                   childAspectRatio: 0.62,

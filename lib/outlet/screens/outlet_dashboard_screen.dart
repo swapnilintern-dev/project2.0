@@ -18,6 +18,8 @@ import '../outlet_models.dart';
 import '../outlet_repository.dart';
 import '../outlet_session.dart';
 import '../outlet_theme.dart';
+import '../billing/billing_screen.dart';
+import '../../services/live_refresh.dart';
 
 class OutletDashboardScreen extends StatefulWidget {
   const OutletDashboardScreen({
@@ -35,16 +37,33 @@ class OutletDashboardScreen extends StatefulWidget {
   State<OutletDashboardScreen> createState() => _OutletDashboardScreenState();
 }
 
-class _OutletDashboardScreenState extends State<OutletDashboardScreen> {
+class _OutletDashboardScreenState extends State<OutletDashboardScreen>
+    with LiveRefreshMixin {
   final _repo = OutletRepository();
+
+  /// Backs the pull-to-refresh gesture. The dashboard also auto-syncs via
+  /// [LiveRefreshMixin], so counters stay live with no manual refresh.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
 
   late Future<_DashboardData> _future;
 
   @override
   void initState() {
     super.initState();
+    // First load drives the FutureBuilder spinner; then poll silently so the
+    // dashboard stays live (immediate: false avoids a duplicate fetch on open).
     _future = _load();
+    startLiveRefresh(immediate: false);
   }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => _refresh();
 
   Future<_DashboardData> _load() async {
     final orders = await _repo.fetchOrders();
@@ -69,6 +88,7 @@ class _OutletDashboardScreenState extends State<OutletDashboardScreen> {
         ),
         Expanded(
           child: RefreshIndicator(
+            key: _refreshKey,
             onRefresh: _refresh,
             color: OutletColors.success,
             child: FutureBuilder<_DashboardData>(
@@ -150,14 +170,26 @@ class _OutletDashboardScreenState extends State<OutletDashboardScreen> {
 
   // --- Primary action --------------------------------------------------------
 
+  void _openBilling() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const BillingScreen()),
+    );
+  }
+
   Widget _primaryAction() {
     return Column(
       children: [
         _ActionButton(
+          icon: Icons.point_of_sale_rounded,
+          label: 'New Bill (POS)',
+          onTap: _openBilling,
+          filled: true,
+        ),
+        const SizedBox(height: 10),
+        _ActionButton(
           icon: Icons.add_shopping_cart_rounded,
           label: 'New manual order',
           onTap: widget.onNewOrder,
-          filled: true,
         ),
         const SizedBox(height: 10),
         Row(

@@ -3,11 +3,13 @@
 //
 // The screens talk ONLY to [OutletRepository]. The repository delegates to an
 // [OutletDataSource], which is swappable:
-//   • MockOutletDataSource — used now, while the backend is being built.
-//   • (future) a live datasource that calls the ApiConfig.outlet* endpoints.
+//   • LiveOutletDataSource — the default. Calls the real backend where one
+//     exists (stock), and delegates the rest to the mock.
+//   • MockOutletDataSource — pure fake data; still backs orders + payments,
+//     which have no server yet.
 //
-// When the real API lands, add a LiveOutletDataSource implementing this same
-// contract and flip [OutletRepository]'s default — no screen code changes.
+// As each remaining endpoint lands, replace its delegation inside
+// LiveOutletDataSource — no screen code changes.
 //
 // LOCKED RULE #3: there is no "mark paid" method here. Payment status is only
 // ever READ from the server (fetchOrderStatus / fetchOrder). The client can ask
@@ -16,7 +18,7 @@
 // =============================================================================
 
 import 'outlet_enums.dart';
-import 'outlet_mock_datasource.dart';
+import 'outlet_live_datasource.dart';
 import 'outlet_models.dart';
 
 /// The backend-facing contract for the Outlet Staff role. Every method is
@@ -80,7 +82,7 @@ abstract class OutletDataSource {
 /// place to add caching / retry / logging later without touching the UI.
 class OutletRepository {
   OutletRepository({OutletDataSource? dataSource})
-      : _ds = dataSource ?? MockOutletDataSource.instance;
+      : _ds = dataSource ?? LiveOutletDataSource.instance;
 
   final OutletDataSource _ds;
 

@@ -14,6 +14,7 @@ import 'package:image_picker/image_picker.dart' show XFile;
 
 import '../customer/customer_api.dart';
 import '../customer/customer_models.dart' show PromoBanner;
+import '../services/product_media.dart';
 import 'marketing_api.dart';
 import 'marketing_models.dart';
 
@@ -201,19 +202,43 @@ class MarketingProductsController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Adds a product to the backend (with its image), then refreshes the list so
-  /// the new product (and its server id + image url) shows. Returns true on
-  /// success; false lets the caller surface an error.
-  Future<bool> addRemote(InventoryProduct product, XFile image) async {
-    final ok = await _api.addProduct(product, image);
+  /// Adds a product to the backend with its [images] (first is primary) and an
+  /// optional promotional [video], then refreshes the list so the new product
+  /// (server id + media urls) shows. [onProgress] reports upload progress
+  /// (0.0–1.0). Returns true on success; false lets the caller surface an error.
+  Future<bool> addRemote(
+    InventoryProduct product, {
+    required List<XFile> images,
+    XFile? video,
+    void Function(double progress)? onProgress,
+  }) async {
+    final ok = await _api.addProduct(product,
+        images: images, video: video, onProgress: onProgress);
     if (ok) await refresh();
     return ok;
   }
 
-  /// Updates a product on the backend (optionally with a new image), then
-  /// refreshes. Falls back to a local update if the backend is unreachable.
-  Future<bool> updateRemote(InventoryProduct product, {XFile? image}) async {
-    final ok = await _api.updateProduct(product, image: image);
+  /// Updates a product on the backend and refreshes. [keptImages] is the ordered
+  /// set of existing images to retain (the backend deletes the rest), [newImages]
+  /// are freshly picked files to append, and the video is replaced ([video]),
+  /// removed ([removeVideo]) or left unchanged. Falls back to a local field-only
+  /// update if the backend is unreachable.
+  Future<bool> updateRemote(
+    InventoryProduct product, {
+    required List<ProductMedia> keptImages,
+    List<XFile> newImages = const [],
+    XFile? video,
+    bool removeVideo = false,
+    void Function(double progress)? onProgress,
+  }) async {
+    final ok = await _api.updateProduct(
+      product,
+      keptImages: keptImages,
+      newImages: newImages,
+      video: video,
+      removeVideo: removeVideo,
+      onProgress: onProgress,
+    );
     if (ok) {
       await refresh();
     } else {

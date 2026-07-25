@@ -405,6 +405,47 @@ class StatusBadge extends StatelessWidget {
 }
 
 // -----------------------------------------------------------------------------
+// OUTLET-REGISTERED BADGE
+//
+// A blue chip shown ONLY on vendors created through the Outlet Billing flow
+// (registrationSource == "outlet"). Existing/admin-registered vendors never show
+// it. Used on the Vendors list card and the Vendor Review header.
+// -----------------------------------------------------------------------------
+
+class OutletRegisteredBadge extends StatelessWidget {
+  const OutletRegisteredBadge({super.key});
+
+  static const Color _blue = Color(0xFF2563EB);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: _blue.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _blue.withValues(alpha: 0.35)),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.storefront_rounded, size: 12, color: _blue),
+          SizedBox(width: 5),
+          Text(
+            'Registered by Outlet',
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              color: _blue,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
 // CHANGE BADGE (↑12% trend)
 // -----------------------------------------------------------------------------
 
@@ -624,11 +665,21 @@ class AdminSearchField extends StatelessWidget {
     required this.hint,
     required this.onChanged,
     this.onFilter,
+    this.filterCount = 0,
+    this.controller,
   });
 
   final String hint;
   final ValueChanged<String> onChanged;
   final VoidCallback? onFilter;
+
+  /// Number of active filters — when > 0 the filter button is highlighted with
+  /// a small count badge so the admin knows the list is being filtered.
+  final int filterCount;
+
+  /// Optional external controller (lets the parent clear the field, e.g. when
+  /// a "Reset filters" action also clears the search query).
+  final TextEditingController? controller;
 
   @override
   Widget build(BuildContext context) {
@@ -636,6 +687,7 @@ class AdminSearchField extends StatelessWidget {
       children: [
         Expanded(
           child: TextField(
+            controller: controller,
             onChanged: onChanged,
             style: const TextStyle(fontSize: 14, color: AppColors.darkText),
             decoration: InputDecoration(
@@ -672,14 +724,44 @@ class AdminSearchField extends StatelessWidget {
           InkWell(
             onTap: onFilter,
             borderRadius: BorderRadius.circular(12),
-            child: Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: AppColors.primary,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.tune, color: Colors.white, size: 20),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.tune, color: Colors.white, size: 20),
+                ),
+                if (filterCount > 0)
+                  Positioned(
+                    right: -4,
+                    top: -4,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      constraints:
+                          const BoxConstraints(minWidth: 18, minHeight: 18),
+                      decoration: BoxDecoration(
+                        color: AdminColors.orange,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: AppColors.white, width: 1.5),
+                      ),
+                      child: Text(
+                        '$filterCount',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          height: 1,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ],

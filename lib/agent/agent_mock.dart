@@ -16,17 +16,22 @@ import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 
-/// The lifecycle status an agent monitors on an order. Ordered so [index] can
-/// drive the detail-screen timeline (0 = earliest … 3 = delivered).
+/// The lifecycle status an agent monitors on an order. These mirror the
+/// backend order vocabulary one-to-one (see getPincodeOrders): the agent feed
+/// only carries the in-flight states — Pending, Confirm Order, Shipped,
+/// Out for Delivery — and drops an order once it's Delivered. Ordered so
+/// [index] can drive the detail-screen timeline (0 = earliest … 4 = delivered).
 enum AgentOrderStatus {
   pending,
   confirmed,
+  shipped,
   outForDelivery,
   delivered;
 
   String get label => switch (this) {
         AgentOrderStatus.pending => 'Pending',
         AgentOrderStatus.confirmed => 'Confirmed',
+        AgentOrderStatus.shipped => 'Shipped',
         AgentOrderStatus.outForDelivery => 'Out for Delivery',
         AgentOrderStatus.delivered => 'Delivered',
       };
@@ -34,6 +39,7 @@ enum AgentOrderStatus {
   Color get color => switch (this) {
         AgentOrderStatus.pending => Colors.orange,
         AgentOrderStatus.confirmed => Colors.blue,
+        AgentOrderStatus.shipped => Colors.indigo,
         AgentOrderStatus.outForDelivery => Colors.deepPurple,
         AgentOrderStatus.delivered => AppColors.darkGreen,
       };

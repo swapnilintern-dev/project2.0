@@ -9,18 +9,21 @@
 //   per cart); the submit button is also disabled while in flight, so a
 //   double-tap can never create two orders.
 //
-// On success the order is created in AWAITING_PAYMENT and (Step 7) the Payment
-// screen opens. For now it confirms creation and returns to the shell.
+// The order is placed through the SAME manual-order API the marketing role
+// uses (manual-cart ×qty → manual-order), so it lands in the normal vendor
+// pipeline for the team to accept, invoice and fulfil.
+//
+// The Payment screen is intentionally NOT opened afterwards — see _submit().
 // =============================================================================
 
 import 'package:flutter/material.dart';
 
 import '../outlet_cart.dart';
 import '../outlet_enums.dart';
+import '../outlet_live_datasource.dart' show OutletApiException;
 import '../outlet_models.dart';
 import '../outlet_repository.dart';
 import '../outlet_theme.dart';
-import 'outlet_payment_screen.dart';
 
 class OutletManualOrderScreen extends StatefulWidget {
   const OutletManualOrderScreen({super.key});
@@ -77,18 +80,67 @@ class _OutletManualOrderScreenState extends State<OutletManualOrderScreen> {
       final order = await _repo.createOrder(request);
       if (!mounted) return;
       _cart.clear();
-      // Order is AWAITING_PAYMENT → go collect payment (QR / link / on-device
-      // Razorpay) with live server polling. Replaces this screen so Back from
-      // payment returns to the shell, not to a stale order form.
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => OutletPaymentScreen(order: order)),
-      );
+
+      // The order is now REAL and sits in the vendor pipeline for marketing to
+      // accept, invoice and fulfil.
+      //
+      // We deliberately do NOT open the Payment screen: /create-payment/:id
+      // 403s unless the caller's token id equals order.user, and order.user is
+      // the VENDOR — an outlet can never pay for it. Sending a real order into
+      // the mock payment screen would show a fake QR and a fake PAID, which is
+      // exactly what locked rule #3 forbids. Restore the push once the server
+      // exposes an outlet-payable route.
+      await _showPlaced(order);
+      if (!mounted) return;
+      Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);
-      _toast('Could not create the order. Please try again.');
+      // OutletApiException carries the server's own reason ("Vendor not found",
+      // "Cart is empty", …) — show it instead of a generic line.
+      _toast(e is OutletApiException
+          ? e.message
+          : 'Could not create the order. Please try again.');
     }
   }
+
+  /// Confirms the order landed, with the id marketing will see it by.
+  Future<void> _showPlaced(OutletOrder order) => showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Order placed'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('For ${order.customer.name}',
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Text('${order.itemCount} item'
+                  '${order.itemCount == 1 ? '' : 's'} · '
+                  '₹${order.total.toStringAsFixed(2)}'),
+              if (order.id.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('Order #${order.id}',
+                    style: const TextStyle(
+                        fontSize: 12, color: OutletColors.textMuted)),
+              ],
+              const SizedBox(height: 10),
+              const Text(
+                'Sent to the team for confirmation and invoicing. Payment is '
+                'collected on that side — not here.',
+                style: TextStyle(fontSize: 12, color: OutletColors.textMuted),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
 
   void _toast(String msg) => ScaffoldMessenger.of(context)
       .showSnackBar(SnackBar(content: Text(msg)));

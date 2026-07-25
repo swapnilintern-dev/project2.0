@@ -1,106 +1,20 @@
 // =============================================================================
-// MediCaPlus — Admin (Platform Operator) · Models & dummy data
+// MediCaPlus — Admin (Platform Operator) · Models
 //
 // Frontend-only models for the platform-operator role (think "VS Arogya"):
 // vendors awaiting approval, marketplace orders, disputes, platform users,
-// delivery agents, the product catalogue and analytics series.
-//
-// Every list below is static dummy data. Replace each `// TODO: GET …` with a
-// real API call when the backend lands; the screens read these lists directly.
+// delivery agents and the product catalogue. All lists are fetched live via
+// AdminApi — there is no dummy/seed data in this file.
 // =============================================================================
 
 import 'package:flutter/material.dart';
-import 'package:fl_chart/fl_chart.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import 'admin_common.dart';
 
 // -----------------------------------------------------------------------------
-// OVERVIEW / KPIs
+// ANALYTICS (series computed client-side from the live /all-orders feed)
 // -----------------------------------------------------------------------------
-
-// TODO: GET /api/admin/overview
-const double kGmvMtd = 28400000; // ₹2.84 Cr
-const double kGmvChangePct = 31;
-const int kTotalOrders = 14208;
-const int kActiveVendors = 486;
-const int kPendingApprovals = 23;
-const int kOpenDisputes = 6;
-
-// 6-month GMV trend (₹ crore).
-const List<FlSpot> kGmvTrend = [
-  FlSpot(0, 1.6),
-  FlSpot(1, 1.9),
-  FlSpot(2, 1.8),
-  FlSpot(3, 2.2),
-  FlSpot(4, 2.5),
-  FlSpot(5, 2.84),
-];
-const List<String> kGmvMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
-
-class ActivityItem {
-  const ActivityItem({
-    required this.icon,
-    required this.color,
-    required this.title,
-    required this.subtitle,
-    required this.timeAgo,
-  });
-
-  final IconData icon;
-  final Color color;
-  final String title;
-  final String subtitle;
-  final String timeAgo;
-}
-
-// TODO: GET /api/admin/activity
-const List<ActivityItem> kActivity = [
-  ActivityItem(
-    icon: Icons.verified_outlined,
-    color: AdminColors.green,
-    title: 'New vendor approved',
-    subtitle: 'CarePlus Wholesale · Thane',
-    timeAgo: '12m ago',
-  ),
-  ActivityItem(
-    icon: Icons.report_gmailerrorred_outlined,
-    color: AdminColors.red,
-    title: 'Dispute raised',
-    subtitle: '#DSP-1042 · Wellness Mart',
-    timeAgo: '1h ago',
-  ),
-  ActivityItem(
-    icon: Icons.local_shipping_outlined,
-    color: AdminColors.blue,
-    title: 'Agent onboarded',
-    subtitle: 'Suresh Patil · Andheri–Bandra',
-    timeAgo: '3h ago',
-  ),
-  ActivityItem(
-    icon: Icons.inventory_2_outlined,
-    color: AdminColors.purple,
-    title: 'Catalogue updated',
-    subtitle: 'MedPlus Retail · 48 new SKUs',
-    timeAgo: '5h ago',
-  ),
-  ActivityItem(
-    icon: Icons.account_balance_wallet_outlined,
-    color: AdminColors.orange,
-    title: 'Payout processed',
-    subtitle: 'Apollo Pharmacy · ₹3.4L',
-    timeAgo: 'Yesterday',
-  ),
-];
-
-// -----------------------------------------------------------------------------
-// ANALYTICS
-// -----------------------------------------------------------------------------
-
-const double kPlatformRevenue = 28400000; // ₹2.84 Cr
-const double kTakeRate = 8.5; // %
-const double kOnTimeDelivery = 0.86;
-const double kBuyerRetention = 0.64;
 
 class CitySales {
   const CitySales(this.city, this.value);
@@ -108,29 +22,12 @@ class CitySales {
   final double value; // relative bar height
 }
 
-// TODO: GET /api/admin/analytics/cities
-const List<CitySales> kOrdersByCity = [
-  CitySales('Mum', 9.2),
-  CitySales('Pun', 7.4),
-  CitySales('Tha', 6.1),
-  CitySales('Nsk', 4.3),
-  CitySales('Ngp', 3.8),
-  CitySales('Aur', 2.6),
-];
-
 class CategorySplit {
   const CategorySplit(this.name, this.fraction, this.color);
   final String name;
   final double fraction;
   final Color color;
 }
-
-// TODO: GET /api/admin/analytics/categories
-const List<CategorySplit> kCategorySplit = [
-  CategorySplit('Medicine', 0.52, AdminColors.green),
-  CategorySplit('Lifesaving Injections', 0.30, AdminColors.blue),
-  CategorySplit('Vaccines', 0.18, AdminColors.purple),
-];
 
 // -----------------------------------------------------------------------------
 // VENDORS
@@ -183,6 +80,8 @@ class Vendor {
     this.storePhotoUrl,
     this.vendorType = '',
     this.shopType = '',
+    this.registrationSource = 'admin',
+    this.createdAt,
   });
 
   /// Backend _id (empty for the seeded demo vendors). Used to approve via API.
@@ -206,6 +105,18 @@ class Vendor {
   final String? storePhotoUrl; // shown as the header avatar
   final String vendorType;
   final String shopType;
+
+  /// How the vendor was registered: "admin" (default / pre-existing docs) or
+  /// "outlet" (created via Outlet Billing). Drives the "Registered by Outlet"
+  /// badge — shown only when this equals "outlet".
+  final String registrationSource;
+
+  /// Raw registration timestamp (backend `createdAt`) — used to sort newest
+  /// applications to the top and to power the "registered recently" filters.
+  /// Null for the seeded demo vendors / unparseable values (sorted last).
+  final DateTime? createdAt;
+
+  bool get isOutletRegistered => registrationSource == 'outlet';
 }
 
 // Vendors are fetched live from the backend (GET /vsArogya/all-vendors) via
@@ -274,12 +185,17 @@ class AdminOrderLine {
     required this.brand,
     required this.quantity,
     required this.price,
+    this.category = '',
   });
 
   final String name;
   final String brand;
   final int quantity;
   final double price;
+
+  /// The product's backend category (raw string) — feeds the analytics
+  /// category split.
+  final String category;
 }
 
 /// A marketplace order, mapped from the backend (GET /vsArogya/all-orders).
@@ -294,6 +210,7 @@ class AdminOrder {
     this.placedAt,
     this.phone = '',
     this.address = '',
+    this.city = '',
     this.paymentMethod = '',
   });
 
@@ -306,6 +223,10 @@ class AdminOrder {
   final DateTime? placedAt;
   final String phone;
   final String address;
+
+  /// The shipping city on its own — feeds the analytics "orders by city" bars.
+  final String city;
+
   final String paymentMethod;
 }
 
@@ -350,31 +271,6 @@ class Dispute {
   final List<DisputeMessage> messages;
   final int evidenceCount;
 }
-
-// TODO: GET /api/admin/disputes/:id
-const Dispute kSampleDispute = Dispute(
-  id: 'DSP-1042',
-  orderId: 'MCP-47120',
-  reason: 'Wrong Items Delivered',
-  detail: 'Raised by Wellness Mart · 2 days ago',
-  buyer: 'Wellness Mart',
-  vendor: 'ValueRx Traders',
-  amount: 6240,
-  openedAgo: '2 days ago',
-  evidenceCount: 2,
-  messages: [
-    DisputeMessage(
-      fromVendor: false,
-      author: 'Wellness Mart',
-      text: 'Received Amoxicillin instead of Azithromycin. 90 units affected.',
-    ),
-    DisputeMessage(
-      fromVendor: true,
-      author: 'ValueRx',
-      text: 'Apologies — we’ll arrange a replacement dispatch today.',
-    ),
-  ],
-);
 
 // -----------------------------------------------------------------------------
 // PLATFORM USERS (User Management)
@@ -517,27 +413,12 @@ class PlatformUser {
 // held in AdminUsersController � there is no dummy/seed user list or count.
 
 // -----------------------------------------------------------------------------
-// DELIVERY AGENTS
-// -----------------------------------------------------------------------------
-
-const int kAgentsTotal = 128;
-const int kAgentsOnDuty = 86;
-const int kAgentsPending = 12;
-
-const List<String> kServiceZones = [
-  'Andheri – Bandra',
-  'Pune Central',
-  'Thane West',
-  'Nashik City',
-  'Nagpur East',
-];
-
-// -----------------------------------------------------------------------------
-// PRODUCTS (catalogue)
+// PRODUCTS (catalogue — fetched live via AdminApi.getAllProducts)
 // -----------------------------------------------------------------------------
 
 class AdminProduct {
   AdminProduct({
+    this.id = '',
     required this.name,
     required this.sku,
     required this.price,
@@ -545,6 +426,9 @@ class AdminProduct {
     required this.category,
     this.active = true,
   });
+
+  /// Backend _id, kept for future server-side actions on a product.
+  final String id;
 
   final String name;
   final String sku;
@@ -554,66 +438,10 @@ class AdminProduct {
   bool active;
 }
 
-const int kSkusTotal = 312;
-const int kSkusActive = 298;
-const int kSkusLow = 7;
-const int kSkusOut = 7;
-
+/// The category options the Add Product form offers — matches the canonical
+/// category strings products carry on the backend.
 const List<String> kProductCategories = [
   'Lifesaving Injections',
   'Vaccines',
   'Medicine',
-];
-
-// TODO: GET /api/admin/products
-final List<AdminProduct> kProducts = [
-  AdminProduct(
-    name: 'Paracetamol 650mg',
-    sku: 'PCM-650-15',
-    price: 36,
-    stock: 500,
-    category: 'Medicine',
-  ),
-  AdminProduct(
-    name: 'Amoxicillin 500mg',
-    sku: 'AMX-500-10',
-    price: 84,
-    stock: 240,
-    category: 'Medicine',
-  ),
-  AdminProduct(
-    name: 'Insulin Glargine',
-    sku: 'INS-GLA-3',
-    price: 845,
-    stock: 8,
-    category: 'Lifesaving Injections',
-  ),
-  AdminProduct(
-    name: 'Surgical Gloves (L)',
-    sku: 'SGL-L-100',
-    price: 320,
-    stock: 0,
-    category: 'Medicine',
-  ),
-  AdminProduct(
-    name: 'Digital Thermometer',
-    sku: 'DTH-001',
-    price: 199,
-    stock: 84,
-    category: 'Medicine',
-  ),
-  AdminProduct(
-    name: 'Azithromycin 500mg',
-    sku: 'AZI-500-3',
-    price: 112,
-    stock: 12,
-    category: 'Medicine',
-  ),
-  AdminProduct(
-    name: 'ORS Sachets',
-    sku: 'ORS-200',
-    price: 22,
-    stock: 640,
-    category: 'Medicine',
-  ),
 ];

@@ -27,6 +27,20 @@ export const generateInvoiceHTML = (data) => {
     // so the invoice never shows a blank space.
     const money = (value) => (Number(value) || 0).toFixed(2);
 
+    // Formats a batch expiry for the invoice ("Jul-2027"). Older orders whose
+    // product has no expiry come through as "N/A"/empty and stay "N/A" — the
+    // invoice still renders, never crashes. Built manually so it is locale-safe.
+    const expMonths = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    const expText = (value) => {
+        if (!value || value === "N/A") return "N/A";
+        const d = new Date(value);
+        if (isNaN(d.getTime())) return "N/A";
+        return `${expMonths[d.getMonth()]}-${d.getFullYear()}`;
+    };
+
     const itemsHtml = data.items
         .map((item, index) => {
             // ---- Per-item GST maths (prices are GST-INCLUSIVE) ----
@@ -48,7 +62,7 @@ export const generateInvoiceHTML = (data) => {
             return `
 <tr class="item-row">
     <td>${index + 1}</td>
-    <td class="left-align"><strong>${item.title}</strong></td>
+    <td class="left-align"><strong>${item.title}</strong><br><span style="font-size: 9px; color: var(--text-muted);">Batch: ${item.batch_no || "N/A"} | Exp: ${expText(item.exp_date)}</span></td>
     <td>${item.hsnCode || "N/A"}</td>
     <td>${item.manufacturer || "N/A"}</td>
     <td>${item.marketedBy || "N/A"}</td>

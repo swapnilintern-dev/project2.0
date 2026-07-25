@@ -4,7 +4,17 @@ const orderSchema = new mongoose.Schema({
     user: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Vendor",
-        required: true
+        // required: true
+    },
+
+    // The outlet that placed this order, when it came from the Outlet role.
+    // Absent on vendor-placed and marketing-placed orders — so it is optional.
+    // This is the ONLY link back to the outlet: order.user is the VENDOR the
+    // order is for, which is why "this outlet's orders" cannot be derived
+    // without it.
+    outlet: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Outlet"
     },
 
     orderItems: [
@@ -23,6 +33,18 @@ const orderSchema = new mongoose.Schema({
             orderPrice: {
                 type: Number,
                 required: true
+            },
+
+            // Batch + expiry SNAPSHOTTED at order creation from the product that
+            // was actually sold. The invoice reads these first (falling back to
+            // the product only for pre-snapshot orders) so a later batch edit on
+            // the product never rewrites a historical invoice. Optional →
+            // existing orders without them still work.
+            batch_no: {
+                type: String
+            },
+            exp_date: {
+                type: Date
             }
         }
     ],
@@ -62,6 +84,14 @@ const orderSchema = new mongoose.Schema({
         razorpay_id: { type: String },        // Razorpay payment id
         razorpay_orderId: { type: String },   // Razorpay order id
         razorpay_signature: { type: String }, // Razorpay signature
+
+        // Razorpay Payment Link session (outlet QR/link + delivery doorstep
+        // collection — see controller/rolePaymentController.js). The link is
+        // re-minted after link_expiresAt passes.
+        link_id: { type: String },
+        link_url: { type: String },
+        link_expiresAt: { type: Date },
+
         status: {
             type: String,
             enum: ["Pending", "Completed", "Failed", "Refunded"],
@@ -100,13 +130,9 @@ const orderSchema = new mongoose.Schema({
         required: true
     },
 
-    paymentMethod: {
+    orderType: {
         type: String,
-        enum: ["COD", "ONLINE"]
-    },
-        orderType :{
-        type :String ,
-        default:"byApp"
+        default: "byApp"
     },
 
     // --- Audit + idempotency (manual orders placed by marketing on a vendor's

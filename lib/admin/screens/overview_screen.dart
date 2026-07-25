@@ -14,6 +14,7 @@
 import 'package:flutter/material.dart';
 
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../../services/live_refresh.dart';
 import '../admin_api.dart';
 import '../admin_common.dart';
 import '../admin_main.dart';
@@ -32,8 +33,13 @@ class AdminOverviewScreen extends StatefulWidget {
   State<AdminOverviewScreen> createState() => _AdminOverviewScreenState();
 }
 
-class _AdminOverviewScreenState extends State<AdminOverviewScreen> {
+class _AdminOverviewScreenState extends State<AdminOverviewScreen>
+    with LiveRefreshMixin {
   final AdminApi _api = AdminApi();
+
+  /// Backs the pull-to-refresh gesture. The metrics also auto-sync via
+  /// [LiveRefreshMixin], so the overview stays live with no manual refresh.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
 
   bool _loading = true;
   double? _revenue;
@@ -41,11 +47,25 @@ class _AdminOverviewScreenState extends State<AdminOverviewScreen> {
   int? _pending;
   List<AdminOrder> _orders = const [];
 
+  // Four headline endpoints — poll a little slower to stay light.
+  @override
+  Duration get liveRefreshInterval => const Duration(seconds: 15);
+
   @override
   void initState() {
     super.initState();
-    _load();
+    // Load on open, then keep the overview live (poll + app-resume).
+    startLiveRefresh();
   }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  @override
+  Future<void> onLiveRefresh() => _load();
 
   /// Loads every headline metric in parallel. Each call is independent and
   /// null-safe, so a single failing endpoint never blanks the whole screen.
@@ -79,6 +99,7 @@ class _AdminOverviewScreenState extends State<AdminOverviewScreen> {
       body: SafeArea(
         bottom: false,
         child: RefreshIndicator(
+          key: _refreshKey,
           onRefresh: _load,
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(

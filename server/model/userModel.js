@@ -71,8 +71,27 @@ const vendorSchema = new mongoose.Schema(
       type: String,
     },
 
+    // GST certificate NUMBER (not a file). Captured as plain text — e.g. by the
+    // Outlet Billing registration, which no longer uploads a GST PDF.
+    gst_no: {
+      type: String,
+      trim: true,
+    },
+
     drug_lic_ex_date: {
       type: Date,
+    },
+
+    // Where this vendor was registered from:
+    //   "admin"  → the normal admin/marketing vendor registration (default; also
+    //              the implicit value for pre-existing documents that predate
+    //              this field — they are treated as "admin").
+    //   "outlet" → created through the Outlet Billing (POS) flow. Only these
+    //              show the "Registered by Outlet" badge in the admin portal.
+    registrationSource: {
+      type: String,
+      enum: ["admin", "outlet"],
+      default: "admin",
     },
 
     password: {
@@ -121,6 +140,22 @@ const vendorSchema = new mongoose.Schema(
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: "product"
+      }
+    ],
+
+    // The buyer's saved delivery addresses (customer app address book).
+    // CRUD lives in userController (getAddresses / addAddress / updateAddress /
+    // deleteAddress) under /vsArogya/addresses.
+    addresses: [
+      {
+        label: { type: String, default: "Home" },
+        fullName: { type: String, default: "" },
+        phone: { type: String, default: "" },
+        line1: { type: String, required: true },
+        city: { type: String, default: "" },
+        state: { type: String, default: "" },
+        pincode: { type: String, default: "" },
+        isDefault: { type: Boolean, default: false }
       }
     ],
   },

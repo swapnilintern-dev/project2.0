@@ -21,6 +21,7 @@ import 'package:image_picker/image_picker.dart' show XFile;
 
 import '../services/api_config.dart';
 import '../services/auth_service.dart';
+import '../services/product_media.dart';
 import '../customer/customer_models.dart' show PromoBanner;
 import '../customer/invoice_pdf.dart' show InvoicePdf;
 import 'marketing_models.dart';
@@ -33,15 +34,11 @@ class MarketingApi {
 
   static String get baseUrl => ApiConfig.baseUrl;
 
-  /// Creates a product on the backend. Returns true on success.
-  /// The backend requires the `image` file part.
-  Future<bool> addProduct(InventoryProduct p, XFile image) async {
-    try {
-      final req = http.MultipartRequest(
-        'POST',
-        Uri.parse('$baseUrl/vsArogya/add-product'),
-      );
-      req.fields.addAll({
+  /// Uploads can be large (up to 10 images + a 100 MB video); give them room.
+  static const Duration _uploadTimeout = Duration(minutes: 5);
+
+  /// The scalar (non-media) product fields sent on both create and update.
+  Map<String, String> _productFields(InventoryProduct p) => {
         'title': p.name,
         'description': p.description,
         'price': p.price.toString(),
@@ -60,67 +57,116 @@ class MarketingApi {
         'lowThreshold': p.lowThreshold.toString(),
         'prescriptionRequired': p.prescriptionRequired.toString(),
         'packInfo': p.packInfo,
+        'batch_no': p.batchNo,
+        // Send an ISO date the backend parses with `new Date(...)`; omit when
+        // absent so an edit that doesn't touch expiry leaves it unchanged.
+        if (p.expiryDate != null)
+          'exp_date': p.expiryDate!.toIso8601String(),
         if (p.badge != null) 'badge': p.badge!,
-      });
+      };
 
-      final bytes = await image.readAsBytes();
-      final name = _safeName(image);
-      req.files.add(http.MultipartFile.fromBytes(
-        'image', // backend multer field: upload.single("image")
-        bytes,
-        filename: name,
-        contentType: _contentTypeFor(name),
-      ));
+  /// Creates a product on the backend with one or more [images] (the first is
+  /// the primary) and an optional promotional [video]. [onProgress] reports
+  /// upload progress in the range 0.0–1.0. Returns true on success.
+  Future<bool> addProduct(
+    InventoryProduct p, {
+    required List<XFile> images,
+    XFile? video,
+    void Function(double progress)? onProgress,
+  }) async {
+    try {
+      final req = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/vsArogya/add-product'),
+      );
+      req.fields.addAll(_productFields(p));
+      for (final img in images) {
+        req.files.add(await _imagePart('images', img));
+      }
+      if (video != null) req.files.add(await _videoPart(video));
 
-      final streamed = await req.send().timeout(_timeout);
-      final res = await http.Response.fromStream(streamed);
+      final res = await _sendWithProgress(req, onProgress);
       return _isOk(res);
     } catch (_) {
       return false;
     }
   }
 
-  /// Updates a product (PUT /update-product/:id). Sends all fields; only a new
-  /// image part is included when [image] is provided. Returns true on success.
-  Future<bool> updateProduct(InventoryProduct p, {XFile? image}) async {
+  /// Updates a product (PUT /update-product/:id).
+  ///
+  /// [keptImages] is the ordered set of EXISTING images the edit retains — the
+  /// backend deletes any current image not in this list (orphan-free) and keeps
+  /// these in the given order. [newImages] are freshly picked files, appended
+  /// after the kept ones. For the video: pass [video] to replace it,
+  /// [removeVideo] to delete it, or neither to leave it unchanged.
+  ///
+  /// [onProgress] reports 0.0–1.0. Returns true on success.
+  Future<bool> updateProduct(
+    InventoryProduct p, {
+    required List<ProductMedia> keptImages,
+    List<XFile> newImages = const [],
+    XFile? video,
+    bool removeVideo = false,
+    void Function(double progress)? onProgress,
+  }) async {
     try {
       final req = http.MultipartRequest(
         'PUT',
         Uri.parse('$baseUrl/vsArogya/update-product/${p.id}'),
       );
-      req.fields.addAll({
-        'title': p.name,
-        'description': p.description,
-        'price': p.price.toString(),
-        'category': _categoryToId(p.category),
-        'mrp': p.mrp?.toString() ?? '',
-        'brand': p.brand,
-        'code': p.code,
-        'manufacturer': p.manufacturer,
-        'marketedBy': p.marketedBy,
-        'stock': p.stock.toString(),
-        'active': p.active.toString(),
-        'packOf': p.packOf.toString(),
-        'hsnCode': p.hsnCode,
-        'gstPercent': p.gstPercent.toString(),
-        'discountPercent': p.discountPercent.toString(),
-        'lowThreshold': p.lowThreshold.toString(),
-        'prescriptionRequired': p.prescriptionRequired.toString(),
-        'packInfo': p.packInfo,
-        if (p.badge != null) 'badge': p.badge!,
-      });
-      if (image != null) {
-        final bytes = await image.readAsBytes();
-        final name = _safeName(image);
-        req.files.add(http.MultipartFile.fromBytes('image', bytes,
-            filename: name, contentType: _contentTypeFor(name)));
+      req.fields.addAll(_productFields(p));
+      req.fields['keptImages'] = ProductMedia.encodeKept(keptImages);
+      if (removeVideo) req.fields['removeVideo'] = 'true';
+      for (final img in newImages) {
+        req.files.add(await _imagePart('images', img));
       }
-      final streamed = await req.send().timeout(_timeout);
-      final res = await http.Response.fromStream(streamed);
+      if (video != null) req.files.add(await _videoPart(video));
+
+      final res = await _sendWithProgress(req, onProgress);
       return _isOk(res);
     } catch (_) {
       return false;
     }
+  }
+
+  /// Builds an image multipart part under [field] with the right filename +
+  /// content-type.
+  Future<http.MultipartFile> _imagePart(String field, XFile image) async {
+    final bytes = await image.readAsBytes();
+    final name = _safeName(image);
+    return http.MultipartFile.fromBytes(field, bytes,
+        filename: name, contentType: _contentTypeFor(name));
+  }
+
+  /// Builds the `video` multipart part.
+  Future<http.MultipartFile> _videoPart(XFile video) async {
+    final bytes = await video.readAsBytes();
+    final name = _safeVideoName(video);
+    return http.MultipartFile.fromBytes('video', bytes,
+        filename: name, contentType: _videoContentTypeFor(name));
+  }
+
+  /// Sends [req], reporting byte-level upload progress (0.0–1.0) via
+  /// [onProgress] by wrapping the finalized body in a counting stream. Falls
+  /// back to a plain send when no callback is supplied.
+  Future<http.Response> _sendWithProgress(
+    http.MultipartRequest req,
+    void Function(double progress)? onProgress,
+  ) async {
+    if (onProgress == null) {
+      final streamed = await req.send().timeout(_uploadTimeout);
+      return http.Response.fromStream(streamed);
+    }
+
+    final total = req.contentLength;
+    var sent = 0;
+    final wrapped = _ProgressRequest(req, (chunk) {
+      sent += chunk;
+      if (total > 0) onProgress((sent / total).clamp(0.0, 1.0));
+    });
+    final streamed = await _client.send(wrapped).timeout(_uploadTimeout);
+    onProgress(1.0);
+    return http.Response.fromStream(streamed);
   }
 
   /// Toggles only a product's active flag (PUT /update-product/:id).
@@ -173,11 +219,8 @@ class MarketingApi {
   // --- mapping & helpers ------------------------------------------------------
 
   static InventoryProduct _toInventory(Map<String, dynamic> j) {
-    String? image;
-    final raw = j['image'];
-    if (raw is List && raw.isNotEmpty && raw.first is Map) {
-      image = (raw.first as Map)['url'] as String?;
-    }
+    final images = ProductMedia.parseImages(j['image']);
+    final video = ProductMedia.parseVideo(j['video']);
     return InventoryProduct(
       id: (j['_id'] ?? '').toString(),
       name: (j['title'] ?? '').toString(),
@@ -197,12 +240,18 @@ class MarketingApi {
       discountPercent: _num(j['discountPercent']),
       lowThreshold: _int(j['lowThreshold'], 10),
       prescriptionRequired: j['prescriptionRequired'] == true,
+      batchNo: (j['batch_no'] ?? '').toString(),
+      expiryDate: _date(j['exp_date']),
+      // Live flag computed server-side from the current date; default false so
+      // older products (no expiry stored) never show the alert.
+      isExpiringSoon: j['isExpiringSoon'] == true,
       // No fabricated rating — 0 when the backend doesn't provide one.
       rating: j['rating'] == null ? 0 : _num(j['rating']),
       reviewCount: _int(j['reviewCount']),
       badge: j['badge'] as String?,
       packInfo: (j['packInfo'] ?? '').toString(),
-      imageUrl: image,
+      images: images,
+      video: video,
     );
   }
 
@@ -240,6 +289,14 @@ class MarketingApi {
     return d;
   }
 
+  /// Parses a backend date (ISO string, or a null) into a [DateTime], or null.
+  static DateTime? _date(Object? v) {
+    if (v == null) return null;
+    final s = v.toString();
+    if (s.isEmpty || s == 'N/A') return null;
+    return DateTime.tryParse(s);
+  }
+
   static String _safeName(XFile file) {
     final name = file.name;
     if (name.contains('.')) return name;
@@ -260,6 +317,28 @@ class MarketingApi {
     };
   }
 
+  static String _safeVideoName(XFile file) {
+    final name = file.name;
+    if (name.contains('.')) return name;
+    final ext = switch (file.mimeType) {
+      'video/quicktime' => 'mov',
+      'video/x-matroska' => 'mkv',
+      'video/webm' => 'webm',
+      _ => 'mp4',
+    };
+    return '$name.$ext';
+  }
+
+  static MediaType _videoContentTypeFor(String name) {
+    final ext = name.toLowerCase().split('.').last;
+    return switch (ext) {
+      'mov' => MediaType('video', 'quicktime'),
+      'mkv' => MediaType('video', 'x-matroska'),
+      'webm' => MediaType('video', 'webm'),
+      _ => MediaType('video', 'mp4'),
+    };
+  }
+
   static bool _isOk(http.Response res) {
     if (res.statusCode < 200 || res.statusCode >= 300) return false;
     if (res.body.isEmpty) return true;
@@ -269,6 +348,42 @@ class MarketingApi {
     } catch (_) {
       return true;
     }
+  }
+}
+
+/// Wraps a [http.MultipartRequest] so byte-level upload progress can be
+/// observed. The finalized body is piped through a counting transformer that
+/// calls [_onChunk] with the size of each chunk as it is written to the socket.
+///
+/// The multipart content-type (with its boundary) and content-length are only
+/// known after [http.MultipartRequest.finalize], so both are copied across
+/// inside [finalize] — which the HTTP client invokes before it reads the
+/// request headers.
+class _ProgressRequest extends http.BaseRequest {
+  _ProgressRequest(this._inner, this._onChunk)
+      : super(_inner.method, _inner.url);
+
+  final http.MultipartRequest _inner;
+  final void Function(int bytes) _onChunk;
+
+  @override
+  int? get contentLength => _inner.contentLength;
+
+  @override
+  http.ByteStream finalize() {
+    super.finalize();
+    final byteStream = _inner.finalize();
+    // Now that the boundary + content-type are set, mirror the inner headers.
+    headers.addAll(_inner.headers);
+    final counted = byteStream.transform(
+      StreamTransformer<List<int>, List<int>>.fromHandlers(
+        handleData: (data, sink) {
+          _onChunk(data.length);
+          sink.add(data);
+        },
+      ),
+    );
+    return http.ByteStream(counted);
   }
 }
 
@@ -599,7 +714,7 @@ class MarketingOrdersApi {
   /// filtered out). Returns null on failure so the picker can offer a retry —
   /// never dummy data.
   Future<List<VendorAccount>?> getVendors() async {
-    const staffRoles = {'admin', 'delivery', 'marketing'};
+    const staffRoles = {'admin', 'delivery', 'marketing', 'outlet', 'agent'};
     try {
       final res = await _client
           .get(Uri.parse('$baseUrl/vsArogya/all-vendors'))
@@ -788,6 +903,231 @@ class MarketingOrdersApi {
     if (v is num) return v.toDouble();
     if (v is String) return double.tryParse(v) ?? 0;
     return 0;
+  }
+}
+
+// =============================================================================
+// OUTLETS (Marketing → Register Outlet screen)
+//
+// A physical outlet the company runs. The marketing head registers one from the
+// app; the outlet then logs in with the mobile number + the password set here.
+//
+//   POST /vsArogya/outlet-register
+//   GET  /vsArogya/outlet-products/:id   (that outlet's assigned stock)
+//
+// Outlets live in their OWN collection (model/outletregistersModel.js), not in
+// Vendor — so they are not part of the vendor directory or the approval flow.
+// =============================================================================
+
+class OutletApi {
+  OutletApi({http.Client? client}) : _client = client ?? http.Client();
+
+  final http.Client _client;
+
+  /// A cold-started free-tier server can take a while to answer the first call.
+  static const Duration _timeout = Duration(seconds: 45);
+
+  static String get baseUrl => ApiConfig.baseUrl;
+
+  /// Same staff-session headers the other marketing endpoints send.
+  Map<String, String> get _headers => {
+        'Content-Type': 'application/json',
+        if (AuthService.authToken != null)
+          'Authorization': 'Bearer ${AuthService.authToken}',
+        if (AuthService.sessionCookie != null)
+          'Cookie': AuthService.sessionCookie!,
+      };
+
+  /// The outlet directory — every outlet, or only those in [pincode].
+  ///
+  /// Returns null on failure so the caller can offer a retry; an empty list
+  /// means "no outlets in that pincode", which is not an error.
+  Future<List<MarketingOutlet>?> getOutlets({String? pincode}) async {
+    final query = (pincode == null || pincode.isEmpty) ? '' : '?pincode=$pincode';
+    final url = '$baseUrl/vsArogya/outlets$query';
+    try {
+      debugPrint('[Outlet] GET $url');
+      final res =
+          await _client.get(Uri.parse(url), headers: _headers).timeout(_timeout);
+      if (!MarketingApi._isOk(res)) return null;
+
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final list = (body['outlets'] as List?) ?? const [];
+      return list
+          .whereType<Map<String, dynamic>>()
+          .map(MarketingOutlet.fromJson)
+          .toList();
+    } catch (e) {
+      debugPrint('[Outlet] getOutlets failed: $e');
+      return null;
+    }
+  }
+
+  /// Moves [quantity] of [productId] out of the global catalog and into
+  /// [outletId]'s stock (POST /outlet-stock).
+  ///
+  /// The server takes ONE product per call and ADDS to whatever the outlet
+  /// already holds (`quantity += n`), deducting the same amount from
+  /// `product.stock`. It rejects the call when the catalog doesn't have enough.
+  ///
+  /// Returns null on success, or a user-facing error message.
+  Future<String?> assignStock({
+    required String outletId,
+    required String productId,
+    required int quantity,
+  }) async {
+    final url = '$baseUrl/vsArogya/outlet-stock';
+    try {
+      final res = await _client
+          .post(
+            Uri.parse(url),
+            headers: _headers,
+            body: jsonEncode({
+              'outletId': outletId,
+              'productId': productId,
+              'quantity': quantity,
+            }),
+          )
+          .timeout(_timeout);
+
+      if (MarketingApi._isOk(res)) return null;
+      // The server explains its own rejections ("Insufficient stock available",
+      // "Product not found") — show those verbatim.
+      return MarketingOrdersApi._serverMessage(res) ??
+          'Could not update stock (HTTP ${res.statusCode})';
+    } on TimeoutException {
+      return 'Server is taking too long to respond';
+    } catch (e) {
+      debugPrint('[Outlet] assignStock failed: $e');
+      return 'Could not reach the server';
+    }
+  }
+
+  /// Registers an outlet. Every field the server requires is non-optional here
+  /// — the backend rejects the whole call with "Missing fields" if any one of
+  /// them is blank, so the form validates them all before we get this far.
+  ///
+  /// Returns null on success, or a user-facing error message.
+  Future<String?> registerOutlet({
+    required String outletName,
+    required String ownerName,
+    required String mobileNo,
+    required String email,
+    required String address,
+    required String city,
+    required String state,
+    required String pincode,
+    required String gstNumber,
+    required String password,
+  }) async {
+    final url = '$baseUrl/vsArogya/outlet-register';
+    try {
+      debugPrint('[Outlet] POST $url name=$outletName');
+      final res = await _client
+          .post(
+            Uri.parse(url),
+            headers: _headers,
+            body: jsonEncode({
+              'outletName': outletName,
+              'ownerName': ownerName,
+              'mobileNo': mobileNo,
+              'email': email,
+              'address': address,
+              'city': city,
+              'state': state,
+              'pincode': pincode,
+              'gstNumber': gstNumber,
+              'password': password,
+            }),
+          )
+          .timeout(_timeout);
+
+      debugPrint('[Outlet] status=${res.statusCode} body=${res.body}');
+      if (MarketingApi._isOk(res)) return null;
+
+      return MarketingOrdersApi._serverMessage(res) ??
+          'Could not register the outlet (HTTP ${res.statusCode}). '
+              'Please try again.';
+    } on TimeoutException {
+      return 'Server is taking too long to respond — please try again.';
+    } catch (e) {
+      debugPrint('[Outlet] failed: $e');
+      return 'Could not reach the server. Check your connection and try again.';
+    }
+  }
+}
+
+// =============================================================================
+// AREA AGENTS (Marketing → Register Agent screen)
+//
+// An Area Agent monitors every order delivering to one pincode. The marketing
+// head creates one here; the agent then signs in with the mobile number + the
+// password set on the form (the normal sign-in screen).
+//
+//   POST /vsArogya/agent-register  { name, mobileNo, email, pincode, password }
+//
+// Agents ARE Vendor documents (role "agent" + pin_code), created Approved so
+// they can log in immediately — unlike outlets, which live in their own table.
+// =============================================================================
+
+class MarketingAgentApi {
+  MarketingAgentApi({http.Client? client}) : _client = client ?? http.Client();
+
+  final http.Client _client;
+
+  /// A cold-started free-tier server can take a while to answer the first call.
+  static const Duration _timeout = Duration(seconds: 45);
+
+  static String get baseUrl => ApiConfig.baseUrl;
+
+  /// Same staff-session headers the other marketing endpoints send.
+  Map<String, String> get _headers => {
+        'Content-Type': 'application/json',
+        if (AuthService.authToken != null)
+          'Authorization': 'Bearer ${AuthService.authToken}',
+        if (AuthService.sessionCookie != null)
+          'Cookie': AuthService.sessionCookie!,
+      };
+
+  /// Registers an Area Agent. Returns null on success, or a user-facing error
+  /// message (the server's own message when it explains the rejection, e.g.
+  /// "A user with this mobile number already exists").
+  Future<String?> registerAgent({
+    required String name,
+    required String mobileNo,
+    required String email,
+    required String pincode,
+    required String password,
+  }) async {
+    final url = '$baseUrl/vsArogya/agent-register';
+    try {
+      debugPrint('[Agent] POST $url name=$name pin=$pincode');
+      final res = await _client
+          .post(
+            Uri.parse(url),
+            headers: _headers,
+            body: jsonEncode({
+              'name': name,
+              'mobileNo': mobileNo,
+              'email': email,
+              'pincode': pincode,
+              'password': password,
+            }),
+          )
+          .timeout(_timeout);
+
+      debugPrint('[Agent] status=${res.statusCode} body=${res.body}');
+      if (MarketingApi._isOk(res)) return null;
+
+      return MarketingOrdersApi._serverMessage(res) ??
+          'Could not register the agent (HTTP ${res.statusCode}). '
+              'Please try again.';
+    } on TimeoutException {
+      return 'Server is taking too long to respond — please try again.';
+    } catch (e) {
+      debugPrint('[Agent] registerAgent failed: $e');
+      return 'Could not reach the server. Check your connection and try again.';
+    }
   }
 }
 

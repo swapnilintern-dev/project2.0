@@ -262,11 +262,18 @@ class VendorReviewScreen extends StatelessWidget {
                 Text('Applied ${vendor.appliedOn} · ${vendor.city}',
                     style: const TextStyle(fontSize: 12, color: AppColors.greyText)),
                 const SizedBox(height: 8),
-                StatusBadge(
-                  label: vendor.status == VendorStatus.active
-                      ? 'Approved'
-                      : '${vendor.status.label} Approval',
-                  color: vendor.status.color,
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    StatusBadge(
+                      label: vendor.status == VendorStatus.active
+                          ? 'Approved'
+                          : '${vendor.status.label} Approval',
+                      color: vendor.status.color,
+                    ),
+                    if (vendor.isOutletRegistered) const OutletRegisteredBadge(),
+                  ],
                 ),
               ],
             ),

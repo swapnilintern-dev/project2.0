@@ -117,6 +117,19 @@ class AuthService {
       role = body['role'] as String;
     }
 
+    // Area Agent (a Vendor with role "agent") — capture the id + assigned
+    // pincode the backend returns so the dashboard can pull its pincode-wise
+    // orders live. Populated here so the sign-in screen's homeForRole() routing
+    // lands on a LIVE Agent portal (isLive == true) rather than the mock.
+    if ((role ?? '').toLowerCase().contains('agent') && body['success'] == true) {
+      AgentSession.instance.signIn(
+        name: (body['name'] ?? storeName)?.toString(),
+        pincode: body['pincode']?.toString(),
+        agentId: body['id']?.toString(),
+        token: authToken,
+      );
+    }
+
     // Successful login → save the session on-device so it survives app
     // restarts (fire-and-forget; login never fails because of storage).
     if (body['success'] == true && (authToken != null || sessionCookie != null)) {

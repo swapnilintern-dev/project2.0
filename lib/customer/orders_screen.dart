@@ -29,6 +29,10 @@ class OrdersScreen extends StatefulWidget {
 class _OrdersScreenState extends State<OrdersScreen> with LiveRefreshMixin {
   OrderFilter _filter = OrderFilter.all;
 
+  /// Backs the pull-to-refresh gesture. Data also auto-syncs via
+  /// [LiveRefreshMixin] so the list stays live with no manual action.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -70,7 +74,7 @@ class _OrdersScreenState extends State<OrdersScreen> with LiveRefreshMixin {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: EdgeInsets.fromLTRB(20, widget.embedded ? 16 : 8, 20, 8),
+              padding: EdgeInsets.fromLTRB(20, widget.embedded ? 16 : 8, 8, 8),
               child: const Text('My Orders',
                   style:
                       TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
@@ -87,26 +91,47 @@ class _OrdersScreenState extends State<OrdersScreen> with LiveRefreshMixin {
             ),
             const SizedBox(height: 8),
             Expanded(
-              child: (!OrdersController.instance.isLoaded && orders.isEmpty)
-                  ? const Center(child: CircularProgressIndicator())
-                  : orders.isEmpty
-                  ? EmptyState(
-                      icon: Icons.receipt_long_outlined,
-                      title: 'No ${_filter == OrderFilter.all ? '' : _filter.label.toLowerCase()} orders',
-                      message:
-                          'When you place an order it will appear here for tracking and reordering.',
-                    )
-                  : RefreshIndicator(
-                      onRefresh: OrdersController.instance.refresh,
-                      child: ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              child: RefreshIndicator(
+                key: _refreshKey,
+                onRefresh: OrdersController.instance.refresh,
+                child: (!OrdersController.instance.isLoaded && orders.isEmpty)
+                    ? ListView(
                         physics: const AlwaysScrollableScrollPhysics(),
-                        itemCount: orders.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 12),
-                        itemBuilder: (context, i) =>
-                            _OrderCard(order: orders[i], onReorder: _reorder),
-                      ),
-                    ),
+                        children: [
+                          SizedBox(
+                            height: MediaQuery.of(context).size.height * 0.5,
+                            child: const Center(
+                                child: CircularProgressIndicator()),
+                          ),
+                        ],
+                      )
+                    : orders.isEmpty
+                        ? ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            children: [
+                              SizedBox(
+                                height:
+                                    MediaQuery.of(context).size.height * 0.5,
+                                child: EmptyState(
+                                  icon: Icons.receipt_long_outlined,
+                                  title:
+                                      'No ${_filter == OrderFilter.all ? '' : _filter.label.toLowerCase()} orders',
+                                  message:
+                                      'When you place an order it will appear here for tracking and reordering.',
+                                ),
+                              ),
+                            ],
+                          )
+                        : ListView.separated(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            itemCount: orders.length,
+                            separatorBuilder: (_, _) =>
+                                const SizedBox(height: 12),
+                            itemBuilder: (context, i) => _OrderCard(
+                                order: orders[i], onReorder: _reorder),
+                          ),
+              ),
             ),
           ],
         );

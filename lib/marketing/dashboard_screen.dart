@@ -12,20 +12,61 @@ import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../services/auth_service.dart';
+import '../services/live_refresh.dart';
 import '../theme/app_theme.dart' show AppShadows;
 import '../customer/customer_widgets.dart'
     show formatRupees, SectionHeader;
+import 'agent_registration_screen.dart';
 import 'marketing_controllers.dart';
 import 'marketing_models.dart';
 import 'order_details_screen.dart';
+import 'outlet_registration_screen.dart';
 import 'reports_screen.dart';
 import 'select_outlet_screen.dart';
 
-class MarketingDashboardScreen extends StatelessWidget {
+class MarketingDashboardScreen extends StatefulWidget {
   const MarketingDashboardScreen({super.key, required this.onOpenTab});
 
   /// Switches the shell to another tab (1 = Orders, 2 = Products, 3 = Coupons).
   final ValueChanged<int> onOpenTab;
+
+  @override
+  State<MarketingDashboardScreen> createState() =>
+      _MarketingDashboardScreenState();
+}
+
+class _MarketingDashboardScreenState extends State<MarketingDashboardScreen>
+    with LiveRefreshMixin {
+  /// Backs the pull-to-refresh gesture. The dashboard also auto-syncs via
+  /// [LiveRefreshMixin], so the stats stay live with no manual refresh.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    // Fetch on open, then keep every summarised controller live (poll +
+    // app-resume) so orders, stock and coupons update on their own.
+    startLiveRefresh();
+  }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  /// Reloads every controller the dashboard summarises, so a single sync keeps
+  /// orders, stock and coupons all up to date.
+  @override
+  Future<void> onLiveRefresh() => _refreshAll();
+
+  Future<void> _refreshAll() async {
+    await Future.wait([
+      MarketingOrdersController.instance.refresh(),
+      MarketingProductsController.instance.refresh(),
+      MarketingCouponsController.instance.refresh(),
+    ]);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +79,11 @@ class MarketingDashboardScreen extends StatelessWidget {
         listenable: Listenable.merge([orders, products, coupons]),
         builder: (context, _) {
           final recent = orders.byStatus(MarketingOrderStatus.pending);
-          return ListView(
+          return RefreshIndicator(
+            key: _refreshKey,
+            onRefresh: _refreshAll,
+            child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
             padding: EdgeInsets.zero,
             children: [
               _header(),
@@ -57,7 +102,7 @@ class MarketingDashboardScreen extends StatelessWidget {
                       value: '${orders.countByStatus(MarketingOrderStatus.pending)}',
                       label: 'Pending Orders',
                       color: AppColors.primary,
-                      onTap: () => onOpenTab(1),
+                      onTap: () => widget.onOpenTab(1),
                     ),
                     _StatCard(
                       icon: Icons.local_shipping_outlined,
@@ -65,30 +110,65 @@ class MarketingDashboardScreen extends StatelessWidget {
                           '${orders.countByStatus(MarketingOrderStatus.confirmed)}',
                       label: 'Ready to Ship',
                       color: MarketingColors.blue,
-                      onTap: () => onOpenTab(1),
+                      onTap: () => widget.onOpenTab(1),
                     ),
                     _StatCard(
                       icon: Icons.warning_amber_outlined,
                       value: '${products.lowCount + products.outCount}',
                       label: 'Low / Out of Stock',
                       color: MarketingColors.orange,
-                      onTap: () => onOpenTab(2),
+                      onTap: () => widget.onOpenTab(2),
                     ),
                     _StatCard(
                       icon: Icons.local_offer_outlined,
                       value: '${coupons.activeCount}',
                       label: 'Active Coupons',
                       color: AppColors.darkGreen,
-                      onTap: () => onOpenTab(3),
+                      onTap: () => widget.onOpenTab(3),
                     ),
                   ],
+                ),
+              ),
+              // Full-width "Register Outlet" entry — creates a physical outlet
+              // on the backend and sets the login it will sign in with.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: _ActionCard(
+                  icon: Icons.add_business_outlined,
+                  iconColor: AppColors.primary,
+                  title: 'Register Outlet',
+                  subtitle: 'Add a new outlet and set its login details',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => const OutletRegistrationScreen()),
+                  ),
+                ),
+              ),
+              // Full-width "Register Agent" entry — creates an Area Agent
+              // (Vendor role "agent" + pincode) that monitors its pincode's
+              // orders, and sets the login it signs in with.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: _ActionCard(
+                  icon: Icons.person_pin_circle_outlined,
+                  iconColor: AppColors.darkGreen,
+                  title: 'Register Agent',
+                  subtitle: 'Add an area agent and assign a pincode',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => const AgentRegistrationScreen()),
+                  ),
                 ),
               ),
               // Full-width "Select Outlet" entry — opens the outlet-ordering
               // flow (enter pincode → pick outlet → select product → qty).
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                child: _SelectOutletCard(
+                child: _ActionCard(
+                  icon: Icons.storefront_outlined,
+                  iconColor: AppColors.primary,
+                  title: 'Select Outlet',
+                  subtitle: 'Enter a pincode & place an order for an outlet',
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(
                         builder: (_) => const SelectOutletScreen()),
@@ -99,7 +179,11 @@ class MarketingDashboardScreen extends StatelessWidget {
               // downloads shareable Excel exports from the backend.
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                child: _ReportsCard(
+                child: _ActionCard(
+                  icon: Icons.assessment_outlined,
+                  iconColor: AppColors.darkGreen,
+                  title: 'Reports',
+                  subtitle: 'Generate vendor, stock & order reports (Excel)',
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(
                         builder: (_) => const MarketingReportsScreen()),
@@ -111,7 +195,7 @@ class MarketingDashboardScreen extends StatelessWidget {
                 child: SectionHeader(
                   title: 'New Orders',
                   actionLabel: 'View all',
-                  onAction: () => onOpenTab(1),
+                  onAction: () => widget.onOpenTab(1),
                 ),
               ),
               if (recent.isEmpty)
@@ -135,6 +219,7 @@ class MarketingDashboardScreen extends StatelessWidget {
                     )),
               const SizedBox(height: 16),
             ],
+            ),
           );
         },
       ),
@@ -233,12 +318,21 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-/// Full-width "Select Outlet" card shown under the stat grid — the entry point
-/// to [SelectOutletScreen], where the marketing head enters a pincode, picks an
-/// outlet in that area, and builds an order for it.
-class _SelectOutletCard extends StatelessWidget {
-  const _SelectOutletCard({required this.onTap});
+/// Full-width entry card shown under the stat grid — one row per destination
+/// (Register Outlet, Select Outlet, Reports).
+class _ActionCard extends StatelessWidget {
+  const _ActionCard({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
 
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
   final VoidCallback onTap;
 
   @override
@@ -262,80 +356,21 @@ class _SelectOutletCard extends StatelessWidget {
                 color: AppColors.lightGreenBg,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Icon(Icons.storefront_outlined,
-                  color: AppColors.primary, size: 22),
+              child: Icon(icon, color: iconColor, size: 22),
             ),
             const SizedBox(width: 12),
-            const Expanded(
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Select Outlet',
-                      style: TextStyle(
+                  Text(title,
+                      style: const TextStyle(
                           fontSize: 14.5,
                           fontWeight: FontWeight.w800,
                           color: AppColors.darkText)),
-                  SizedBox(height: 2),
-                  Text('Enter a pincode & place an order for an outlet',
-                      style: TextStyle(
-                          fontSize: 11.5, color: AppColors.greyText)),
-                ],
-              ),
-            ),
-            const Icon(Icons.chevron_right_rounded,
-                color: AppColors.greyText),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Full-width "Reports" card shown under the stat grid — the entry point to
-/// [MarketingReportsScreen] where vendor / stock / order Excel reports are
-/// generated.
-class _ReportsCard extends StatelessWidget {
-  const _ReportsCard({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.border),
-          boxShadow: AppShadows.card,
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: AppColors.lightGreenBg,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.assessment_outlined,
-                  color: AppColors.darkGreen, size: 22),
-            ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Reports',
-                      style: TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.darkText)),
-                  SizedBox(height: 2),
-                  Text('Generate vendor, stock & order reports (Excel)',
-                      style: TextStyle(
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      style: const TextStyle(
                           fontSize: 11.5, color: AppColors.greyText)),
                 ],
               ),

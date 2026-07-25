@@ -48,8 +48,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       ..on(Razorpay.EVENT_PAYMENT_SUCCESS, _onPaymentSuccess)
       ..on(Razorpay.EVENT_PAYMENT_ERROR, _onPaymentError)
       ..on(Razorpay.EVENT_EXTERNAL_WALLET, _onExternalWallet);
-    // Pull the user's real past-order addresses so the default/picker reflects
-    // real data (OrdersController.refresh feeds AddressController.syncFromOrders).
+    // Load the saved address book from the account, then supplement it with
+    // real past-order addresses (OrdersController.refresh feeds
+    // AddressController.syncFromOrders). Either arriving fills the default.
+    AddressController.instance.hydrate().then((_) {
+      if (!mounted) return;
+      setState(() => _address ??= AddressController.instance.defaultAddress);
+    });
     if (!OrdersController.instance.isLoaded) {
       OrdersController.instance.refresh().then((_) {
         if (!mounted) return;

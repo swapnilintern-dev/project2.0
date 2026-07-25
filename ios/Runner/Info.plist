@@ -6,6 +6,8 @@
 	<string>MediCaPlus needs camera access so you can photograph licence and KYC documents during vendor registration.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>MediCaPlus needs photo library access so you can upload licence and KYC documents during vendor registration.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>MediCaPlus needs microphone access so promotional product videos you record include sound.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<!-- App Transport Security: allow plain HTTP to localhost for local

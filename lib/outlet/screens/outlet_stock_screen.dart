@@ -19,6 +19,7 @@ import '../outlet_models.dart';
 import '../outlet_repository.dart';
 import '../outlet_session.dart';
 import '../outlet_theme.dart';
+import '../../services/live_refresh.dart';
 
 class OutletStockScreen extends StatefulWidget {
   const OutletStockScreen({super.key, required this.onAddToCart});
@@ -31,8 +32,14 @@ class OutletStockScreen extends StatefulWidget {
   State<OutletStockScreen> createState() => _OutletStockScreenState();
 }
 
-class _OutletStockScreenState extends State<OutletStockScreen> {
+class _OutletStockScreenState extends State<OutletStockScreen>
+    with LiveRefreshMixin {
   final _repo = OutletRepository();
+
+  /// Backs the pull-to-refresh gesture. Stock also auto-syncs via
+  /// [LiveRefreshMixin], so quantity changes surface with no manual refresh.
+  final GlobalKey<RefreshIndicatorState> _refreshKey = GlobalKey();
+
   late Future<List<OutletStockItem>> _future;
 
   bool _ownTab = true;
@@ -42,7 +49,24 @@ class _OutletStockScreenState extends State<OutletStockScreen> {
   @override
   void initState() {
     super.initState();
+    // First load drives the FutureBuilder spinner; then poll silently so stock
+    // stays live (immediate: false avoids a duplicate fetch on open).
     _future = _repo.fetchStock();
+    startLiveRefresh(immediate: false);
+  }
+
+  @override
+  void dispose() {
+    stopLiveRefresh();
+    super.dispose();
+  }
+
+  /// Silent background sync — fetches then swaps in an already-resolved future
+  /// so the list never flashes the centered loader mid-poll.
+  @override
+  Future<void> onLiveRefresh() async {
+    final stock = await _repo.fetchStock();
+    if (mounted) setState(() => _future = Future.value(stock));
   }
 
   Future<void> _refresh() async {
@@ -65,12 +89,16 @@ class _OutletStockScreenState extends State<OutletStockScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        OutletHeader(title: 'Stock', subtitle: OutletSession.instance.outletLabel),
+        OutletHeader(
+          title: 'Stock',
+          subtitle: OutletSession.instance.outletLabel,
+        ),
         _tabToggle(),
         _searchField(),
         _categoryChips(),
         Expanded(
           child: RefreshIndicator(
+            key: _refreshKey,
             onRefresh: _refresh,
             color: OutletColors.success,
             child: FutureBuilder<List<OutletStockItem>>(
@@ -85,6 +113,10 @@ class _OutletStockScreenState extends State<OutletStockScreen> {
                     ),
                   );
                 }
+                // A failed fetch must NOT fall through to the empty state —
+                // "no stock" and "couldn't load stock" mean very different
+                // things to someone about to sell from this list.
+                if (snap.hasError) return _error(snap.error.toString());
                 final rows = _filter(snap.data ?? const []);
                 if (rows.isEmpty) return _empty();
                 // Rebuild rows when the cart changes so the qty stepper stays
@@ -267,7 +299,16 @@ class _OutletStockScreenState extends State<OutletStockScreen> {
                   style: OutletTextStyles.prodSub,
                 ),
                 const SizedBox(height: 8),
-                _qtyBadge(s),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    _qtyBadge(s),
+                    // Red "Expiring Soon" alert — Outlet is one of the two roles
+                    // allowed to see it (locked to Marketing + Outlet).
+                    if (s.isExpiringSoon) _expiryBadge(),
+                  ],
+                ),
               ],
             ),
           ),
@@ -300,6 +341,29 @@ class _OutletStockScreenState extends State<OutletStockScreen> {
       label = '${s.qtyAvailable} in stock';
     }
     return OutletBadge(label: label, bg: bg, fg: fg);
+  }
+
+  /// Red "Expiring Soon" pill shown when the batch expires within 90 days.
+  Widget _expiryBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: OutletColors.badgeRedBg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          Icon(Icons.warning_amber_rounded, size: 13, color: OutletColors.danger),
+          SizedBox(width: 4),
+          Text('Expiring Soon',
+              style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: OutletColors.danger)),
+        ],
+      ),
+    );
   }
 
   /// Own-outlet trailing control: an "Add" button until the item is in the
@@ -346,6 +410,45 @@ class _OutletStockScreenState extends State<OutletStockScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Shown when the stock fetch failed — carries the server's own reason and a
+  /// retry, so staff can tell "couldn't load" apart from "nothing in stock".
+  Widget _error(String message) {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(28, 60, 28, 0),
+          child: Column(
+            children: [
+              const Icon(Icons.cloud_off_outlined,
+                  size: 40, color: OutletColors.textMuted),
+              const SizedBox(height: 10),
+              Text(
+                'Could not load stock',
+                textAlign: TextAlign.center,
+                style: OutletTextStyles.prodName,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: OutletTextStyles.prodSub,
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: _refresh,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Retry'),
+                style: OutlinedButton.styleFrom(
+                    foregroundColor: OutletColors.success),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 

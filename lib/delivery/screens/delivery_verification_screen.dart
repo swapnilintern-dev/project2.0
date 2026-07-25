@@ -8,6 +8,8 @@
 // only — the authoritative action is the delivered status change.
 // =============================================================================
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -16,6 +18,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../customer/customer_widgets.dart' show formatRupees;
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../delivery_api.dart';
 import '../delivery_models.dart';
 
 /// How the agent settled the order's payment before delivering.
@@ -51,29 +54,100 @@ class _DeliveryVerificationScreenState
   // PAYMENT COLLECTION (delivery role)
   //
   // The agent collects the order amount before marking it delivered. Online is
-  // offered first (QR + payment link); if it fails/declines, the agent falls
-  // back to cash (COD). Payment is confirmed locally by the agent here — the
-  // QR / link strings below are placeholders; a real Razorpay QR + Payment Link
-  // come from the backend when it's wired.
+  // offered first: the SERVER mints a Razorpay payment link for the order
+  // (POST /delivery/payment-link/:id) — the QR shown here is that link, and
+  // scanning it opens Razorpay's hosted checkout. "Online paid" is only ever
+  // set once the server (asking Razorpay) reports the order as paid — the
+  // agent cannot assert it. Cash (COD) remains an agent-confirmed fallback.
   // ---------------------------------------------------------------------------
 
-  /// UPI intent the customer scans (amount + order reference prefilled).
-  String _upiIntent(DeliveryTask task) =>
-      'upi://pay?pa=vsarogya@okhdfc&pn=VS%20Arogya'
-      '&am=${task.codAmount.toStringAsFixed(2)}&cu=INR&tn=Order%20${task.id}';
+  final DeliveryApi _api = DeliveryApi();
+  Timer? _payPoll;
+  bool _sheetOpen = false;
+  bool _fetchingLink = false;
 
-  /// Shareable payment link (placeholder — replace with the backend link).
-  String _payLink(DeliveryTask task) => 'https://rzp.io/i/vsarogya-${task.id}';
+  @override
+  void dispose() {
+    _payPoll?.cancel();
+    super.dispose();
+  }
 
   void _setPaid(_DeliveryPayMode mode) {
+    _payPoll?.cancel();
     setState(() => _pay = mode);
     _snack(mode == _DeliveryPayMode.cash
         ? 'Cash payment collected'
-        : 'Online payment confirmed');
+        : 'Online payment confirmed by the server');
   }
 
-  /// Bottom sheet: QR to scan (online). Agent confirms once the customer pays.
-  Future<void> _showQrSheet(DeliveryTask task) async {
+  /// Fetches the order's server-minted payment link. Returns null (after
+  /// snacking the reason) when it can't be had; flips straight to paid when
+  /// the server says the order is already settled.
+  Future<String?> _fetchServerLink(DeliveryTask task) async {
+    if (_fetchingLink) return null;
+    setState(() => _fetchingLink = true);
+    final (link, alreadyPaid, error) = await _api.createDoorstepPaymentLink(
+      task.id,
+      token: DeliveryController.instance.token,
+    );
+    if (!mounted) return null;
+    setState(() => _fetchingLink = false);
+    if (alreadyPaid) {
+      _setPaid(_DeliveryPayMode.online);
+      return null;
+    }
+    if (link == null) {
+      _snack(error ?? 'Could not create the payment link', error: true);
+      return null;
+    }
+    return link;
+  }
+
+  /// Polls the server every 3s while a payment sheet is open; the sheet closes
+  /// itself the moment Razorpay confirms the payment.
+  void _startPaymentPoll(DeliveryTask task) {
+    _payPoll?.cancel();
+    _payPoll = Timer.periodic(const Duration(seconds: 3), (_) async {
+      final paid = await _api.doorstepPaymentPaid(
+        task.id,
+        token: DeliveryController.instance.token,
+      );
+      if (!mounted || paid != true) return;
+      if (_sheetOpen) Navigator.of(context).pop();
+      _setPaid(_DeliveryPayMode.online);
+    });
+  }
+
+  /// The sheet's confirm button: a one-off server check, NOT an assertion.
+  Future<void> _confirmOnlinePaid(DeliveryTask task) async {
+    final paid = await _api.doorstepPaymentPaid(
+      task.id,
+      token: DeliveryController.instance.token,
+    );
+    if (!mounted) return;
+    if (paid == true) {
+      if (_sheetOpen) Navigator.of(context).pop();
+      _setPaid(_DeliveryPayMode.online);
+    } else {
+      _snack(
+        paid == null
+            ? 'Could not check the payment — trying again shortly.'
+            : 'Payment not received yet — ask the customer to complete it.',
+        error: true,
+      );
+    }
+  }
+
+  Future<void> _showPaymentSheet(
+    DeliveryTask task, {
+    required String title,
+    required String subtitle,
+    required Widget Function(String link) body,
+  }) async {
+    final link = await _fetchServerLink(task);
+    if (link == null || !mounted) return;
+    _sheetOpen = true;
+    _startPaymentPoll(task);
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.white,
@@ -82,10 +156,26 @@ class _DeliveryVerificationScreenState
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (_) => _PaymentSheet(
-        title: 'Scan to pay',
-        subtitle: 'Customer scans with any UPI app',
+        title: title,
+        subtitle: subtitle,
         amount: task.codAmount,
-        child: Container(
+        child: body(link),
+        onConfirm: () => _confirmOnlinePaid(task),
+      ),
+    );
+    _sheetOpen = false;
+    // Keep polling briefly after the sheet closes? No — the agent can reopen
+    // the sheet (same link is reused server-side) or fall back to cash.
+    if (_pay != _DeliveryPayMode.online) _payPoll?.cancel();
+  }
+
+  /// Bottom sheet: QR of the server's payment link (scanning opens Razorpay's
+  /// hosted checkout). Closes on its own once the server reports paid.
+  Future<void> _showQrSheet(DeliveryTask task) => _showPaymentSheet(
+        task,
+        title: 'Scan to pay',
+        subtitle: 'Opens Razorpay checkout — UPI, cards and more',
+        body: (link) => Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             color: Colors.white,
@@ -93,7 +183,7 @@ class _DeliveryVerificationScreenState
             border: Border.all(color: AppColors.border),
           ),
           child: QrImageView(
-            data: _upiIntent(task),
+            data: link,
             version: QrVersions.auto,
             size: 210,
             backgroundColor: Colors.white,
@@ -107,29 +197,14 @@ class _DeliveryVerificationScreenState
             ),
           ),
         ),
-        onConfirm: () {
-          Navigator.of(context).pop();
-          _setPaid(_DeliveryPayMode.online);
-        },
-      ),
-    );
-  }
+      );
 
-  /// Bottom sheet: shareable/copyable payment link (online).
-  Future<void> _showLinkSheet(DeliveryTask task) async {
-    final link = _payLink(task);
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.white,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (_) => _PaymentSheet(
+  /// Bottom sheet: the same server link, shareable/copyable.
+  Future<void> _showLinkSheet(DeliveryTask task) => _showPaymentSheet(
+        task,
         title: 'Payment link',
         subtitle: 'Send this to the customer to pay online',
-        amount: task.codAmount,
-        child: Container(
+        body: (link) => Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
             color: AppColors.pageBg,
@@ -169,13 +244,7 @@ class _DeliveryVerificationScreenState
             ],
           ),
         ),
-        onConfirm: () {
-          Navigator.of(context).pop();
-          _setPaid(_DeliveryPayMode.online);
-        },
-      ),
-    );
-  }
+      );
 
   /// Cash fallback (COD) — used when the online payment fails or is declined.
   Future<void> _collectCash(DeliveryTask task) async {
