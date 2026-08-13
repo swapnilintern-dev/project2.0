@@ -2,7 +2,7 @@
 // VS Arogya — Outlet Staff · Orders
 //
 // The Orders tab: every order for this outlet, newest first, with a status
-// filter. Tap a row to open its detail. Wired to [OutletRepository] (mock).
+// filter. Tap a row to open its detail. Wired to [OutletRepository] (live).
 // Reloads on open and on pull-to-refresh; the shell also re-keys this screen
 // when the Orders tab is selected so freshly created orders appear.
 // =============================================================================

@@ -3,7 +3,6 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_config.dart';
-import '../agent/agent_auth.dart';
 import '../agent/agent_session.dart';
 
 class AuthService {
@@ -69,21 +68,6 @@ class AuthService {
   }) async {
     // The mobile number is real, user-provided data — remember it for the UI.
     phone = mobileNo.trim();
-
-    // Area Agent DEMO login (backend "agent" role not live yet — see
-    // lib/agent/agent_auth.dart). Short-circuits to a fake success with
-    // role "agent" WITHOUT hitting the API, so the sign-in screen's existing
-    // homeForRole() routing lands on the Agent portal. This keeps the sign-in
-    // screen untouched. Remove this block once the server returns role: "agent".
-    if (matchesAgentDemoLogin(mobileNo.trim(), password)) {
-      role = 'agent';
-      storeName = kAgentDemoName;
-      AgentSession.instance.signIn(
-        name: kAgentDemoName,
-        pincode: kAgentDemoPincode,
-      );
-      return {'success': true, 'role': 'agent'};
-    }
 
     final response = await http.post(
       Uri.parse('$baseUrl/vsArogya/login'),

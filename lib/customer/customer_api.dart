@@ -8,12 +8,9 @@
 //   GET    /vsArogya/all-products          -> getAllProducts()
 //   POST   /vsArogya/add-cart/:id          -> addToCart()        (auth cookie)
 //
-// Endpoints that are not built on the server yet (orders, profile, addresses)
-// have clearly-marked TODO stubs returning mock data, so the UI is fully
-// functional today and can be wired to real routes by deleting the fallback.
-//
-// The service NEVER throws — every method degrades to mock data when the
-// server is unreachable, so the app runs with or without the backend.
+// Every method talks to a real backend route. The service NEVER throws —
+// on failure each call degrades to the cached list, an empty list, or null
+// (so callers keep their current state). No fake data is ever fabricated.
 // =============================================================================
 
 import 'dart:async';
@@ -81,8 +78,8 @@ class CustomerApi {
 
   /// Loads the catalogue from the backend (GET /vsArogya/all-products), maps it
   /// to [Product]s and fills the shared [Catalog] cache so every screen sees the
-  /// same list. Falls back to the cached list (or mock data) if the server is
-  /// unreachable, so the shop is never empty offline.
+  /// same list. Falls back to the cached list if the server is unreachable,
+  /// so the shop keeps showing the last real catalogue offline.
   Future<List<Product>> getProducts() async {
     try {
       final res = await _client
@@ -106,9 +103,9 @@ class CustomerApi {
     return Catalog.all;
   }
 
-  /// Promotional banners for the home carousel.
-  /// TODO backend: GET /vsArogya/promo-banners (managed by the marketing team).
-  /// Falls back to local banners when the server is unreachable.
+  /// Promotional banners for the home carousel — GET /vsArogya/promo-banners
+  /// (published by the marketing role). Returns an empty list when the server
+  /// is unreachable so the carousel simply hides.
   Future<List<PromoBanner>> getPromoBanners() async {
     try {
       final res = await _client
@@ -511,7 +508,7 @@ class CustomerApi {
   }
 
   /// Order history (GET /get-order). Returns null when the call fails (offline /
-  /// not logged in) so the caller can keep showing local/mock orders.
+  /// not logged in) so the caller keeps its current list.
   Future<List<Order>?> getOrders() async {
     try {
       final res = await _client

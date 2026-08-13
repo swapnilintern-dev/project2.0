@@ -1,7 +1,7 @@
 // =============================================================================
 // MediCaPlus — Product Listing / Search Screen
 //
-// Loads the catalogue from CustomerApi (mock fallback), with a search field,
+// Loads the catalogue from CustomerApi (backend /all-products), with a search field,
 // category filter chips, a sort bottom sheet and result count. Used both for
 // the Search tab and when tapping a category from Home. Shows skeleton loaders
 // while fetching and an empty state when no results match.

@@ -12,7 +12,6 @@ import 'delivery/delivery_main.dart';
 import 'delivery/delivery_api.dart';
 import 'delivery/delivery_models.dart' show DeliveryController;
 import 'outlet/outlet_api.dart';
-import 'outlet/outlet_auth.dart';
 import 'outlet/outlet_main.dart';
 import 'outlet/outlet_session.dart';
 
@@ -48,18 +47,6 @@ Future<void> _onSignIn() async {
   FocusScope.of(context).unfocus();
 
   if (!(_formKey.currentState?.validate() ?? false)) return;
-
-  // Outlet Staff demo login (backend role not live yet — see lib/outlet/
-  // outlet_auth.dart). Short-circuits to the outlet shell without hitting the
-  // API. Remove this block once the server returns role: "outlet".
-  if (matchesOutletDemoLogin(
-      _identifierCtrl.text.trim(), _passwordCtrl.text.trim())) {
-    OutletSession.instance.signIn(name: 'Outlet Staff');
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const OutletMain()),
-    );
-    return;
-  }
 
   setState(() => _isSubmitting = true);
 

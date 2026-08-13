@@ -5,8 +5,8 @@
 // This is the state the outlet "route guard" checks: [OutletMain] refuses to
 // render (and bounces to sign-in) unless [isSignedIn] is true.
 //
-// Set on sign-in (demo login hook in sign_in_screen.dart, and homeForRole in
-// auth/session.dart for a restored/real "outlet" role); cleared on logout.
+// Set on sign-in by OutletApi.login (POST /outlet-login), which captures the
+// outlet id + token every outlet-scoped call needs; cleared on logout.
 // Mirrors DeliveryController's in-memory session pattern.
 // =============================================================================
 
@@ -19,8 +19,8 @@ class OutletSession {
   String? district;
 
   /// The signed-in outlet's `_id` from the backend. Every outlet-scoped call
-  /// needs it (GET /outlet-products/:id), so a real session is only usable once
-  /// this is set. Null for the local demo login.
+  /// needs it (GET /outlet-products/:id), so a session is only usable once
+  /// this is set.
   String? outletId;
 
   /// Session auth captured from POST /outlet-login. [token] is the reliable
@@ -52,8 +52,8 @@ class OutletSession {
     String? cookie,
   }) {
     staffName = name;
-    outletName = outlet ?? 'Ballari Outlet';
-    this.district = district ?? 'Ballari';
+    outletName = outlet ?? 'Outlet';
+    this.district = district ?? '';
     this.outletId = outletId;
     this.token = token;
     this.cookie = cookie;

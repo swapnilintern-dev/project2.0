@@ -30,7 +30,7 @@ class Catalog {
   static List<Product> get all => List.unmodifiable(_products);
 
   /// Replaces the cache and notifies listeners. Called by CustomerApi after a
-  /// successful GET /all-products (or with mock data as an offline fallback).
+  /// successful GET /all-products.
   static void setProducts(List<Product> products) {
     _products = List<Product>.from(products);
     (_notifier as _CatalogNotifier).bump();

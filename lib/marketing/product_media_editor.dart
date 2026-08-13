@@ -99,8 +99,9 @@ class ProductMediaController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // newIndex arrives pre-adjusted (onReorderItem semantics) — it is already
+  // the destination slot after the dragged item is removed from oldIndex.
   void reorderImage(int oldIndex, int newIndex) {
-    if (newIndex > oldIndex) newIndex -= 1;
     final entry = _images.removeAt(oldIndex);
     _images.insert(newIndex, entry);
     notifyListeners();
@@ -416,7 +417,7 @@ class _ProductMediaEditorState extends State<ProductMediaEditor> {
               physics: const NeverScrollableScrollPhysics(),
               buildDefaultDragHandles: false,
               itemCount: _c.images.length,
-              onReorder: _c.reorderImage,
+              onReorderItem: _c.reorderImage,
               itemBuilder: (context, i) => _imageRow(i, key: _c.images[i].key),
             ),
           const SizedBox(height: 10),

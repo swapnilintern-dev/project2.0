@@ -36,12 +36,16 @@ Widget homeForRole(String? roleRaw, {String? mobile, String? name}) {
   final role = (roleRaw ?? '').toLowerCase();
   if (role.contains('admin')) return const AdminRoleMain();
   if (role.contains('marketing')) return const MarketingRoleMain();
-  // Outlet Staff — physical-outlet operator (counter + delivery orders). Routes
-  // the same keyword way as the other roles once the backend returns
-  // role: "outlet". See lib/outlet/.
+  // Outlet Staff — physical-outlet operator (counter + delivery orders).
+  // Outlets live in their OWN collection with their own login (POST
+  // /outlet-login, handled by the sign-in screen), which populates
+  // OutletSession with the outlet id + token every outlet-scoped call needs.
+  // Only route to the shell when that live session exists — a name-only
+  // session would run the whole role on mock data. A restored app start can't
+  // rebuild it (the session is in-memory), so it goes back to sign-in.
   if (role.contains('outlet')) {
-    OutletSession.instance.signIn(name: name);
-    return const OutletMain();
+    if (OutletSession.instance.isLive) return const OutletMain();
+    return const SignInScreen();
   }
   if (role.contains('delivery')) {
     // A delivery user in the Vendor collection (role == delivery).
@@ -49,14 +53,14 @@ Widget homeForRole(String? roleRaw, {String? mobile, String? name}) {
     return const DeliveryMain();
   }
   // Area Agent — pincode-scoped order monitor. Checked AFTER delivery so a
-  // "delivery agent" role never mis-routes here. The demo login sets the
-  // AgentSession (name + pincode) before this runs; the production path (backend
-  // returns role: "agent") falls back to signing in with the response name.
+  // "delivery agent" role never mis-routes here. A real login (backend returns
+  // role: "agent") populates AgentSession with the agent id + token inside
+  // AuthService.login. Only route to the portal when that live session exists —
+  // a name-only session would run the dashboard on mock data. A restored app
+  // start can't rebuild it (the session is in-memory), so it re-authenticates.
   if (role.contains('agent')) {
-    if (!AgentSession.instance.isSignedIn) {
-      AgentSession.instance.signIn(name: name);
-    }
-    return const AgentMain();
+    if (AgentSession.instance.isLive) return const AgentMain();
+    return const SignInScreen();
   }
   return const CustomerShell();
 }
