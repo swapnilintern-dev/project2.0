@@ -1,10 +1,8 @@
-// ============================================================================
 import 'dart:math' as math;
 
 import 'services/auth_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // Clipboard (tap-to-copy support details)
-
 import 'vendor_registration_screen.dart'; // AppColors + VendorRegistrationScreen
 import 'auth/forgot_password_screen.dart';
 import 'auth/session.dart' show homeForRole;
@@ -59,6 +57,16 @@ Future<void> _onSignIn() async {
     if (!mounted) return;
 
     final mobile = _identifierCtrl.text.trim();
+    // Could not reach the server at all. The delivery-agent and outlet
+    // collections live behind the SAME host, so retrying them would just burn
+    // two more timeouts (up to 70s of spinner) before failing identically. Tell
+    // the user what actually went wrong instead.
+    if (response['networkError'] == true) {
+      setState(() => _isSubmitting = false);
+      _showMessage(response['message']?.toString() ??
+          'Cannot reach the server. Check your internet connection.');
+      return;
+    }
 
     // If the vendor/staff login didn't succeed, this may be a DELIVERY AGENT —
     // agents live in a separate backend collection with their own login
@@ -95,11 +103,8 @@ Future<void> _onSignIn() async {
       if (outlet != null) {
         if (!outlet.isActive) {
           OutletSession.instance.clear();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text(
-                    'This outlet is marked inactive. Please contact support.')),
-          );
+          _showMessage(
+              'This outlet is marked inactive. Please contact support.');
           return;
         }
         AuthService.phone = mobile;
@@ -109,9 +114,8 @@ Future<void> _onSignIn() async {
         return;
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(response['message'] ?? 'Login Failed')),
-      );
+      _showMessage(
+          response['message']?.toString() ?? 'Incorrect mobile number or password');
       return;
     }
 
@@ -132,18 +136,25 @@ Future<void> _onSignIn() async {
         builder: (_) => nextScreen,
       ),
     );
-  } catch (e) {
+  } catch (_) {
+    // AuthService.login no longer throws, but the agent/outlet fallbacks and
+    // the navigation below still can. Whatever it was, the user gets a sentence
+    // they can act on rather than a Dart exception.
     if (!mounted) return;
 
     setState(() => _isSubmitting = false);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Error: $e'),
-      ),
-    );
+    _showMessage('Could not sign you in right now. Please try again.');
   }
 }
+
+  /// One place for the sign-in screen's user-facing messages, so none of them
+  /// can accidentally carry exception text.
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
 
 
   void _openVendorRegistration() {
@@ -495,7 +506,11 @@ Future<void> _onSignIn() async {
               ),
               validator: (v) {
                 if (v == null || v.isEmpty) return 'Password is required';
-                if (v.length < 4) return 'Password must be at least 6 characters';
+                // The message used to say 6 while the check said 4, so a 4- or
+                // 5-character password was accepted under a rule the user had
+                // just been told it broke. 4 is the real minimum the backend
+                // allows for existing accounts, so the message follows the code.
+                if (v.length < 4) return 'Password must be at least 4 characters';
                 return null;
               },
             ),
@@ -648,7 +663,7 @@ Future<void> _onSignIn() async {
                     ),
                     const SizedBox(height: 2),
                     const Text(
-                      'Register your store on MediCaPlus →',
+                      'Register your store on VS Arogya →',
                       style: TextStyle(
                         fontSize: 12.5,
                         color: AppColors.darkGreen,
@@ -829,7 +844,11 @@ class _SupportSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: Padding(
+      // Scrollable, not a bare Column: the logo plus the contact rows run to
+      // roughly 400pt at the 1.3x text cap, and Info.plist allows landscape,
+      // where the sheet has ~375pt to work with. A Column overflows there;
+      // this scrolls. Identical whenever the content fits, which is portrait.
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,

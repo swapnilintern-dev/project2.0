@@ -55,7 +55,18 @@ class _ProductCardState extends State<ProductCard> {
     await Future<void>.delayed(const Duration(milliseconds: 120));
     if (!mounted) return;
     setState(() => _scale = 1);
-    CartController.instance.add(widget.product);
+
+    // 0 back means the cart already holds every unit in stock — tell the vendor
+    // why nothing happened instead of claiming it was added.
+    final added = CartController.instance.add(widget.product);
+    if (added <= 0) {
+      showAppSnack(
+        context,
+        'All available stock of ${widget.product.title} is already in your cart',
+        success: false,
+      );
+      return;
+    }
     showAppSnack(context, '${widget.product.title} added to cart');
   }
 
@@ -95,6 +106,18 @@ class _ProductCardState extends State<ProductCard> {
                             child: TagBadge(
                               text: p.badge!,
                               color: _badgeColor(p.badge!),
+                            ),
+                          ),
+                        // Running-low warning, derived from live stock rather
+                        // than the backend's `badge` string. Sits on the RIGHT
+                        // so it never collides with a badge already on the left.
+                        if (p.isLowStock)
+                          Positioned(
+                            top: 6,
+                            right: 6,
+                            child: TagBadge(
+                              text: 'LOW STOCK',
+                              color: kLowStockAmber,
                             ),
                           ),
                       ],
@@ -319,7 +342,14 @@ class _AddButton extends StatelessWidget {
               success: false);
           return;
         }
-        CartController.instance.add(product);
+        if (CartController.instance.add(product) <= 0) {
+          showAppSnack(
+            context,
+            'All available stock of ${product.title} is already in your cart',
+            success: false,
+          );
+          return;
+        }
         showAppSnack(context, '${product.title} added to cart');
       },
       radius: 22,

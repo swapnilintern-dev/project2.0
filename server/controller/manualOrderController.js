@@ -1,8 +1,15 @@
 import order from "../model/orderModel.js";
 import Vendor from "../model/userModel.js";
-import outletStock from "../model/outletStockModel.js";
 import converter from "number-to-words";
 import generateInvoiceForOrder from "../utils/invoiceGenerator.js";
+import { normalizeFreeQty } from "../utils/freeGoods.js";
+import {
+    withInventoryTxn,
+    allocateFEFO,
+    allocateOutletFEFO,
+    normalizeAllocations,
+    InsufficientStockError,
+} from "../utils/inventory.js";
 
 // =============================================================================
 // Manual order — Marketing places an order on a specific (approved) vendor's
@@ -22,6 +29,11 @@ const manualCart = async (req, res) => {
         const userId = req.params.vendorId;
         const item = req.params.itemId;
 
+        // Optional free goods for this line ({ freeQty }) and the batches staff
+        // pinned for it ({ allocations }). Both omitted → the line's current
+        // values are left untouched, so existing callers are unaffected.
+        const { freeQty, allocations } = req.body || {};
+
         const user = await Vendor.findById(userId);
 
         if (!user) {
@@ -38,8 +50,21 @@ const manualCart = async (req, res) => {
         );
         if (itemIndex > -1) {
             user.cart[itemIndex].quantity += 1;
+            if (freeQty !== undefined) {
+                user.cart[itemIndex].freeQty = normalizeFreeQty(freeQty);
+            }
+            // The pinned batches describe the WHOLE line, so a later call
+            // replaces them rather than appending.
+            if (allocations !== undefined) {
+                user.cart[itemIndex].allocations = normalizeAllocations(allocations);
+            }
         } else {
-            user.cart.push({ product: item, quantity: 1 });
+            user.cart.push({
+                product: item,
+                quantity: 1,
+                freeQty: normalizeFreeQty(freeQty),
+                allocations: normalizeAllocations(allocations)
+            });
         }
 
         await user.save();
@@ -95,81 +120,92 @@ export const manualOrder = async (req, res) => {
             new Date().getFullYear() +
             Math.floor(100000 + Math.random() * 900000);
 
-        const orderItems = user.cart.map(item => ({
-            product: item.product._id,
-            quantity: item.quantity,
-            orderPrice: item.product.price,
-            // Snapshot the sold batch so the invoice never re-reads a later one.
-            batch_no: item.product.batch_no,
-            exp_date: item.product.exp_date
-        }));
-
         const totalAmount = user.cart.reduce(
             (total, item) => total + item.product.price * item.quantity,
             0
         );
 
+        const amountWord = converter.toWords(totalAmount);
+
+        const shippingAddress = {
+            address: user.full_address,
+            city: user.city,
+            state: user.state,
+            pincode: user.pin_code,
+            country: "IN",
+            phoneNo: user.mobile_no
+        };
+
         // Take the stock out of the right bucket.
         //
         // An OUTLET order sells stock the outlet already holds, and that stock
-        // LEFT the catalog when marketing assigned it (addOutletStock does
-        // `Product.stock -= qty`). Deducting product.stock again here would
-        // charge the catalog twice and leave outletStock.quantity untouched, so
-        // the outlet would keep showing stock it had already sold.
+        // LEFT the catalog when marketing assigned it (addOutletStock consumes
+        // catalog batches). Deducting the catalog again here would charge it
+        // twice, so the outlet branch allocates FEFO across the OUTLET's own
+        // batches (outletStockBatch) — which keeps outletStock.quantity correct
+        // as the auto-synced mirror, exactly what the old direct decrement
+        // maintained by hand.
         //
         // A marketing order has no outlet and sells straight from the catalog —
-        // same as placeOrder (orderController) does for a vendor.
-        if (outletId) {
-            // Check EVERY line before changing anything, so a short line can't
-            // leave the order half-deducted.
-            const rows = [];
-            for (const line of user.cart) {
-                const row = await outletStock.findOne({
-                    outlet: outletId,
-                    product: line.product._id
-                });
+        // same as placeOrder (orderController) does for a vendor: FEFO across
+        // the product's batches, atomically.
+        //
+        // Both branches honour the batches staff pinned on the cart line and
+        // record the exact lots consumed on orderItems.allocations.
+        let Order;
+        try {
+            Order = await withInventoryTxn(async (session) => {
+                const orderItems = [];
+                for (const item of user.cart) {
+                    const overrides = normalizeAllocations(item.allocations);
+                    const allocations = outletId
+                        ? await allocateOutletFEFO(
+                            outletId,
+                            item.product._id,
+                            item.quantity,
+                            overrides,
+                            session
+                        )
+                        : await allocateFEFO(
+                            item.product._id,
+                            item.quantity,
+                            session,
+                            overrides
+                        );
 
-                if (!row || row.quantity < line.quantity) {
-                    return res.status(400)
-                        .json({
-                            message: `Insufficient outlet stock for ${line.product.title}: available ${row?.quantity ?? 0}, ordered ${line.quantity}`,
-                            success: false
-                        });
+                    orderItems.push({
+                        product: item.product._id,
+                        quantity: item.quantity,
+                        orderPrice: item.product.price,
+                        // Free goods carried from the cart line — invoice-only,
+                        // never billed (totalAmount uses `quantity` alone).
+                        freeQty: normalizeFreeQty(item.freeQty),
+                        // Snapshot the sold batch so the invoice never re-reads
+                        // a later one; allocations[0] is the FEFO-front lot.
+                        batch_no: allocations[0]?.batch_number ?? item.product.batch_no,
+                        exp_date: allocations[0]?.expiry_date ?? item.product.exp_date,
+                        allocations,
+                    });
                 }
-                rows.push({ row, qty: line.quantity });
-            }
 
-            for (const { row, qty } of rows) {
-                row.quantity -= qty;
-                await row.save();
+                const created = await order.create([{
+                    user: userId,
+                    ...(outletId ? { outlet: outletId } : {}),
+                    orderItems,
+                    shippingAddress,
+                    totalAmount,
+                    orderNo,
+                    amountWord
+                }], { session });
+
+                return created[0];
+            });
+        } catch (err) {
+            if (err instanceof InsufficientStockError) {
+                return res.status(400).json({ message: err.message, success: false });
             }
+            throw err;
         }
-        else {
-            for (let i = 0; i < user.cart.length; i++) {
-                user.cart[i].product.stock -= user.cart[i].quantity;
-                await user.cart[i].product.save();
-            }
-        }
-
-
-        const amountWord = converter.toWords(totalAmount);
-
-        const Order = await order.create({
-            user: userId,
-            outlet: outletId || undefined,
-            orderItems,
-            shippingAddress: {
-                address: user.full_address,
-                city: user.city,
-                state: user.state,
-                pincode: user.pin_code,
-                country: "IN",
-                phoneNo: user.mobile_no
-            },
-            totalAmount,
-            orderNo,
-            amountWord
-        });
 
 
         // The order captured the cart — clear it now.

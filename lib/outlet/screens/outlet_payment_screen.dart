@@ -13,30 +13,43 @@
 // PAID solely because the server says so. Only once PAID do the terminal action
 // buttons (hand over / ready for pickup) appear.
 //
-// Backend note: createPayment / createRazorpayOrder / verifyPayment currently
-// run against the mock (see MockOutletDataSource). Opening the LIVE checkout
-// sheet needs a real key + Razorpay order from your backend — wire those into a
-// LiveOutletDataSource and this screen is unchanged.
+// The checkout itself lives in [OutletRazorpayCheckout] — the one place the
+// whole outlet role runs the order-first → open → verify sequence, so the
+// Manual order and Billing screens collect payment through exactly this code.
+// Those screens open this screen with [autoCollect] so the sheet appears the
+// moment the order exists; a failed or cancelled attempt lands back here, where
+// the QR, the payment link and a retry are all still available for the SAME
+// order (never a second one).
 // =============================================================================
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-import 'package:razorpay_flutter/razorpay_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../outlet_enums.dart';
+import '../../theme/app_widgets.dart' show shareOriginFor;
 import '../outlet_models.dart';
+import '../outlet_razorpay_checkout.dart';
 import '../outlet_repository.dart';
 import '../outlet_theme.dart';
+import '../../shared/short_id.dart';
 
 class OutletPaymentScreen extends StatefulWidget {
-  const OutletPaymentScreen({super.key, required this.order});
+  const OutletPaymentScreen({
+    super.key,
+    required this.order,
+    this.autoCollect = false,
+  });
 
   final OutletOrder order;
+
+  /// Opens the Razorpay checkout sheet as soon as the screen appears — used by
+  /// the screens whose own button ("Create order", "Generate bill") is the
+  /// payment trigger. The staff-driven "Pay on this device" button is unchanged.
+  final bool autoCollect;
 
   @override
   State<OutletPaymentScreen> createState() => _OutletPaymentScreenState();
@@ -44,7 +57,7 @@ class OutletPaymentScreen extends StatefulWidget {
 
 class _OutletPaymentScreenState extends State<OutletPaymentScreen> {
   final _repo = OutletRepository();
-  late final Razorpay _razorpay;
+  final _checkout = OutletRazorpayCheckout();
 
   OutletPaymentInfo? _payment;
   late OutletOrderStatus _status;
@@ -61,18 +74,21 @@ class _OutletPaymentScreenState extends State<OutletPaymentScreen> {
   void initState() {
     super.initState();
     _status = widget.order.status;
-    _razorpay = Razorpay()
-      ..on(Razorpay.EVENT_PAYMENT_SUCCESS, _onPaymentSuccess)
-      ..on(Razorpay.EVENT_PAYMENT_ERROR, _onPaymentError)
-      ..on(Razorpay.EVENT_EXTERNAL_WALLET, _onExternalWallet);
     _loadPayment();
     _startPolling();
+    if (widget.autoCollect) {
+      // After the first frame, so the sheet opens over a built screen and its
+      // snackbar/setState never lands mid-build.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _status.isAwaitingPayment) _payOnDevice();
+      });
+    }
   }
 
   @override
   void dispose() {
     _poll?.cancel();
-    _razorpay.clear();
+    _checkout.dispose();
     super.dispose();
   }
 
@@ -111,74 +127,25 @@ class _OutletPaymentScreenState extends State<OutletPaymentScreen> {
 
   // --- Razorpay on-device checkout -------------------------------------------
 
+  /// Runs the shared outlet checkout: server-created Razorpay order → sheet →
+  /// server-side verification. Per locked rule #3 nothing is marked paid here —
+  /// on a capture we simply resume polling and let the server's own answer flip
+  /// the screen to PAID. A cancel or failure leaves the order untouched, so
+  /// tapping the button again retries the SAME order.
   Future<void> _payOnDevice() async {
-    if (kIsWeb) {
-      _toast('On-device Razorpay checkout is available in the mobile app. '
-          'Use the QR or payment link here.');
-      return;
-    }
+    if (_payingOnDevice) return; // duplicate-tap guard
     setState(() => _payingOnDevice = true);
-    try {
-      final pay = await _repo.createRazorpayOrder(widget.order.id);
-      final contact =
-          widget.order.customer.phone.replaceAll(RegExp(r'[^0-9]'), '');
-      final options = <String, dynamic>{
-        'key': pay.keyId,
-        'order_id': pay.razorpayOrderId, // server-created → enables verification
-        'amount': pay.amount, // paise, from the server
-        'currency': pay.currency,
-        'name': 'VS Arogya',
-        'description': 'Outlet order ${widget.order.id}',
-        if (contact.length >= 10)
-          'prefill': <String, dynamic>{
-            'contact': contact.substring(contact.length - 10),
-          },
-        'theme': <String, dynamic>{'color': '#159E76'},
-      };
-      _razorpay.open(options);
-      // Flow continues in _onPaymentSuccess / _onPaymentError.
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _payingOnDevice = false);
-      _toast('Could not open Razorpay: $e');
-    }
-  }
 
-  /// Razorpay captured a payment on-device. Per locked rule #3 we do NOT mark
-  /// the order paid here — we send the callback to the server to verify, then
-  /// let polling read the real, server-owned status.
-  Future<void> _onPaymentSuccess(PaymentSuccessResponse response) async {
-    if (mounted) setState(() => _payingOnDevice = false);
-    try {
-      await _repo.verifyPayment(
-        orderId: widget.order.id,
-        razorpayOrderId: response.orderId ?? '',
-        paymentId: response.paymentId ?? '',
-        signature: response.signature ?? '',
-      );
-    } catch (_) {
-      // Even if verify errors, the webhook + polling will reconcile the truth.
-    }
-    _startPolling();
-    _pollOnce();
-    if (mounted) {
-      _toast('Payment received — confirming with the server…');
-    }
-  }
-
-  void _onPaymentError(PaymentFailureResponse response) {
+    final result = await _checkout.collect(widget.order);
     if (!mounted) return;
-    setState(() => _payingOnDevice = false);
-    final code = response.code;
-    if (code == Razorpay.PAYMENT_CANCELLED) {
-      _toast('Payment cancelled.');
-      return;
-    }
-    _toast('Payment failed (${response.code}). Please try again.');
-  }
 
-  void _onExternalWallet(ExternalWalletResponse response) {
-    _toast('Selected wallet: ${response.walletName ?? ''}');
+    setState(() => _payingOnDevice = false);
+    _toast(result.message);
+
+    if (result.isPaid || result.outcome == OutletCheckoutOutcome.externalWallet) {
+      _startPolling();
+      _pollOnce();
+    }
   }
 
   // --- Terminal actions (only reachable once PAID) ---------------------------
@@ -223,6 +190,30 @@ class _OutletPaymentScreenState extends State<OutletPaymentScreen> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  /// Asks before walking away from an uncollected payment. The order is left
+  /// exactly as it is — unpaid, with its stock committed — so it can be settled
+  /// later from Orders.
+  Future<bool> _confirmLeave() async {
+    final leave = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Leave without collecting?'),
+        content: const Text(
+            'The order stays unpaid. You can collect the payment later from '
+            'Orders, or cancel the order to release the stock.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Stay')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Leave')),
+        ],
+      ),
+    );
+    return leave ?? false;
+  }
+
   void _toast(String msg) => ScaffoldMessenger.of(context)
       .showSnackBar(SnackBar(content: Text(msg)));
 
@@ -232,10 +223,15 @@ class _OutletPaymentScreenState extends State<OutletPaymentScreen> {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: _status.isPaid || _status.isReleased,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _status.isAwaitingPayment) {
-          _toast('Collect payment or cancel the order first.');
-        }
+      // Leaving with the payment uncollected is allowed but never accidental:
+      // the order is real (stock is already committed), so it must stay
+      // findable. It does — Orders → the order → "Collect payment" reopens THIS
+      // screen for the same order, which is how a cancelled checkout is retried.
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop || !_status.isAwaitingPayment) return;
+        final navigator = Navigator.of(context); // captured before the dialog
+        final leave = await _confirmLeave();
+        if (leave && mounted) navigator.pop();
       },
       child: Scaffold(
         backgroundColor: OutletColors.bg,
@@ -338,9 +334,16 @@ class _OutletPaymentScreenState extends State<OutletPaymentScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Order ${o.id}', style: OutletTextStyles.prodName),
+              // spaceBetween only distributes space that is already spare, so
+              // a full 24-char ObjectId pushed the badge off the right edge.
+              Expanded(
+                child: Text('Order ${shortId(o.id)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: OutletTextStyles.prodName),
+              ),
+              const SizedBox(width: 8),
               OutletBadge(
                 label: o.type.label,
                 bg: OutletColors.badgeGreenBg,
@@ -458,7 +461,11 @@ class _OutletPaymentScreenState extends State<OutletPaymentScreen> {
           tooltip: 'Copy link',
         ),
         IconButton(
-          onPressed: () => Share.share(link, subject: 'VS Arogya payment link'),
+          onPressed: () => Share.share(
+            link,
+            subject: 'VS Arogya payment link',
+            sharePositionOrigin: shareOriginFor(context),
+          ),
           icon: const Icon(Icons.share_rounded, size: 18),
           color: OutletColors.textMid,
           tooltip: 'Share link',

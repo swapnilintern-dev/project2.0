@@ -20,9 +20,12 @@
 // completed step (re-register, re-add to cart, or duplicate the order).
 // =============================================================================
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../vendor_registration_screen.dart' show VendorRegistrationModel;
+import '../../shared/api_date.dart';
 import '../outlet_api.dart';
 import '../outlet_enums.dart';
 import '../outlet_models.dart';
@@ -38,6 +41,26 @@ class BillingLine {
 
   final OutletStockItem item;
   int qty;
+
+  /// The FEFO batch breakdown for this line, as computed by the backend
+  /// (single source of truth). Empty until the first preview returns.
+  List<OutletBatchAllocation> allocations = const [];
+
+  /// Units still unallocated per the last backend preview (0 = fully allocated).
+  int remaining = 0;
+
+  /// True while a preview/override request for this line is in flight.
+  bool allocLoading = false;
+
+  /// The last allocation error the backend returned for this line, if any.
+  String? allocError;
+
+  /// Whether the user has pinned a manual override on this line (so a later
+  /// quantity change re-sends the overrides instead of a fresh FEFO).
+  bool overridden = false;
+
+  /// True once the backend has fully allocated the requested quantity.
+  bool get isAllocated => remaining == 0 && allocError == null;
 
   double get lineTotal => item.price * qty;
 
@@ -122,11 +145,13 @@ class BillingController extends ChangeNotifier {
     final idx = _lines.indexWhere((l) => l.item.id == item.id);
     if (idx >= 0) {
       _lines[idx].qty = _capped(item, _lines[idx].qty + qty);
+      _lines[idx].overridden = false; // qty changed → back to auto FEFO
     } else {
       if (item.qtyAvailable <= 0) return;
       _lines.add(BillingLine(item, _capped(item, qty)));
     }
     notifyListeners();
+    _scheduleAllocation(item.id);
   }
 
   void setQty(String productId, int qty) {
@@ -134,15 +159,101 @@ class BillingController extends ChangeNotifier {
     if (idx < 0) return;
     if (qty <= 0) {
       _lines.removeAt(idx);
-    } else {
-      _lines[idx].qty = _capped(_lines[idx].item, qty);
+      _debouncers.remove(productId)?.cancel();
+      notifyListeners();
+      return;
     }
+    _lines[idx].qty = _capped(_lines[idx].item, qty);
+    _lines[idx].overridden = false; // qty changed → recompute from scratch
     notifyListeners();
+    _scheduleAllocation(productId);
   }
 
   void increment(String productId) => setQty(productId, qtyOf(productId) + 1);
   void decrement(String productId) => setQty(productId, qtyOf(productId) - 1);
   void remove(String productId) => setQty(productId, 0);
+
+  // ---------------------------------------------------------------------------
+  // FEFO BATCH ALLOCATION (backend is the single source of truth)
+  // ---------------------------------------------------------------------------
+
+  /// Per-line debounce timers so rapid +/- taps collapse into one preview call.
+  final Map<String, Timer> _debouncers = {};
+
+  /// Debounced: ask the backend for this line's FEFO allocation.
+  void _scheduleAllocation(String productId) {
+    _debouncers[productId]?.cancel();
+    _debouncers[productId] = Timer(
+      const Duration(milliseconds: 350),
+      () => _refreshAllocation(productId),
+    );
+  }
+
+  /// Fetches (or re-validates) the FEFO allocation for one line from the
+  /// backend. When the line is [BillingLine.overridden] the current pinned
+  /// batches are sent so the server validates + fills the remainder FEFO.
+  Future<void> _refreshAllocation(String productId,
+      {List<OutletBatchAllocation>? overrides}) async {
+    final idx = _lines.indexWhere((l) => l.item.id == productId);
+    if (idx < 0) return;
+    final line = _lines[idx];
+
+    line.allocLoading = true;
+    line.allocError = null;
+    notifyListeners();
+
+    final (allocs, remaining, _, error) = await _api.previewAllocation(
+      productId,
+      line.qty,
+      overrides: overrides ?? (line.overridden ? line.allocations : const []),
+    );
+
+    // The line may have been removed/changed while the request was in flight.
+    final cur = _lines.indexWhere((l) => l.item.id == productId);
+    if (cur < 0) return;
+    final l = _lines[cur];
+    l.allocLoading = false;
+    if (error != null) {
+      l.allocError = error;
+    } else {
+      l.allocations = allocs;
+      l.remaining = remaining;
+      l.allocError = null;
+    }
+    notifyListeners();
+  }
+
+  /// Applies a manual batch override for a line (user edited quantities / picked
+  /// another batch). The backend validates it, auto-fills the remainder FEFO and
+  /// returns the corrected allocation.
+  Future<void> overrideAllocation(
+    String productId,
+    List<OutletBatchAllocation> overrides,
+  ) async {
+    final idx = _lines.indexWhere((l) => l.item.id == productId);
+    if (idx < 0) return;
+    _lines[idx].overridden = true;
+    _debouncers[productId]?.cancel();
+    await _refreshAllocation(productId, overrides: overrides);
+  }
+
+  /// The outlet's sellable batches for the override picker.
+  Future<(List<OutletBatch>?, String?)> availableBatches(String productId) =>
+      _api.getOutletAvailableBatches(productId);
+
+  /// True only when every line has a complete backend allocation — required
+  /// before the bill can be generated.
+  bool get allLinesAllocated =>
+      _lines.isNotEmpty && _lines.every((l) => l.isAllocated);
+
+  @override
+  void dispose() {
+    for (final t in _debouncers.values) {
+      t.cancel();
+    }
+    _debouncers.clear();
+    super.dispose();
+  }
 
   /// Clamp a requested quantity to [1, stock].
   int _capped(OutletStockItem item, int qty) {
@@ -182,7 +293,15 @@ class BillingController extends ChangeNotifier {
     notifyListeners();
     try {
       final items = [
-        for (final l in _lines) {'productId': l.item.id, 'quantity': l.qty},
+        for (final l in _lines)
+          {
+            'productId': l.item.id,
+            'quantity': l.qty,
+            // Send the (possibly overridden) allocation so the backend honours
+            // it after a final validation. Omitted when empty → pure FEFO.
+            if (l.allocations.isNotEmpty)
+              'allocations': l.allocations.map((a) => a.toJson()).toList(),
+          },
       ];
       final (orderId, serverTotal, err) =
           await _api.placeOutletBill(customer: customerPayload, items: items);
@@ -216,7 +335,7 @@ class BillingController extends ChangeNotifier {
         'gst_no': customer.gstNumber,
         'drug_lic_no': customer.drugLicenseNumber,
         if (customer.drugLicenseExpiry != null)
-          'drug_lic_ex_date': customer.drugLicenseExpiry!.toIso8601String(),
+          'drug_lic_ex_date': apiCalendarDate(customer.drugLicenseExpiry!),
       };
 
   /// The customer details the server bills the invoice to (matches the

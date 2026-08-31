@@ -6,12 +6,20 @@
 // prices, discount vs MRP, grand total). Below it the fulfilment choice (Outlet
 // Handover; Home Delivery is shown but deferred for v1) and the payment method
 // (Cash / Razorpay). Everything reads + writes the shared BillingController.
+//
+// Each line also states WHICH BATCH it consumes — the backend's FEFO breakdown —
+// and opens the app-wide batch picker to change it. Both the picker and the
+// expiry colour scale are shared with Marketing, so a batch looks and behaves
+// the same in every role.
 // =============================================================================
 
 import 'package:flutter/material.dart';
 
 import '../../../customer/customer_widgets.dart' show EmptyState, formatRupees;
+import '../../../widgets/batch_selector.dart';
+import '../../../widgets/expiry_alert.dart';
 import '../../outlet_enums.dart';
+import '../../outlet_models.dart';
 import '../../outlet_theme.dart';
 import '../billing_controller.dart';
 import '../billing_widgets.dart';
@@ -184,41 +192,52 @@ class _LineRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final item = line.item;
-    return Row(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(item.name,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: OutletTextStyles.prodName),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(item.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: OutletTextStyles.prodName),
               const SizedBox(height: 2),
-              Row(
+              // Price, struck-through MRP and discount badge are three separate
+              // facts, and a line can carry all three at once. As a Row they
+              // shared one unbreakable line: a four-figure price beside a
+              // four-figure MRP runs out of room at the 1.3x text cap on a
+              // narrow iPhone, and a Row overflows rather than reflows.
+              // Wrap cannot overflow on its main axis — the discount badge
+              // drops to a second line instead. Identical to the Row whenever
+              // the three fit, which is the common case. `spacing` replaces
+              // the SizedBox gaps exactly.
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 6,
+                runSpacing: 2,
                 children: [
                   Text('₹${item.price.toStringAsFixed(2)}',
                       style: const TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w700,
                           color: OutletColors.textDark)),
-                  if (item.mrp > item.price) ...[
-                    const SizedBox(width: 6),
+                  if (item.mrp > item.price)
                     Text('MRP ₹${item.mrp.toStringAsFixed(2)}',
                         style: const TextStyle(
                             fontSize: 10.5,
                             color: OutletColors.textMuted,
                             decoration: TextDecoration.lineThrough)),
-                  ],
-                  if (item.discountPercent > 0) ...[
-                    const SizedBox(width: 6),
+                  if (item.discountPercent > 0)
                     Text('${item.discountPercent.toStringAsFixed(0)}% off',
                         style: const TextStyle(
                             fontSize: 10.5,
                             fontWeight: FontWeight.w700,
                             color: OutletColors.success)),
-                  ],
                 ],
               ),
               const SizedBox(height: 6),
@@ -257,7 +276,240 @@ class _LineRow extends StatelessWidget {
               ),
             ),
           ],
+            ),
+          ],
         ),
+        const SizedBox(height: 8),
+        _BatchDetails(line: line, controller: controller),
+      ],
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Batch Details — the FEFO breakdown for a line + manual override entry point.
+// The allocation is always the backend's; this only displays it and opens the
+// override picker.
+// -----------------------------------------------------------------------------
+class _BatchDetails extends StatefulWidget {
+  const _BatchDetails({required this.line, required this.controller});
+
+  final BillingLine line;
+  final BillingController controller;
+
+  @override
+  State<_BatchDetails> createState() => _BatchDetailsState();
+}
+
+class _BatchDetailsState extends State<_BatchDetails> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final line = widget.line;
+    return Container(
+      decoration: BoxDecoration(
+        color: OutletColors.bg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: line.allocError != null
+              ? OutletColors.danger
+              : OutletColors.border,
+        ),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.inventory_2_outlined,
+                      size: 15, color: OutletColors.textMid),
+                  const SizedBox(width: 6),
+                  const Text('Batch Details',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: OutletColors.textDark)),
+                  const SizedBox(width: 8),
+                  Expanded(child: _status(line)),
+                  Icon(_expanded ? Icons.expand_less : Icons.expand_more,
+                      size: 18, color: OutletColors.textMid),
+                ],
+              ),
+            ),
+          ),
+          if (_expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (line.allocError != null)
+                    Text(line.allocError!,
+                        style: const TextStyle(
+                            fontSize: 11.5, color: OutletColors.danger)),
+                  for (final a in line.allocations) _allocRow(a),
+                  if (line.remaining > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text('${line.remaining} unit(s) unallocated',
+                          style: const TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w700,
+                              color: OutletColors.danger)),
+                    ),
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: line.allocLoading ? null : _openOverride,
+                      icon: const Icon(Icons.tune, size: 16),
+                      label: Text(
+                          line.overridden ? 'Edit batches' : 'Change batches',
+                          style: const TextStyle(
+                              fontSize: 12.5, fontWeight: FontWeight.w700)),
+                      style: TextButton.styleFrom(
+                        foregroundColor: OutletColors.success,
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        minimumSize: const Size(0, 32),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _status(BillingLine line) {
+    if (line.allocLoading) {
+      return const Align(
+        alignment: Alignment.centerLeft,
+        child: SizedBox(
+          width: 12,
+          height: 12,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    if (line.allocError != null) {
+      return const Text('Allocation error',
+          style: TextStyle(fontSize: 11, color: OutletColors.danger));
+    }
+    final n = line.allocations.length;
+    final label = line.overridden ? 'Manual · ' : 'FEFO · ';
+    return Text('$label$n batch${n == 1 ? '' : 'es'}',
+        style: const TextStyle(fontSize: 11, color: OutletColors.textMuted));
+  }
+
+  Widget _allocRow(OutletBatchAllocation a) {
+    final tier = expiryTierOf(a.expiry);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(a.batchNumber,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: OutletColors.textDark)),
+          ),
+          if (a.expiry != null) ...[
+            Icon(Icons.event_outlined, size: 13, color: tier.color),
+            const SizedBox(width: 3),
+            Text(formatExpiry(a.expiry),
+                style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: tier.color)),
+            const SizedBox(width: 6),
+            ExpiryTierBadge(expiry: a.expiry, dense: true),
+            const SizedBox(width: 8),
+          ],
+          Text('${a.quantity}',
+              style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: OutletColors.textDark)),
+          const SizedBox(width: 2),
+          const Text('units',
+              style: TextStyle(fontSize: 10.5, color: OutletColors.textMuted)),
+        ],
+      ),
+    );
+  }
+
+  /// Opens the SHARED FEFO picker (the same one Marketing uses for manual
+  /// orders and stock assignment), so a batch reads identically in every role.
+  /// The outlet's batches are fetched live; the pick goes straight back to the
+  /// backend, which validates it and returns the authoritative allocation.
+  Future<void> _openOverride() async {
+    final line = widget.line;
+    final (batches, error) =
+        await widget.controller.availableBatches(line.item.id);
+    if (!mounted) return;
+
+    if (batches == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error ?? 'Could not load batches')),
+      );
+      return;
+    }
+    if (batches.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'No sellable batch left for this medicine — every lot is empty '
+              'or past its expiry date.'),
+        ),
+      );
+      return;
+    }
+
+    final picked = await showBatchSelector(
+      context: context,
+      productName: line.item.name,
+      quantity: line.qty,
+      batches: [
+        for (final b in batches)
+          BatchOption(
+            id: b.id,
+            batchNumber: b.batchNumber,
+            available: b.available,
+            expiry: b.expiry,
+            isExpiringSoon: b.isExpiringSoon,
+          ),
+      ],
+      initial: [
+        for (final a in line.allocations)
+          BatchAllocation(
+            batchId: a.batchId,
+            batchNumber: a.batchNumber,
+            quantity: a.quantity,
+            expiry: a.expiry,
+          ),
+      ],
+    );
+    if (picked == null || !mounted) return;
+
+    await widget.controller.overrideAllocation(
+      line.item.id,
+      [
+        for (final a in picked)
+          OutletBatchAllocation(
+            batchId: a.batchId,
+            batchNumber: a.batchNumber,
+            quantity: a.quantity,
+            expiry: a.expiry,
+          ),
       ],
     );
   }

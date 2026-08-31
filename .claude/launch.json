@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "flicktalk",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "C:/swapnil2/dating/flicktalk", "run", "dev", "--", "--port", "5300", "--strictPort"],
+      "port": 5300
+    },
+    {
       "name": "portfolio",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "C:/Portfolio", "run", "dev"],
@@ -12,6 +18,18 @@
       "runtimeExecutable": "cmd",
       "runtimeArgs": ["/c", "cd /d C:\\swapnil2\\sport && flutter run -d web-server --web-port 8099"],
       "port": 8099
+    },
+    {
+      "name": "hhgoa",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "C:/swapnil2/HHGOA", "run", "dev", "--", "--port", "5310", "--strictPort"],
+      "port": 5310
+    },
+    {
+      "name": "hhgoa-prod",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "C:/swapnil2/HHGOA", "run", "preview", "--", "--port", "5311", "--strictPort"],
+      "port": 5311
     },
     {
       "name": "invoice-preview",

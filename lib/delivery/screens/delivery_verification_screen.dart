@@ -18,6 +18,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../customer/customer_widgets.dart' show formatRupees;
 import '../../vendor_registration_screen.dart' show AppColors;
+import '../../theme/app_widgets.dart' show shareOriginFor;
 import '../delivery_api.dart';
 import '../delivery_models.dart';
 
@@ -235,8 +236,11 @@ class _DeliveryVerificationScreenState
                 tooltip: 'Copy',
               ),
               IconButton(
-                onPressed: () =>
-                    Share.share(link, subject: 'VS Arogya payment link'),
+                onPressed: () => Share.share(
+                  link,
+                  subject: 'VS Arogya payment link',
+                  sharePositionOrigin: shareOriginFor(context),
+                ),
                 icon: const Icon(Icons.share_rounded, size: 18),
                 color: AppColors.greyText,
                 tooltip: 'Share',

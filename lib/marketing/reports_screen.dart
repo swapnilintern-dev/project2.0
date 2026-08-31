@@ -25,6 +25,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
+import '../theme/app_widgets.dart' show shareOriginFor;
 import 'marketing_api.dart' show MarketingReportsApi;
 import 'marketing_models.dart' show MarketingColors;
 
@@ -142,6 +143,7 @@ class _MarketingReportsScreenState extends State<MarketingReportsScreen> {
       // Guarantees the receiving app sees a proper "….xlsx" filename.
       fileNameOverrides: [fileName],
       subject: '$_selectedTitle — VS Arogya Meda',
+      sharePositionOrigin: shareOriginFor(context),
     );
 
     if (!mounted) return;

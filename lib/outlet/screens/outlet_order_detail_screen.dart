@@ -358,10 +358,27 @@ class _OutletOrderDetailScreenState extends State<OutletOrderDetailScreen>
   Widget _actions() {
     final o = _order;
     // Placed for a vendor through the manual-order API: the team confirms,
-    // invoices and delivers it. "Collect payment" is impossible here
-    // (/create-payment 403s — the order belongs to the vendor, not us) and
-    // "mark handed over" isn't ours to do. Show what's happening instead.
-    if (o.teamFulfilled) return _teamFulfilledNote(o);
+    // invoices and delivers it, so "mark handed over" isn't ours to do — the
+    // note explains what is happening instead.
+    //
+    // Payment IS ours to collect: the order carries this outlet's id, which is
+    // exactly what the outlet Razorpay endpoints authorise on. Offering it here
+    // is what lets a cancelled or failed checkout be retried later against the
+    // SAME order rather than a new one.
+    if (o.teamFulfilled) {
+      if (!o.isAwaitingPayment) return _teamFulfilledNote(o);
+      return Column(
+        children: [
+          _GradientButton(
+            icon: Icons.qr_code_2_rounded,
+            label: 'Collect payment',
+            onTap: _collectPayment,
+          ),
+          const SizedBox(height: 12),
+          _teamFulfilledNote(o),
+        ],
+      );
+    }
     if (o.isAwaitingPayment) {
       return _GradientButton(
         icon: Icons.qr_code_2_rounded,

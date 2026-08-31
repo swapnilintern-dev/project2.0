@@ -64,6 +64,12 @@ android/app/debug/
 android/app/profile/
 android/app/release/
 
+# Release signing — the upload keystore and its passwords must never be
+# committed. android/key.properties.example is the tracked template.
+android/key.properties
+*.jks
+*.keystore
+
 # =========================
 
 # iOS

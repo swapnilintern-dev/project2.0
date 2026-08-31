@@ -19,6 +19,7 @@ import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart' show XFile;
 
 import 'api_config.dart';
+import '../shared/api_date.dart';
 import '../vendor_registration_screen.dart' show VendorRegistrationModel;
 
 /// Outcome of a registration attempt — success flag, a user-facing message and
@@ -68,7 +69,7 @@ class VendorApiService {
       'gst_status': _gstStatusForApi(model.gstStatus),
       'drug_lic_no': model.drugLicenseNumber,
       if (model.drugLicenseExpiry != null)
-        'drug_lic_ex_date': model.drugLicenseExpiry!.toIso8601String(),
+        'drug_lic_ex_date': apiCalendarDate(model.drugLicenseExpiry!),
     });
 
     // --- File fields (multer keys: store_pic, gst_pdf, drug_lic_copy) ---

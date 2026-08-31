@@ -11,6 +11,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'catalog.dart';
 import 'customer_api.dart';
 import 'customer_models.dart';
 
@@ -112,8 +113,36 @@ class CartController extends ChangeNotifier {
     if (_pending > 0 || epoch != _epoch) return;
     _items
       ..clear()
-      ..addAll(server);
+      ..addAll(_clampToStock(server));
     notifyListeners();
+  }
+
+  /// Trims server-sent lines down to the stock that actually exists.
+  ///
+  /// The cart is saved on the vendor's account, so a line built before the
+  /// quantity cap existed — or one whose medicine sold out while the cart sat
+  /// idle for a week — comes back over stock at the next login. Clamping on the
+  /// way in means such a cart repairs itself rather than greeting the vendor
+  /// with a quantity they can never order. Lines whose stock is unknown are
+  /// passed through untouched.
+  ///
+  /// The corrected quantity reaches the backend at checkout: pushToServer makes
+  /// the server cart match the local one before the order is built.
+  @visibleForTesting
+  List<CartItem> clampForTest(List<CartItem> lines) => _clampToStock(lines);
+
+  List<CartItem> _clampToStock(List<CartItem> lines) {
+    final out = <CartItem>[];
+    for (final line in lines) {
+      final left = availableStockFor(line.product.id, fallback: line.product);
+      if (left == null || left >= line.quantity) {
+        out.add(line); // unknown stock, or the line already fits
+      } else if (left > 0) {
+        out.add(line.copyWith(quantity: left));
+      }
+      // left == 0 → sold out: drop the line rather than leave a 0-qty ghost.
+    }
+    return out;
   }
 
   /// Loads the logged-in vendor's saved cart from the backend so the cart
@@ -133,7 +162,7 @@ class CartController extends ChangeNotifier {
     if (_items.isNotEmpty || _pending > 0) return; // keep in-progress edits
     _items
       ..clear()
-      ..addAll(server);
+      ..addAll(_clampToStock(server));
     notifyListeners();
   }
 
@@ -202,32 +231,93 @@ class CartController extends ChangeNotifier {
     }
   }
 
+  /// The units of [productId] still buyable, or null when stock is unknown
+  /// (see Product.availableStock). Read from the shared [Catalog] FIRST so the
+  /// cap tracks the live figure — the copy held by a screen may have been
+  /// fetched minutes ago and other vendors buy in the meantime. [fallback] is
+  /// the caller's own copy, used only when the product is not in the catalogue.
+  int? availableStockFor(String productId, {Product? fallback}) =>
+      (Catalog.byId(productId) ?? fallback)?.availableStock;
+
   /// Adds [quantity] of [product]; merges with an existing line. Mirrored via
   /// add-cart (+1 per call server-side, so one add covers new AND existing
   /// lines) plus (quantity-1) increases — handled inside CustomerApi.addToCart.
-  void add(Product product, {int quantity = 1}) {
+  ///
+  /// Never takes the line past the available stock: returns the number of units
+  /// ACTUALLY added, which is less than [quantity] when the cap bites and 0
+  /// when the line is already at it. Callers show the shortfall to the vendor.
+  int add(Product product, {int quantity = 1}) {
     final index = _items.indexWhere((i) => i.product.id == product.id);
+    final current = index >= 0 ? _items[index].quantity : 0;
+
+    final granted = _grant(product.id, current, quantity, fallback: product);
+    if (granted <= 0) return 0;
+
     if (index >= 0) {
-      _items[index] =
-          _items[index].copyWith(quantity: _items[index].quantity + quantity);
+      _items[index] = _items[index].copyWith(quantity: current + granted);
     } else {
-      _items.add(CartItem(product: product, quantity: quantity));
+      _items.add(CartItem(product: product, quantity: granted));
     }
     notifyListeners();
-    _mirror(() => _api.addToCart(product.id, quantity: quantity));
+    _mirror(() => _api.addToCart(product.id, quantity: granted));
+    return granted;
   }
 
-  void setQuantity(String productId, int quantity) {
+  /// Sets a line's quantity, capped at the available stock. Returns the
+  /// quantity actually applied (0 removes the line), so the cart's stepper can
+  /// tell the vendor when it refused to go higher.
+  int setQuantity(String productId, int quantity) {
     final index = _items.indexWhere((i) => i.product.id == productId);
-    if (index < 0) return;
+    if (index < 0) return 0;
     final before = _items[index].quantity;
-    if (quantity <= 0) {
+
+    // Only an INCREASE is capped. Lowering a line must always be allowed, even
+    // when it currently sits above the cap (stock can drop after the line was
+    // added) — otherwise the vendor could not fix the very line that is over.
+    var target = quantity;
+    if (target > before) {
+      target = before + _grant(productId, before, target - before,
+          fallback: _items[index].product);
+    }
+
+    if (target <= 0) {
       _items.removeAt(index);
     } else {
-      _items[index] = _items[index].copyWith(quantity: quantity);
+      if (target == before) return before; // nothing changed — no server churn
+      _items[index] = _items[index].copyWith(quantity: target);
     }
     notifyListeners();
-    _mirrorLineQuantity(productId, from: before, to: quantity);
+    _mirrorLineQuantity(productId, from: before, to: target);
+    return target < 0 ? 0 : target;
+  }
+
+  /// Lines holding more units than the medicine currently has in stock.
+  ///
+  /// The cap on add/setQuantity stops a line being CREATED over stock, but it
+  /// cannot stop stock FALLING while the item waits in the cart — another
+  /// vendor buys the last packs, or marketing writes an expired lot off. So the
+  /// cart is re-checked against live stock before checkout instead of trusting
+  /// that it was valid when it was built. Empty means the cart is safe to order.
+  List<CartItem> get overStockedLines => [
+        for (final item in _items)
+          if (_exceedsStock(item)) item,
+      ];
+
+  bool _exceedsStock(CartItem item) {
+    final left = availableStockFor(item.product.id, fallback: item.product);
+    return left != null && item.quantity > left;
+  }
+
+  /// How many of [wanted] extra units may be added on top of [current], given
+  /// the live stock. Unknown stock grants the request in full — the server is
+  /// the final authority and rejects a genuine oversell at checkout.
+  int _grant(String productId, int current, int wanted, {Product? fallback}) {
+    if (wanted <= 0) return 0;
+    final left = availableStockFor(productId, fallback: fallback);
+    if (left == null) return wanted;
+    final room = left - current;
+    if (room <= 0) return 0;
+    return wanted < room ? wanted : room;
   }
 
   /// Mirrors one line's quantity change as increase/decrease/remove calls.
@@ -464,12 +554,11 @@ class OrdersController extends ChangeNotifier {
   }
 }
 
-/// Saved delivery addresses. NO fake seed — the list is built from the user's
-/// REAL past-order shipping addresses (via [syncFromOrders], fed by
-/// [OrdersController]) plus any addresses added this session. The backend has
-/// no address-book endpoint, so session-added addresses aren't persisted on
-/// their own; once used in an order they reappear via the order-derived list.
-/// Checkout + Profile observe this.
+/// Saved delivery addresses. NO fake seed — the list mirrors the backend
+/// address book (GET/POST/PUT/DELETE /vsArogya/addresses, via [hydrate] and the
+/// mutation methods) merged with the user's REAL past-order shipping addresses
+/// (via [syncFromOrders], fed by [OrdersController]). Checkout + Profile
+/// observe this.
 class AddressController extends ChangeNotifier {
   AddressController._();
   static final AddressController instance = AddressController._();

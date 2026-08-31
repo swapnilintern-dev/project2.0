@@ -1,0 +1,14 @@
+# Copy to android/key.properties and fill in with the real upload keystore.
+# key.properties and *.jks are gitignored — never commit either.
+#
+# Create the keystore once:
+#   keytool -genkey -v -keystore vsarogya-upload.jks -keyalg RSA -keysize 2048 \
+#           -validity 10000 -alias upload
+#
+# Keep the .jks and these passwords backed up somewhere safe: losing them means
+# you can no longer publish updates to the existing Play listing.
+
+storeFile=C:/keys/vsarogya-upload.jks
+storePassword=CHANGE_ME
+keyAlias=upload
+keyPassword=CHANGE_ME

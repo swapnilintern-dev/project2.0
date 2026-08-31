@@ -10,7 +10,9 @@
 import 'package:flutter/material.dart';
 
 import '../../../customer/customer_widgets.dart' show EmptyState;
+import '../../../services/live_refresh.dart';
 import '../../../theme/app_widgets.dart' show Debouncer;
+import '../../../widgets/expiry_alert.dart';
 import '../../outlet_models.dart';
 import '../../outlet_repository.dart';
 import '../../outlet_theme.dart';
@@ -26,7 +28,8 @@ class BillingProductsStep extends StatefulWidget {
   State<BillingProductsStep> createState() => _BillingProductsStepState();
 }
 
-class _BillingProductsStepState extends State<BillingProductsStep> {
+class _BillingProductsStepState extends State<BillingProductsStep>
+    with LiveRefreshMixin<BillingProductsStep> {
   final _repo = OutletRepository();
   final _searchCtrl = TextEditingController();
   final _debouncer = Debouncer();
@@ -39,21 +42,33 @@ class _BillingProductsStepState extends State<BillingProductsStep> {
   @override
   void initState() {
     super.initState();
-    _load();
+    // Keeps quantities AND the FEFO-front batch live while the counter is
+    // picking: another till's bill, or a fresh assignment from Marketing,
+    // shows up here without anyone pulling to refresh.
+    startLiveRefresh();
   }
 
   @override
   void dispose() {
+    stopLiveRefresh();
     _searchCtrl.dispose();
     _debouncer.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  /// Silent re-fetch on the poll — never flips the list back to a spinner or
+  /// clears what is on screen, so the user's scroll position and selection
+  /// survive every refresh.
+  @override
+  Future<void> onLiveRefresh() => _load(silent: _all.isNotEmpty);
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final stock = await _repo.fetchStock();
       if (!mounted) return;
@@ -61,9 +76,12 @@ class _BillingProductsStepState extends State<BillingProductsStep> {
         // Own-outlet, in-stock items are billable.
         _all = stock.where((s) => s.isOwnOutlet).toList();
         _loading = false;
+        _error = null;
       });
     } catch (_) {
       if (!mounted) return;
+      // A failed poll keeps the last good list rather than blanking the screen.
+      if (silent) return;
       setState(() {
         _loading = false;
         _error = 'Could not load stock. Check your connection and try again.';
@@ -259,20 +277,29 @@ class _ProductRow extends StatelessWidget {
                               color: OutletColors.textMuted,
                               decoration: TextDecoration.lineThrough)),
                     _stockChip(out),
-                    // Red "Expiring Soon" alert (Outlet is allowed to see it).
-                    if (item.isExpiringSoon) _expiryChip(),
+                    // Colour-graded expiry of the lot this outlet sells NEXT.
+                    ExpiryTierBadge(expiry: item.expiry, dense: true),
                   ],
                 ),
+                // WHICH BATCH will be billed — the outlet's own FEFO-front lot,
+                // so the counter knows before adding the line. When more than
+                // one lot is held, the row says so: the bill may span batches,
+                // and the exact split is confirmed on the review step.
                 if (item.batch.isNotEmpty || item.expiry != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 3),
                     child: Text(
                       [
                         if (item.batch.isNotEmpty) 'Batch ${item.batch}',
-                        if (item.expiry != null) 'Exp ${_mmYyyy(item.expiry!)}',
+                        formatExpiry(item.expiry),
+                        if (item.batchCount > 1)
+                          '+${item.batchCount - 1} more batch'
+                              '${item.batchCount > 2 ? 'es' : ''}',
                       ].join('  ·  '),
-                      style: const TextStyle(
-                          fontSize: 10.5, color: OutletColors.textMuted),
+                      style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                          color: expiryTierOf(item.expiry).color),
                     ),
                   ),
               ],
@@ -357,29 +384,4 @@ class _ProductRow extends StatelessWidget {
     return OutletBadge(label: label, bg: bg, fg: fg);
   }
 
-  /// Red "Expiring Soon" pill — batch expires within 90 days.
-  Widget _expiryChip() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: OutletColors.badgeRedBg,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: const [
-          Icon(Icons.warning_amber_rounded, size: 12, color: OutletColors.danger),
-          SizedBox(width: 3),
-          Text('Expiring Soon',
-              style: TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w700,
-                  color: OutletColors.danger)),
-        ],
-      ),
-    );
-  }
-
-  static String _mmYyyy(DateTime d) =>
-      '${d.month.toString().padLeft(2, '0')}/${d.year}';
 }

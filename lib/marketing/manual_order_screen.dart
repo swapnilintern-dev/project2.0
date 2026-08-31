@@ -16,8 +16,17 @@
 // per screen and reused across retries, and the submit button is disabled
 // while a request is in flight, so a mid-submit network drop can never create
 // a duplicate order.
+//
+// BATCHES — every line is batch-aware. Selecting a medicine loads its sellable
+// catalog batches live from the backend (FEFO: nearest expiry first) and the
+// server allocates the quantity across them, so the user always sees which lot
+// is being sold. The nearest-expiry batch is pre-selected; the user may pin a
+// different valid one, and the pinned choice travels with the cart line and is
+// re-validated by the server at placement. Nothing here computes inventory —
+// every allocation comes from /allocate-preview.
 // =============================================================================
 
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -26,15 +35,43 @@ import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
 import '../customer/customer_widgets.dart'
     show formatRupees, showAppSnack, PrimaryButton, EmptyState;
+import '../widgets/batch_selector.dart';
+import '../widgets/expiry_alert.dart';
+import 'marketing_api.dart';
 import 'marketing_controllers.dart';
 import 'marketing_models.dart';
 
-/// One order line being composed: the product plus the chosen quantity.
+/// One order line being composed: the product, the chosen quantity, and the
+/// batches the backend allocated (or the user pinned) for it.
 class _ManualLine {
   _ManualLine(this.product, this.quantity);
 
   InventoryProduct product;
   int quantity;
+
+  /// The product's sellable batches, straight from the backend in FEFO order.
+  List<BatchOption> batches = const [];
+
+  /// How the quantity is spread across those batches — always the server's
+  /// answer, whether auto-FEFO or a validated override.
+  List<BatchAllocation> allocations = const [];
+
+  /// Units the backend could not place on any sellable batch (0 when fine).
+  int unallocated = 0;
+
+  /// True while a batch load / allocation preview is in flight for this line.
+  bool loading = false;
+
+  /// The last batch-related error the backend returned for this line.
+  String? error;
+
+  /// Set once the user pins a batch, so a later quantity change re-sends the
+  /// pinned lots instead of silently reverting to plain FEFO.
+  bool overridden = false;
+
+  /// A line may only be ordered when the server has fully allocated it.
+  bool get isAllocated =>
+      error == null && !loading && allocations.isNotEmpty && unallocated == 0;
 }
 
 class ManualOrderScreen extends StatefulWidget {
@@ -61,6 +98,13 @@ class _ManualOrderScreenState extends State<ManualOrderScreen> {
   MarketingVendorsController get _vendors =>
       MarketingVendorsController.instance;
 
+  /// Batch reads + allocation previews. The backend is the only authority on
+  /// which lots exist and how a quantity spreads across them.
+  final BatchApi _batchApi = BatchApi();
+
+  /// Per-line debounce timers so rapid +/- taps collapse into one preview call.
+  final Map<String, Timer> _allocDebouncers = {};
+
   @override
   void initState() {
     super.initState();
@@ -68,6 +112,15 @@ class _ManualOrderScreenState extends State<ManualOrderScreen> {
     // server's current numbers, not a stale cache.
     _vendors.refresh();
     _products.refresh();
+  }
+
+  @override
+  void dispose() {
+    for (final t in _allocDebouncers.values) {
+      t.cancel();
+    }
+    _allocDebouncers.clear();
+    super.dispose();
   }
 
   // ---------------------------------------------------------------------------
@@ -88,11 +141,18 @@ class _ManualOrderScreenState extends State<ManualOrderScreen> {
   List<_ManualLine> get _overStockLines =>
       _lines.where((l) => l.quantity > _live(l.product).stock).toList();
 
+  /// Lines the backend has not fully allocated to batches yet (still loading,
+  /// short on sellable stock, or errored). The order cannot be placed until
+  /// every line names the exact lots it will consume.
+  List<_ManualLine> get _unallocatedLines =>
+      _lines.where((l) => !l.isAllocated).toList();
+
   bool get _canSubmit =>
       !_submitting &&
       _vendor != null &&
       _lines.isNotEmpty &&
-      _overStockLines.isEmpty;
+      _overStockLines.isEmpty &&
+      _unallocatedLines.isEmpty;
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -126,13 +186,18 @@ class _ManualOrderScreenState extends State<ManualOrderScreen> {
       ),
     );
     if (picked != null && mounted) {
-      setState(() => _lines.add(_ManualLine(picked, 1)));
+      final line = _ManualLine(picked, 1);
+      setState(() => _lines.add(line));
+      // Pull this product's sellable batches and let the server allocate the
+      // first unit — so the line shows its FEFO batch straight away.
+      unawaited(_loadBatches(line));
     }
   }
 
   void _setQuantity(_ManualLine line, int quantity) {
     final stock = _live(line.product).stock;
     if (quantity <= 0) {
+      _allocDebouncers.remove(line.product.id)?.cancel();
       setState(() => _lines.remove(line));
       return;
     }
@@ -141,7 +206,133 @@ class _ManualOrderScreenState extends State<ManualOrderScreen> {
           success: false);
       return;
     }
-    setState(() => line.quantity = quantity);
+    setState(() {
+      line.quantity = quantity;
+      if (!line.overridden) {
+        // No manual pin — the previous split no longer covers the new
+        // quantity, so let the server recompute it from scratch.
+        line.allocations = const [];
+      } else {
+        // A pin that now exceeds the line would be rejected by the server
+        // ("allocated more than the requested quantity"), so a reduction below
+        // what was pinned drops back to FEFO. A pin that still fits is kept and
+        // the server auto-fills the difference.
+        final pinned = line.allocations.fold(0, (s, a) => s + a.quantity);
+        if (pinned > quantity) {
+          line.overridden = false;
+          line.allocations = const [];
+        }
+      }
+    });
+    _scheduleAllocation(line);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Batches (backend is the single source of truth)
+  // ---------------------------------------------------------------------------
+
+  /// Loads a line's sellable batches (FEFO order) and then allocates its
+  /// current quantity across them.
+  Future<void> _loadBatches(_ManualLine line) async {
+    setState(() {
+      line.loading = true;
+      line.error = null;
+    });
+
+    final (batches, error) = await _batchApi.getAvailableBatches(line.product.id);
+    if (!mounted || !_lines.contains(line)) return;
+
+    if (batches == null) {
+      setState(() {
+        line.loading = false;
+        line.error = error;
+      });
+      return;
+    }
+
+    setState(() {
+      line.batches = batches;
+      line.loading = false;
+    });
+
+    if (batches.isEmpty) {
+      setState(() {
+        line.allocations = const [];
+        line.unallocated = line.quantity;
+        line.error = 'No sellable batch — every lot is empty or expired.';
+      });
+      return;
+    }
+    await _refreshAllocation(line);
+  }
+
+  /// Debounced allocation refresh, so holding down "+" issues one call.
+  void _scheduleAllocation(_ManualLine line) {
+    final key = line.product.id;
+    _allocDebouncers[key]?.cancel();
+    _allocDebouncers[key] = Timer(
+      const Duration(milliseconds: 350),
+      () => _refreshAllocation(line),
+    );
+  }
+
+  /// Asks the backend how this line's quantity spreads across its batches. When
+  /// the user has pinned lots those are sent as overrides — the server validates
+  /// them and fills any remainder FEFO, then returns the corrected answer.
+  Future<void> _refreshAllocation(_ManualLine line) async {
+    if (!mounted || !_lines.contains(line)) return;
+    setState(() {
+      line.loading = true;
+      line.error = null;
+    });
+
+    final (allocations, remaining, error) = await _batchApi.previewAllocation(
+      line.product.id,
+      line.quantity,
+      overrides: line.overridden ? line.allocations : const [],
+    );
+
+    if (!mounted || !_lines.contains(line)) return;
+    setState(() {
+      line.loading = false;
+      if (error != null) {
+        line.error = error;
+        return;
+      }
+      line.allocations = allocations;
+      line.unallocated = remaining;
+      line.error = remaining > 0
+          ? 'Only ${line.quantity - remaining} unit(s) available in sellable '
+              'batches (expired lots cannot be sold).'
+          : null;
+    });
+  }
+
+  /// Opens the shared FEFO picker so the user can choose a different lot. The
+  /// pick is sent straight back to the server for validation, so what is shown
+  /// afterwards is always the server's allocation, never a local guess.
+  Future<void> _pickBatches(_ManualLine line) async {
+    if (line.batches.isEmpty) {
+      await _loadBatches(line);
+      if (!mounted || line.batches.isEmpty) return;
+    }
+
+    final picked = await showBatchSelector(
+      context: context,
+      productName: line.product.name,
+      quantity: line.quantity,
+      batches: line.batches,
+      initial: line.allocations,
+      lowStockThreshold: _live(line.product).lowThreshold,
+    );
+    if (picked == null || !mounted) return;
+
+    setState(() {
+      line.overridden = true;
+      line.allocations = picked;
+    });
+    _allocDebouncers.remove(line.product.id)?.cancel();
+    await _refreshAllocation(line);
   }
 
   Future<void> _submit() async {
@@ -166,6 +357,18 @@ class _ManualOrderScreenState extends State<ManualOrderScreen> {
       );
       return;
     }
+    // Every line must name the exact lots it consumes before the order is
+    // placed — the server enforces this too, but failing here is clearer.
+    final pending = _unallocatedLines;
+    if (pending.isNotEmpty) {
+      final l = pending.first;
+      showAppSnack(
+        context,
+        l.error ?? 'Still checking batches for ${l.product.name}…',
+        success: false,
+      );
+      return;
+    }
     setState(() {
       _submitting = true;
       _error = null;
@@ -175,6 +378,9 @@ class _ManualOrderScreenState extends State<ManualOrderScreen> {
       vendorId: _vendor!.id,
       items: {for (final l in _lines) l.product.id: l.quantity},
       clientOrderId: _clientOrderId,
+      // The exact batches this order draws from. The server re-validates them
+      // against live stock and deducts those lots only.
+      batches: {for (final l in _lines) l.product.id: l.allocations},
     );
     if (!mounted) return;
     if (error != null) {
@@ -427,6 +633,18 @@ class _ManualOrderScreenState extends State<ManualOrderScreen> {
                   color: AppColors.error),
             ),
           ),
+        // WHICH BATCH IS BEING SOLD — always visible, never a guess. Tapping
+        // "Change" opens the FEFO picker with the other valid lots.
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: BatchSummary(
+            allocations: line.allocations,
+            unallocated: line.unallocated,
+            loading: line.loading,
+            error: line.error,
+            onChange: () => _pickBatches(line),
+          ),
+        ),
       ],
     );
   }
@@ -735,15 +953,51 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
                         color: selectable
                             ? AppColors.darkText
                             : AppColors.greyText)),
-                subtitle: Row(
+                // The FEFO-front batch, read from the product's server-synced
+                // mirror (batch_no/exp_date are always the nearest-expiry lot),
+                // so the user knows which stock they are about to sell before
+                // even adding the line — no extra request per row.
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(formatRupees(p.price),
-                        style: const TextStyle(
-                            fontSize: 12, color: AppColors.greyText)),
-                    const SizedBox(width: 8),
-                    _stockBadge(p),
+                    Row(
+                      children: [
+                        Text(formatRupees(p.price),
+                            style: const TextStyle(
+                                fontSize: 12, color: AppColors.greyText)),
+                        const SizedBox(width: 8),
+                        _stockBadge(p),
+                      ],
+                    ),
+                    if (p.batchNo.isNotEmpty || p.expiryDate != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Row(
+                          children: [
+                            if (p.batchNo.isNotEmpty) ...[
+                              Flexible(
+                                child: Text('Batch ${p.batchNo}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: AppColors.darkText)),
+                              ),
+                              const SizedBox(width: 6),
+                            ],
+                            Text(formatExpiry(p.expiryDate),
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: expiryTierOf(p.expiryDate).color)),
+                            const SizedBox(width: 4),
+                            ExpiryTierBadge(expiry: p.expiryDate, dense: true),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
+                isThreeLine: p.batchNo.isNotEmpty || p.expiryDate != null,
                 trailing: added
                     ? const Text('Added',
                         style: TextStyle(
@@ -771,9 +1025,18 @@ Widget _pickerScaffold({
   required ValueChanged<String> onQuery,
   required Widget child,
 }) {
+  // Modal sheets get no keyboard handling from the framework (unlike Dialog,
+  // ModalBottomSheetRoute never reads viewInsets), and this chrome is a FIXED
+  // 75% of the FULL screen. Focusing the search box puts the keyboard straight
+  // over the bottom of the results — you type, and the matches are behind the
+  // keys. Measuring the 75% against the space actually left, and lifting by the
+  // same inset, keeps the whole list visible. The inset is 0 with no keyboard
+  // up, so this is a no-op on both platforms otherwise.
+  final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
   return SafeArea(
-    child: SizedBox(
-      height: MediaQuery.of(context).size.height * 0.75,
+    child: Container(
+      margin: EdgeInsets.only(bottom: keyboardInset),
+      height: (MediaQuery.of(context).size.height - keyboardInset) * 0.75,
       child: Column(
         children: [
           Container(

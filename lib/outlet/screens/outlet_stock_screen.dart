@@ -1,32 +1,44 @@
 // =============================================================================
 // VS Arogya — Outlet Staff · Stock
 //
-// Two tabs (locked rule #1):
-//   • My outlet  — the staff's OWN stock, FULL access (an "Add" control that
-//                  Step 6 wires to the cart).
-//   • District   — other outlets' stock in the district, READ-ONLY: there is no
-//                  add / edit control on these rows at all. Shown so staff can
-//                  see where stock exists across the district.
+// ONE source of stock: the signed-in outlet's OWN inventory, read live from
+// GET /vsArogya/outlet-products/:id. There is no district view — an outlet sells
+// what it holds, so browsing other outlets' shelves has no place in the ordering
+// flow and the option does not exist here at all.
 //
-// Wired to [OutletRepository] (mock for now). Search + category filter run in
-// memory over a single fetch.
+// Each row is batch-aware end-to-end:
+//   • "+ Add" opens the batch picker (lazy — batches are only fetched when the
+//     sheet opens) and the medicine enters the cart pinned to the lot chosen;
+//   • the row then shows an EDITABLE quantity — type it, or use − / + — capped
+//     live at that lot's available units;
+//   • "Change" re-opens the picker to re-pin the line, which re-caps quantity.
+//
+// Search + category filter run in memory over a single fetch. Stock auto-syncs
+// via [LiveRefreshMixin] and re-reads immediately when [OutletStockSignal] fires
+// (i.e. right after this app places an order that deducted stock).
 // =============================================================================
 
 import 'package:flutter/material.dart';
 
+import '../outlet_batch_picker.dart';
 import '../outlet_cart.dart';
 import '../outlet_models.dart';
+import '../outlet_qty_field.dart';
 import '../outlet_repository.dart';
 import '../outlet_session.dart';
+import '../outlet_stock_signal.dart';
 import '../outlet_theme.dart';
 import '../../services/live_refresh.dart';
+import '../../widgets/expiry_alert.dart';
+import 'outlet_medicine_details_screen.dart';
 
 class OutletStockScreen extends StatefulWidget {
   const OutletStockScreen({super.key, required this.onAddToCart});
 
-  /// Called when staff taps "Add" on an OWN-outlet row. District rows never
-  /// call this — they render no add control. Wired to the cart in Step 6.
-  final ValueChanged<OutletStockItem> onAddToCart;
+  /// Called once staff have picked BOTH the medicine and the lot it will be
+  /// issued from. The batch is part of the contract: an outlet line is never
+  /// added to the cart without one.
+  final void Function(OutletStockItem item, OutletBatch batch) onAddToCart;
 
   @override
   State<OutletStockScreen> createState() => _OutletStockScreenState();
@@ -42,7 +54,6 @@ class _OutletStockScreenState extends State<OutletStockScreen>
 
   late Future<List<OutletStockItem>> _future;
 
-  bool _ownTab = true;
   String _query = '';
   String _category = 'all';
 
@@ -53,20 +64,34 @@ class _OutletStockScreenState extends State<OutletStockScreen>
     // stays live (immediate: false avoids a duplicate fetch on open).
     _future = _repo.fetchStock();
     startLiveRefresh(immediate: false);
+    // An order placed elsewhere in this app has already deducted stock on the
+    // server — re-read at once rather than waiting for the next poll.
+    OutletStockSignal.revision.addListener(_onStockSignal);
   }
 
   @override
   void dispose() {
+    OutletStockSignal.revision.removeListener(_onStockSignal);
     stopLiveRefresh();
     super.dispose();
   }
 
+  void _onStockSignal() {
+    if (mounted) onLiveRefresh();
+  }
+
   /// Silent background sync — fetches then swaps in an already-resolved future
-  /// so the list never flashes the centered loader mid-poll.
+  /// so the list never flashes the centered loader mid-poll. A failed sync keeps
+  /// the last good list rather than blanking the screen.
   @override
   Future<void> onLiveRefresh() async {
-    final stock = await _repo.fetchStock();
-    if (mounted) setState(() => _future = Future.value(stock));
+    try {
+      final stock = await _repo.fetchStock();
+      if (mounted) setState(() => _future = Future.value(stock));
+    } catch (_) {
+      // Keep showing what we have; the visible error state belongs to the
+      // first load and to pull-to-refresh, not to a background tick.
+    }
   }
 
   Future<void> _refresh() async {
@@ -74,10 +99,12 @@ class _OutletStockScreenState extends State<OutletStockScreen>
     await _future;
   }
 
+  /// Own-outlet rows only. The live endpoint returns nothing else, and this
+  /// keeps that guarantee structural rather than incidental.
   List<OutletStockItem> _filter(List<OutletStockItem> all) {
     final q = _query.trim().toLowerCase();
     return all.where((s) {
-      if (s.isOwnOutlet != _ownTab) return false;
+      if (!s.isOwnOutlet) return false;
       if (_category != 'all' && s.category != _category) return false;
       if (q.isNotEmpty && !s.name.toLowerCase().contains(q)) return false;
       return true;
@@ -93,7 +120,7 @@ class _OutletStockScreenState extends State<OutletStockScreen>
           title: 'Stock',
           subtitle: OutletSession.instance.outletLabel,
         ),
-        _tabToggle(),
+        _scopeBanner(),
         _searchField(),
         _categoryChips(),
         Expanded(
@@ -119,8 +146,8 @@ class _OutletStockScreenState extends State<OutletStockScreen>
                 if (snap.hasError) return _error(snap.error.toString());
                 final rows = _filter(snap.data ?? const []);
                 if (rows.isEmpty) return _empty();
-                // Rebuild rows when the cart changes so the qty stepper stays
-                // in sync with what's been added.
+                // Rebuild rows when the cart changes so the quantity field and
+                // the pinned batch stay in sync with what's been added.
                 return ListenableBuilder(
                   listenable: OutletCart.instance,
                   builder: (context, _) => ListView.builder(
@@ -138,52 +165,44 @@ class _OutletStockScreenState extends State<OutletStockScreen>
     );
   }
 
-  // --- Tab toggle ------------------------------------------------------------
+  // --- Scope banner ----------------------------------------------------------
 
-  Widget _tabToggle() {
-    Widget seg(String label, IconData icon, bool own) {
-      final active = _ownTab == own;
-      return Expanded(
-        child: GestureDetector(
-          onTap: () => setState(() => _ownTab = own),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            decoration: BoxDecoration(
-              gradient: active ? OutletColors.headerGradient : null,
-              color: active ? null : OutletColors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: active ? null : Border.all(color: OutletColors.border),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon,
-                    size: 17,
-                    color: active ? Colors.white : OutletColors.textMid),
-                const SizedBox(width: 6),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: active ? Colors.white : OutletColors.textMid,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
+  /// States plainly what this list is. It replaces the old My-outlet/District
+  /// toggle: there is only one scope now, so it is a statement, not a choice.
+  Widget _scopeBanner() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
-      child: Row(
-        children: [
-          seg('My outlet', Icons.storefront_rounded, true),
-          const SizedBox(width: 10),
-          seg('District', Icons.map_outlined, false),
-        ],
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 2),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: OutletColors.badgeGreenBg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: OutletColors.border),
+        ),
+        child: Row(
+          children: const [
+            Icon(Icons.storefront_rounded, size: 17, color: OutletColors.grad1),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Only outlet stock',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: OutletColors.grad1,
+                ),
+              ),
+            ),
+            Text(
+              'Live quantities',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: OutletColors.textMid,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -192,7 +211,7 @@ class _OutletStockScreenState extends State<OutletStockScreen>
 
   Widget _searchField() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 6, 14, 6),
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 6),
       child: TextField(
         onChanged: (v) => setState(() => _query = v),
         style: const TextStyle(fontSize: 14, color: OutletColors.textDark),
@@ -270,10 +289,52 @@ class _OutletStockScreenState extends State<OutletStockScreen>
     );
   }
 
+  // --- Batch selection -------------------------------------------------------
+
+  /// Opens the lot picker for [s] and, when a lot is chosen, hands both to the
+  /// host so the line enters the cart already pinned. Selecting a batch is the
+  /// FIRST step of adding — nothing is added if the sheet is dismissed.
+  Future<void> _addWithBatch(OutletStockItem s) async {
+    final batch = await showOutletBatchPicker(
+      context: context,
+      productId: s.id,
+      productName: s.name,
+      repository: _repo,
+    );
+    if (batch == null || !mounted) return;
+    widget.onAddToCart(s, batch);
+  }
+
+  /// Re-pins an existing cart line to another lot. The quantity is re-capped by
+  /// the cart against the new lot's availability.
+  Future<void> _changeBatch(OutletStockItem s, OutletCartLine line) async {
+    final batch = await showOutletBatchPicker(
+      context: context,
+      productId: s.id,
+      productName: s.name,
+      selectedBatchId: line.batchId,
+      repository: _repo,
+    );
+    if (batch == null || !mounted) return;
+    OutletCart.instance.setBatch(s.id, batch);
+  }
+
   // --- Row -------------------------------------------------------------------
 
+  /// Opens the batch-wise detail for a row. The endpoint is scoped to the
+  /// signed-in outlet's own inventory, which is exactly what this list is.
+  void _openDetails(OutletStockItem s) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => OutletMedicineDetailsScreen(item: s),
+      ),
+    );
+  }
+
   Widget _stockRow(OutletStockItem s) {
-    return Container(
+    final line = OutletCart.instance.lineOf(s.id);
+
+    final card = Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -281,45 +342,167 @@ class _OutletStockScreenState extends State<OutletStockScreen>
         borderRadius: BorderRadius.circular(14),
         boxShadow: OutletColors.cardShadow,
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(s.name, style: OutletTextStyles.prodName),
-                const SizedBox(height: 2),
-                Text(
-                  [
-                    if (s.packSize.isNotEmpty) s.packSize,
-                    '₹${s.price.toStringAsFixed(0)}',
-                    if (!s.isOwnOutlet && s.outletName.isNotEmpty) s.outletName,
-                  ].join(' · '),
-                  style: OutletTextStyles.prodSub,
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _qtyBadge(s),
-                    // Red "Expiring Soon" alert — Outlet is one of the two roles
-                    // allowed to see it (locked to Marketing + Outlet).
-                    if (s.isExpiringSoon) _expiryBadge(),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(s.name,
+                              style: OutletTextStyles.prodName,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                        const SizedBox(width: 3),
+                        // Affordance for the batch-wise detail screen.
+                        const Icon(Icons.chevron_right,
+                            size: 16, color: OutletColors.textMuted),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      [
+                        if (s.packSize.isNotEmpty) s.packSize,
+                        '₹${s.price.toStringAsFixed(0)}',
+                      ].join(' · '),
+                      style: OutletTextStyles.prodSub,
+                    ),
+                    // BATCH — once the line is in the cart this is the lot the
+                    // user PINNED; before that it is the outlet's FEFO-front lot
+                    // (what the picker will pre-select), straight from the
+                    // server. Never computed here.
+                    _batchLine(s, line),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        _qtyBadge(s),
+                        // Colour-graded expiry alert — Outlet is one of the two
+                        // roles allowed to see it (locked to Marketing + Outlet).
+                        ExpiryTierBadge(expiry: line?.expiry ?? s.expiry),
+                        if ((line?.expiry ?? s.expiry) != null)
+                          Text(expiryCountdown(line?.expiry ?? s.expiry),
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: expiryTierOf(line?.expiry ?? s.expiry)
+                                      .color)),
+                      ],
+                    ),
                   ],
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 10),
+              // "+ Add" until the medicine is in the cart, then the editable
+              // quantity control.
+              if (line == null)
+                _addButton(s)
+              else
+                OutletQtyField(
+                  qty: line.qty,
+                  max: line.maxQty,
+                  onSet: (v) => OutletCart.instance.setQty(s.id, v),
+                  onRemove: () => OutletCart.instance.remove(s.id),
+                ),
+            ],
           ),
-          const SizedBox(width: 10),
-          // ADD control ONLY for own-outlet, in-stock rows. District rows show a
-          // read-only marker instead — enforcing locked rule #1 structurally.
-          if (s.isOwnOutlet)
-            _addOrStepper(s)
-          else
-            const _ReadOnlyMarker(),
+          if (line != null) _pinnedFooter(s, line),
         ],
+      ),
+    );
+
+    // Tapping the row opens the batch-wise detail. The Add control, the quantity
+    // field and "Change" all keep their own gestures, so neither adding to the
+    // cart nor editing a quantity ever navigates by accident.
+    return Semantics(
+      button: true,
+      label: 'View batches for ${s.name}',
+      child: InkWell(
+        onTap: () => _openDetails(s),
+        borderRadius: BorderRadius.circular(14),
+        child: card,
+      ),
+    );
+  }
+
+  /// The batch / expiry strip under the product name.
+  Widget _batchLine(OutletStockItem s, OutletCartLine? line) {
+    final batch = line?.batch ?? s.batch;
+    final expiry = line?.expiry ?? s.expiry;
+    if (batch.isEmpty && expiry == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 3),
+      child: Text(
+        [
+          if (batch.isNotEmpty) 'Batch $batch',
+          formatExpiry(expiry),
+          // Before a lot is pinned, say how many others exist; afterwards the
+          // pinned lot's own availability is the number that matters.
+          if (line == null && s.batchCount > 1)
+            '+${s.batchCount - 1} more batch${s.batchCount > 2 ? 'es' : ''}',
+          if (line != null && line.batchAvailable > 0)
+            '${line.batchAvailable} in this lot',
+        ].join('  ·  '),
+        style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: expiryTierOf(expiry).color),
+      ),
+    );
+  }
+
+  /// Footer shown only for a line already in the cart: which lot it is pinned
+  /// to, the running line total, and the action to re-pin it.
+  Widget _pinnedFooter(OutletStockItem s, OutletCartLine line) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
+        decoration: BoxDecoration(
+          color: OutletColors.bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: OutletColors.border),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.inventory_2_outlined,
+                size: 15, color: OutletColors.grad1),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                '${line.qty} × ₹${line.price.toStringAsFixed(0)} = '
+                '₹${line.lineTotal.toStringAsFixed(0)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: OutletColors.textDark),
+              ),
+            ),
+            TextButton(
+              onPressed: () => _changeBatch(s, line),
+              style: TextButton.styleFrom(
+                foregroundColor: OutletColors.grad1,
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: const Size(0, 32),
+              ),
+              child: const Text('Change batch',
+                  style:
+                      TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -343,43 +526,6 @@ class _OutletStockScreenState extends State<OutletStockScreen>
     return OutletBadge(label: label, bg: bg, fg: fg);
   }
 
-  /// Red "Expiring Soon" pill shown when the batch expires within 90 days.
-  Widget _expiryBadge() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: OutletColors.badgeRedBg,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: const [
-          Icon(Icons.warning_amber_rounded, size: 13, color: OutletColors.danger),
-          SizedBox(width: 4),
-          Text('Expiring Soon',
-              style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: OutletColors.danger)),
-        ],
-      ),
-    );
-  }
-
-  /// Own-outlet trailing control: an "Add" button until the item is in the
-  /// cart, then a live quantity stepper ("1 added" with − / +). The + is capped
-  /// at the available stock so staff can't reserve more than exists.
-  Widget _addOrStepper(OutletStockItem s) {
-    final inCart = OutletCart.instance.quantityOf(s.id);
-    if (inCart == 0) return _addButton(s);
-    return _QtyStepper(
-      qty: inCart,
-      canIncrement: inCart < s.qtyAvailable,
-      onDecrement: () => OutletCart.instance.decrement(s.id),
-      onIncrement: () => OutletCart.instance.add(s),
-    );
-  }
-
   Widget _addButton(OutletStockItem s) {
     final enabled = s.inStock;
     return Opacity(
@@ -387,7 +533,7 @@ class _OutletStockScreenState extends State<OutletStockScreen>
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: enabled ? () => widget.onAddToCart(s) : null,
+          onTap: enabled ? () => _addWithBatch(s) : null,
           borderRadius: BorderRadius.circular(12),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -464,98 +610,15 @@ class _OutletStockScreenState extends State<OutletStockScreen>
                   size: 40, color: OutletColors.textMuted),
               const SizedBox(height: 10),
               Text(
-                _ownTab
-                    ? 'No matching items in your outlet'
-                    : 'No matching district stock',
+                _query.trim().isEmpty && _category == 'all'
+                    ? 'No stock in your outlet yet'
+                    : 'No matching items in your outlet',
                 style: OutletTextStyles.prodSub,
               ),
             ],
           ),
         ),
       ],
-    );
-  }
-}
-
-/// Inline quantity stepper shown on an own-outlet row once it's in the cart.
-/// Reads "− [qty] +"; the + is disabled at the stock ceiling.
-class _QtyStepper extends StatelessWidget {
-  const _QtyStepper({
-    required this.qty,
-    required this.canIncrement,
-    required this.onIncrement,
-    required this.onDecrement,
-  });
-
-  final int qty;
-  final bool canIncrement;
-  final VoidCallback onIncrement;
-  final VoidCallback onDecrement;
-
-  @override
-  Widget build(BuildContext context) {
-    Widget btn(IconData icon, VoidCallback? onTap) => InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(9),
-          child: Padding(
-            padding: const EdgeInsets.all(6),
-            child: Icon(icon,
-                size: 16,
-                color: onTap == null ? OutletColors.border : Colors.white),
-          ),
-        );
-
-    return Container(
-      decoration: BoxDecoration(
-        gradient: OutletColors.headerGradient,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          btn(Icons.remove, onDecrement),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 2),
-            child: Text(
-              '$qty',
-              style: const TextStyle(
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white),
-            ),
-          ),
-          btn(Icons.add, canIncrement ? onIncrement : null),
-        ],
-      ),
-    );
-  }
-}
-
-/// Read-only marker shown on district rows in place of an add control.
-class _ReadOnlyMarker extends StatelessWidget {
-  const _ReadOnlyMarker();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: OutletColors.bg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: OutletColors.border),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: const [
-          Icon(Icons.lock_outline, size: 14, color: OutletColors.textMuted),
-          SizedBox(width: 4),
-          Text('Read-only',
-              style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                  color: OutletColors.textMuted)),
-        ],
-      ),
     );
   }
 }

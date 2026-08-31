@@ -18,6 +18,7 @@ import 'package:printing/printing.dart';
 
 import '../../customer/invoice_pdf.dart' show InvoicePdf;
 import '../outlet_api.dart';
+import '../../theme/app_widgets.dart' show shareOriginFor;
 import '../outlet_models.dart';
 import '../outlet_theme.dart';
 import '../screens/outlet_invoice_screen.dart';
@@ -129,7 +130,11 @@ class _BillingSuccessScreenState extends State<BillingSuccessScreen> {
   Future<void> _share() async {
     final bytes = _pdf;
     if (bytes == null) return;
-    await Printing.sharePdf(bytes: bytes, filename: _fileName);
+    await Printing.sharePdf(
+      bytes: bytes,
+      filename: _fileName,
+      bounds: shareOriginFor(context),
+    );
   }
 
   void _view() {

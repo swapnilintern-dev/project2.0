@@ -3,13 +3,10 @@
 //
 // The screens talk ONLY to [OutletRepository]. The repository delegates to an
 // [OutletDataSource], which is swappable:
-//   • LiveOutletDataSource — the default. Calls the real backend where one
-//     exists (stock), and delegates the rest to the mock.
-//   • MockOutletDataSource — pure fake data; still backs orders + payments,
-//     which have no server yet.
-//
-// As each remaining endpoint lands, replace its delegation inside
-// LiveOutletDataSource — no screen code changes.
+//   • LiveOutletDataSource — the default; every call goes to the real backend.
+//   • MockOutletDataSource — in-memory data kept ONLY for widget tests; no
+//     sign-in path can reach it anymore (a real session always has the outlet
+//     id, and the shell refuses to render without one).
 //
 // LOCKED RULE #3: there is no "mark paid" method here. Payment status is only
 // ever READ from the server (fetchOrderStatus / fetchOrder). The client can ask
@@ -28,6 +25,26 @@ abstract class OutletDataSource {
   /// Own-outlet stock (full, actionable) + district stock (read-only), combined
   /// into one list. Distinguish rows via [OutletStockItem.isOwnOutlet].
   Future<List<OutletStockItem>> fetchStock();
+
+  /// One medicine's full detail — the catalog product, this outlet's stock
+  /// totals and EVERY lot it holds (expired and emptied included), as the
+  /// backend returns them. Backs the Stock → Medicine Details screen.
+  Future<OutletMedicineDetail> fetchMedicineDetail(String productId);
+
+  /// The outlet's SELLABLE lots for one product — available > 0, not past
+  /// expiry, in the backend's FEFO order (nearest expiry first). Backs the
+  /// batch picker; the order is the server's policy and is never re-sorted.
+  Future<List<OutletBatch>> fetchAvailableBatches(String productId);
+
+  /// Asks the backend whether [quantity] of [productId] can be issued from
+  /// [overrides] (the lot the user pinned), auto-filling any remainder FEFO.
+  /// NON-mutating — this is how a cart line is validated against live inventory
+  /// before the order is placed.
+  Future<OutletAllocationPreview> previewAllocation(
+    String productId,
+    int quantity, {
+    List<OutletBatchAllocation> overrides = const [],
+  });
 
   /// The admin-approved vendors an outlet order can be placed for. Only
   /// verified (approvalStatus "Approved") vendors are returned; the manual-order
@@ -87,6 +104,19 @@ class OutletRepository {
   final OutletDataSource _ds;
 
   Future<List<OutletStockItem>> fetchStock() => _ds.fetchStock();
+
+  Future<OutletMedicineDetail> fetchMedicineDetail(String productId) =>
+      _ds.fetchMedicineDetail(productId);
+
+  Future<List<OutletBatch>> fetchAvailableBatches(String productId) =>
+      _ds.fetchAvailableBatches(productId);
+
+  Future<OutletAllocationPreview> previewAllocation(
+    String productId,
+    int quantity, {
+    List<OutletBatchAllocation> overrides = const [],
+  }) =>
+      _ds.previewAllocation(productId, quantity, overrides: overrides);
 
   Future<List<OutletVendor>> fetchVerifiedVendors() =>
       _ds.fetchVerifiedVendors();

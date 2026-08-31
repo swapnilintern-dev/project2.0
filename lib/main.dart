@@ -34,6 +34,30 @@ class MediCaPlusApp extends StatelessWidget {
       // per-screen token migration is complete (avoids a broken half-dark UI).
       darkTheme: AppTheme.dark,
       themeMode: ThemeMode.light,
+      // Bound the OS font-size setting app-wide.
+      //
+      // Android's "Font size" and iOS's Larger Text go up to ~2.0x (and much
+      // further with iOS accessibility sizes). At those scales the dense screens
+      // this app is built from — billing rows, batch pickers, invoice totals,
+      // stat tiles — overflow rather than reflow, which turns a preference into
+      // a broken screen. Capping at 1.3 keeps the app readable for users who
+      // enlarge text while guaranteeing every layout still fits. Scaling DOWN is
+      // left alone (floored only at 0.8), since smaller text never overflows.
+      //
+      // The right long-term fix is per-screen layouts that reflow at any scale;
+      // until then this is the difference between "large text" and "unusable".
+      builder: (context, child) {
+        final media = MediaQuery.of(context);
+        return MediaQuery(
+          data: media.copyWith(
+            textScaler: media.textScaler.clamp(
+              minScaleFactor: 0.8,
+              maxScaleFactor: 1.3,
+            ),
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       home: const SplashScreen(),
     );
   }

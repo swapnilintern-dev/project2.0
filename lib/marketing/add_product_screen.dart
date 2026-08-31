@@ -13,6 +13,7 @@ import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
 import '../customer/customer_widgets.dart' show showAppSnack;
 import '../widgets/expiry_alert.dart';
+import 'batch_manager.dart';
 import 'marketing_controllers.dart';
 import 'marketing_models.dart';
 import 'product_media_editor.dart';
@@ -266,16 +267,21 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                           validator: _sellPrice,
                         ),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _field(
-                          icon: Icons.inventory_2_outlined,
-                          hint: 'Stock Qty',
-                          controller: _stock,
-                          keyboardType: TextInputType.number,
-                          validator: _nonNegativeInt,
+                      // Stock is entered as the FIRST batch only when creating a
+                      // product. On edit, stock is owned by the batch manager
+                      // below (sum of all batches), so the raw field is hidden.
+                      if (!_isEdit) ...[
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _field(
+                            icon: Icons.inventory_2_outlined,
+                            hint: 'Initial Stock Qty',
+                            controller: _stock,
+                            keyboardType: TextInputType.number,
+                            validator: _nonNegativeInt,
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                   _gap(),
@@ -300,23 +306,33 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            _sectionHeader(Icons.event_note_outlined, 'Batch & Expiry'),
-            const SizedBox(height: 8),
-            _card(
-              child: Column(
-                children: [
-                  _field(
-                    icon: Icons.tag_outlined,
-                    label: 'Batch Number',
-                    hint: 'e.g. BCH240701A',
-                    controller: _batch,
-                    validator: _required,
-                  ),
-                  _gap(),
-                  _expiryPickerField(),
-                ],
+            if (!_isEdit) ...[
+              // NEW product → capture its first batch (number + expiry). The
+              // backend materialises the initial stock above into this batch.
+              _sectionHeader(Icons.event_note_outlined, 'First Batch & Expiry'),
+              const SizedBox(height: 8),
+              _card(
+                child: Column(
+                  children: [
+                    _field(
+                      icon: Icons.tag_outlined,
+                      label: 'Batch Number',
+                      hint: 'e.g. BCH240701A',
+                      controller: _batch,
+                      validator: _required,
+                    ),
+                    _gap(),
+                    _expiryPickerField(),
+                  ],
+                ),
               ),
-            ),
+            ] else ...[
+              // EXISTING product → manage unlimited batches. Restocking = "Add
+              // New Batch" here, never a new product.
+              _sectionHeader(Icons.inventory_2_outlined, 'Inventory Batches'),
+              const SizedBox(height: 8),
+              BatchManager(productId: widget.existing!.id),
+            ],
             const SizedBox(height: 16),
             _sectionHeader(Icons.settings_outlined, 'Settings'),
             const SizedBox(height: 8),
@@ -351,7 +367,9 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     setState(() => _submitted = true);
     final formOk = _formKey.currentState?.validate() ?? false;
     // Expiry lives outside the Form (it's a picker), so it is checked here.
-    if (!formOk || _expiry == null) {
+    // Only required when CREATING (the first batch); on edit, batches — and
+    // their expiries — are managed by the BatchManager, not this field.
+    if (!formOk || (!_isEdit && _expiry == null)) {
       showAppSnack(context, 'Please fix the highlighted fields',
           success: false);
       return;

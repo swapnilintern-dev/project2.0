@@ -19,6 +19,7 @@ import 'marketing_models.dart';
 import 'assign_agent_sheet.dart';
 import 'manual_order_screen.dart';
 import 'order_details_screen.dart';
+import '../shared/short_id.dart';
 
 class MarketingOrdersScreen extends StatefulWidget {
   const MarketingOrdersScreen({super.key});
@@ -314,11 +315,17 @@ class _OrderCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text('#${order.id}',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 14,
-                      color: AppColors.darkText)),
+              // Long ObjectId + up to three pills + a Spacer that can only
+              // hand out leftover space: this row had none left and overflowed.
+              Flexible(
+                child: Text('#${shortId(order.id)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                        color: AppColors.darkText)),
+              ),
               const SizedBox(width: 8),
               if (order.urgent) _pill('Urgent', AppColors.error),
               // Audit badge: this order was keyed in by marketing on the

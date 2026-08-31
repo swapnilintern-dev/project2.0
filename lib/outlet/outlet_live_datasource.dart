@@ -6,6 +6,8 @@
 // server with); every real session is fully live:
 //
 //   • fetchStock()            → GET  /vsArogya/outlet-products/:id
+//   • fetchAvailableBatches() → GET  /vsArogya/outlet/product/:id/available-batches
+//   • previewAllocation()     → POST /vsArogya/outlet/allocate-preview
 //   • fetchVerifiedVendors()  → GET  /vsArogya/all-vendors  (approved only)
 //   • createOrder()           → POST /vsArogya/manual-cart/:vendorId/:productId
 //                             → POST /vsArogya/manual-order/:vendorId
@@ -69,6 +71,61 @@ class LiveOutletDataSource implements OutletDataSource {
     return items ?? const [];
   }
 
+  /// One medicine's batch-wise detail — GET
+  /// /vsArogya/outlet/product/:id/available-batches?all=1.
+  ///
+  /// Scoped server-side to the session's outlet, so it needs a real session:
+  /// the demo login has no outlet to read batches for, and inventory is never
+  /// faked (staff could try to sell against it).
+  @override
+  Future<OutletMedicineDetail> fetchMedicineDetail(String productId) async {
+    if (_isDemoSession) return _fallback.fetchMedicineDetail(productId);
+
+    final (detail, error) = await _api.fetchMedicineDetail(productId);
+    if (error != null) throw OutletApiException(error);
+    return detail!;
+  }
+
+  /// The outlet's sellable lots for one product — GET
+  /// /vsArogya/outlet/product/:id/available-batches (no `?all=1`), which the
+  /// server already filters to available > 0 / not expired and returns FEFO.
+  ///
+  /// Outlet-scoped server-side, so like [fetchMedicineDetail] it needs a real
+  /// session — inventory is never faked, because staff would sell against it.
+  @override
+  Future<List<OutletBatch>> fetchAvailableBatches(String productId) async {
+    if (_isDemoSession) return _fallback.fetchAvailableBatches(productId);
+
+    final (batches, error) = await _api.getOutletAvailableBatches(productId);
+    if (error != null) throw OutletApiException(error);
+    return batches ?? const [];
+  }
+
+  /// Non-mutating validation of one cart line against live inventory — POST
+  /// /vsArogya/outlet/allocate-preview. The server checks the pinned lot's
+  /// availability, its expiry and this outlet's ownership of it, then auto-fills
+  /// any shortfall FEFO and reports what it could not place.
+  @override
+  Future<OutletAllocationPreview> previewAllocation(
+    String productId,
+    int quantity, {
+    List<OutletBatchAllocation> overrides = const [],
+  }) async {
+    if (_isDemoSession) {
+      return _fallback.previewAllocation(productId, quantity,
+          overrides: overrides);
+    }
+
+    final (allocations, remaining, available, error) =
+        await _api.previewAllocation(productId, quantity, overrides: overrides);
+    if (error != null) throw OutletApiException(error);
+    return OutletAllocationPreview(
+      allocations: allocations,
+      remaining: remaining,
+      availableBatches: available,
+    );
+  }
+
   /// The approved vendors an order can be placed for — GET /all-vendors.
   @override
   Future<List<OutletVendor>> fetchVerifiedVendors() async {
@@ -78,18 +135,20 @@ class LiveOutletDataSource implements OutletDataSource {
   }
 
   /// Places the order through the marketing manual-order API
-  /// (manual-cart ×qty → manual-order).
+  /// (manual-cart ×qty → manual-order), tagged with `outletId`.
   ///
-  /// KNOWN LIMITS of reusing that API — all need a server change to fix, none
-  /// are client-side bugs:
-  ///  1. The order is created against the VENDOR (`order.user = vendorId`) and
-  ///     the order model has no outlet field, so it carries NO link back to
-  ///     this outlet. That is why [fetchOrders] below still can't be live.
-  ///  2. It does NOT deduct this outlet's stock — manualOrder never touches
-  ///     OutletStock. The stock screen will keep showing the pre-sale figure.
-  ///  3. It ignores `idempotencyKey`, so a double-submit creates two orders.
-  ///     The manual-order screen guards this client-side.
-  ///  4. It places the order from the vendor's WHOLE cart — anything the vendor
+  /// That tag is what makes it an OUTLET sale server-side: manualOrder then
+  /// allocates every line across THIS outlet's own lots (allocateOutletFEFO)
+  /// instead of the catalog's, honours the batch each line pinned via the
+  /// cart's `allocations`, snapshots the lots consumed onto the order, and lets
+  /// the engine re-sync `outletStock.quantity`. The order is created with
+  /// `outlet` set, which is how [fetchOrders] finds it again.
+  ///
+  /// KNOWN LIMITS of reusing that API — both need a server change to fix,
+  /// neither is a client-side bug:
+  ///  1. It ignores `idempotencyKey`, so a double-submit would create two
+  ///     orders. The manual-order screen guards this client-side.
+  ///  2. It places the order from the vendor's WHOLE cart — anything the vendor
   ///     already had in their own cart is swept into this order.
   @override
   Future<OutletOrder> createOrder(CreateOrderRequest request) async {

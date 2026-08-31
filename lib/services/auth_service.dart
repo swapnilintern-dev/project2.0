@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -62,23 +64,69 @@ class AuthService {
   /// 1-day token so the app never starts with an about-to-expire session.
   static const Duration _sessionLife = Duration(hours: 23);
 
+  /// How long to wait for the login response. The backend is on Render's free
+  /// tier, where the first request after an idle period pays a cold start, so
+  /// this is generous — but it is BOUNDED. Without it a dead server left the
+  /// user on a spinner forever with no way back.
+  static const Duration _loginTimeout = Duration(seconds: 45);
+
+  static const String _unexpectedResponse =
+      'The server sent an unexpected response. Please try again in a moment.';
+
+  /// The shape [login] returns when the call never reached a usable response.
+  /// `networkError` marks "we could not ask the server", as opposed to "the
+  /// server answered and rejected the credentials" — the sign-in screen uses it
+  /// to stop retrying the other login collections.
+  static Map<String, dynamic> _networkFailure(String message) => {
+        'success': false,
+        'message': message,
+        'networkError': true,
+      };
+
+  /// Signs a Vendor-collection account in.
+  ///
+  /// NEVER THROWS. Every failure — no connectivity, timeout, a 502 HTML error
+  /// page from the host, a truncated body — comes back as a map with
+  /// `success: false` and a `message` that is safe to show a user. Callers can
+  /// therefore render `message` directly; previously a decode failure escaped as
+  /// a raw exception and the sign-in screen printed it verbatim.
+  ///
+  /// [client] is for tests; production passes nothing and gets a fresh client
+  /// that is closed before returning.
   static Future<Map<String, dynamic>> login({
     required String mobileNo,
     required String password,
+    http.Client? client,
   }) async {
     // The mobile number is real, user-provided data — remember it for the UI.
     phone = mobileNo.trim();
 
-    final response = await http.post(
-      Uri.parse('$baseUrl/vsArogya/login'),
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'mobile_no': mobileNo,
-        'password': password,
-      }),
-    );
+    final httpClient = client ?? http.Client();
+    final http.Response response;
+    try {
+      response = await httpClient
+          .post(
+            Uri.parse('$baseUrl/vsArogya/login'),
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({
+              'mobile_no': mobileNo,
+              'password': password,
+            }),
+          )
+          .timeout(_loginTimeout);
+    } on TimeoutException {
+      return _networkFailure(
+          'The server took too long to respond. Please try again.');
+    } catch (_) {
+      // Offline, DNS failure, TLS error, connection reset — all indistinguishable
+      // to the user, and none of them are worth showing a stack trace for.
+      return _networkFailure(
+          'Cannot reach the server. Check your internet connection and try again.');
+    } finally {
+      if (client == null) httpClient.close();
+    }
 
     // Capture the JWT cookie so later authed calls (cart) can resend it (mobile).
     final setCookie = response.headers['set-cookie'];
@@ -86,7 +134,16 @@ class AuthService {
       sessionCookie = setCookie.split(';').first; // -> "token=<jwt>"
     }
 
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    // A gateway timeout or a crashed route answers with HTML, not JSON.
+    final Map<String, dynamic> body;
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map) return _networkFailure(_unexpectedResponse);
+      body = Map<String, dynamic>.from(decoded);
+    } catch (_) {
+      return _networkFailure(_unexpectedResponse);
+    }
+
     // Token-based auth — the reliable path on web + mobile (see [authToken]).
     if (body['token'] is String && (body['token'] as String).isNotEmpty) {
       authToken = body['token'] as String;

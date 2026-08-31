@@ -466,6 +466,32 @@ class AppSheetAction {
   final bool destructive;
 }
 
+/// The on-screen rectangle a share sheet should spring from.
+///
+/// iPadOS presents `UIActivityViewController` (and the print/share sheets the
+/// `printing` package opens) as a POPOVER, and UIKit throws
+/// "UIPopoverPresentationController should have a non-nil sourceView" when the
+/// caller supplies no anchor. The app targets iPad
+/// (TARGETED_DEVICE_FAMILY = "1,2"), so every share call must pass one or it
+/// crashes there. Android and iPhone ignore the rectangle.
+///
+/// Pass the BuildContext of the widget that triggered the share (the button, or
+/// the screen) — the sheet then points at it. Falls back to the middle of the
+/// screen when the context has no laid-out box, which is still a valid anchor;
+/// the one thing that must never happen is passing nothing.
+Rect shareOriginFor(BuildContext context) {
+  final box = context.findRenderObject();
+  if (box is RenderBox && box.hasSize) {
+    return box.localToGlobal(Offset.zero) & box.size;
+  }
+  final size = MediaQuery.of(context).size;
+  return Rect.fromCenter(
+    center: Offset(size.width / 2, size.height / 2),
+    width: 1,
+    height: 1,
+  );
+}
+
 DateTime? _lastBackTapAt;
 
 /// Android-only "press back again to exit" for a role shell's home tab —

@@ -217,8 +217,14 @@ class OutletApi {
           // the image, MRP, batch, expiry and GST are all available here.
           mrp: _num(p['mrp']),
           imageUrl: _firstImageUrl(p['image']),
-          expiry: _date(p['exp_date']),
-          batch: (p['batch_no'] ?? '').toString(),
+          // The lot THIS OUTLET sells next: the server attaches its own
+          // FEFO-front batch on `row['batch']`. The product's batch_no/exp_date
+          // are the CATALOG's front lot, which the outlet may not hold at all —
+          // they are only the fallback for stock that predates batching.
+          expiry: _date(row['batch']?['expiry_date'] ?? p['exp_date']),
+          batch: (row['batch']?['batch_number'] ?? p['batch_no'] ?? '')
+              .toString(),
+          batchCount: _int(row['batch_count']),
           gstPercent: _num(p['gstPercent']),
           discountPercent: _num(p['discountPercent']),
           hsnCode: (p['hsnCode'] ?? '').toString(),
@@ -293,13 +299,20 @@ class OutletApi {
 
   /// Places [request] as an order on the selected vendor's behalf, using the
   /// SAME two-step API the marketing role uses:
-  ///   POST /vsArogya/manual-cart/:vendorId/:productId  → adds ONE unit
-  ///   POST /vsArogya/manual-order/:vendorId            → places the order
+  ///   POST /vsArogya/manual-cart/:vendorId/:productId  → adds ONE unit,
+  ///        body `{ allocations }` pins the lot the line is issued from
+  ///   POST /vsArogya/manual-order/:vendorId            → places the order,
+  ///        body `{ outletId }` makes it deduct THIS outlet's batches
+  ///
+  /// With `outletId` set, the server allocates each line across the OUTLET's own
+  /// lots (allocateOutletFEFO), honours the pinned `allocations` after
+  /// re-validating them against live availability, records the exact lots on
+  /// `orderItems.allocations` and keeps `outletStock.quantity` in step — so the
+  /// stock this outlet holds really does come down, batch-wise.
   ///
   /// Caveats, all inherent to that API (see the notes in LiveOutletDataSource):
-  ///  • the order is created against the VENDOR, so it carries no link back to
-  ///    this outlet, and its address comes from the vendor's profile;
-  ///  • it does NOT touch this outlet's stock;
+  ///  • the order is created against the VENDOR, so its address comes from the
+  ///    vendor's profile (`outletId` is the only link back to this outlet);
   ///  • it ignores `idempotencyKey`, so the caller must guard double-submits.
   ///
   /// Returns `(order, error)`.
@@ -315,12 +328,22 @@ class OutletApi {
       //    quantity becomes that many calls. They run in SERIES on purpose:
       //    every call re-reads and saves the same vendor document, so firing
       //    them in parallel would race and drop increments.
+      //
+      //    BATCH PIN: each call carries the line's chosen lot as `allocations`.
+      //    The server REPLACES the line's allocations on every call (they
+      //    describe the whole line, not one unit), so the quantity sent is the
+      //    line's FINAL quantity and the last call leaves exactly the right pin
+      //    behind. A line with no lot chosen omits the field entirely, which is
+      //    the pre-existing pure-FEFO behaviour.
       for (final line in request.lines) {
+        final body = line.hasBatch
+            ? jsonEncode({'allocations': [line.allocation.toJson()]})
+            : null;
         for (var i = 0; i < line.qty; i++) {
           final url =
               '$baseUrl/vsArogya/manual-cart/$vendorId/${line.productId}';
           final res = await _client
-              .post(Uri.parse(url), headers: _headers)
+              .post(Uri.parse(url), headers: _headers, body: body)
               .timeout(_timeout);
           if (res.statusCode < 200 || res.statusCode >= 300) {
             return (
@@ -435,9 +458,212 @@ class OutletApi {
   // submitted separately in the background without blocking the bill.
   // ---------------------------------------------------------------------------
 
+  /// The outlet's sellable batches for a product (available > 0, not expired,
+  /// FEFO order) — GET /outlet/product/:id/available-batches. Powers the manual
+  /// batch-override picker. Returns `(batches, error)`.
+  Future<(List<OutletBatch>?, String?)> getOutletAvailableBatches(
+    String productId,
+  ) async {
+    final url = '$baseUrl/vsArogya/outlet/product/$productId/available-batches';
+    try {
+      final res =
+          await _client.get(Uri.parse(url), headers: _headers).timeout(_timeout);
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      if (res.statusCode < 200 || res.statusCode >= 300 || body['success'] != true) {
+        return (null, (body['message'] ?? 'Could not load batches').toString());
+      }
+      final list = (body['batches'] as List?) ?? const [];
+      return (
+        list.whereType<Map<String, dynamic>>().map(OutletBatch.fromJson).toList(),
+        null,
+      );
+    } catch (_) {
+      return (null, 'Could not reach the server. Check your connection.');
+    }
+  }
+
+  /// Everything the Medicine Details screen shows, in ONE request — the same
+  /// endpoint as above with `?all=1`, which widens it from "sellable lots" to
+  /// EVERY lot this outlet holds and attaches the catalog product + the
+  /// outlet's stock totals.
+  ///
+  /// Outlet-scoped server-side (the session's outlet id), so this can only ever
+  /// return the signed-in outlet's own inventory. Returns `(detail, error)`.
+  Future<(OutletMedicineDetail?, String?)> fetchMedicineDetail(
+    String productId,
+  ) async {
+    final url =
+        '$baseUrl/vsArogya/outlet/product/$productId/available-batches?all=1';
+    try {
+      debugPrint('[OutletStock] GET $url');
+      final res =
+          await _client.get(Uri.parse(url), headers: _headers).timeout(_timeout);
+
+      // A deleted medicine, an expired session or a proxy error can all answer
+      // with a non-JSON body — read the status before trusting the payload.
+      if (res.statusCode == 401 || res.statusCode == 403) {
+        return (null, 'Your session has expired. Please sign in again.');
+      }
+      if (res.statusCode == 404) {
+        return (
+          null,
+          _serverMessage(res) ??
+              'This medicine is no longer in the catalogue.'
+        );
+      }
+
+      Map<String, dynamic> body;
+      try {
+        body = jsonDecode(res.body) as Map<String, dynamic>;
+      } catch (_) {
+        return (
+          null,
+          'Server returned HTTP ${res.statusCode} — please try again.'
+        );
+      }
+
+      if (res.statusCode < 200 ||
+          res.statusCode >= 300 ||
+          body['success'] != true) {
+        return (
+          null,
+          (body['message'] ?? 'Could not load the medicine details').toString()
+        );
+      }
+      if (body['product'] is Map) {
+        return (OutletMedicineDetail.fromJson(body), null);
+      }
+
+      // The server predates `?all=1`: it ignored the flag and answered with the
+      // SELLABLE lots and no product. Rather than dead-end the screen, rebuild
+      // the same shape from what IS deployed — the lots it did return, plus the
+      // product document read live from /all-products. Still zero invented
+      // data; the only thing missing is the expired/emptied lots, which
+      // [showsAllLots] tells the screen to disclose.
+      final (productJson, productError) = await _fetchProductJson(productId);
+      if (productJson == null) return (null, productError);
+
+      final legacyBatches = (body['batches'] as List?) ?? const [];
+      return (
+        OutletMedicineDetail.fromJson(
+          {
+            'product': productJson,
+            'batches': legacyBatches,
+            // This server sends no totals, so they are summed over the lots it
+            // returned — the server's own quantities, just added up here.
+            'stock': _sumAvailable(legacyBatches),
+            'total_stock': _sumAvailable(legacyBatches),
+            'batch_count': legacyBatches.length,
+          },
+          showsAllLots: false,
+        ),
+        null,
+      );
+    } on TimeoutException {
+      return (null, 'Server is taking too long to respond — please try again.');
+    } catch (e) {
+      debugPrint('[OutletStock] medicine detail failed: $e');
+      return (null, 'Could not reach the server. Check your connection.');
+    }
+  }
+
+  /// The catalog document for [productId], read live from GET /all-products —
+  /// the only deployed endpoint that returns a full product. Used ONLY on the
+  /// pre-`?all=1` fallback path above, so the common case still costs one call.
+  /// Returns `(product, error)`.
+  Future<(Map<String, dynamic>?, String?)> _fetchProductJson(
+    String productId,
+  ) async {
+    final url = '$baseUrl/vsArogya/all-products';
+    try {
+      final res =
+          await _client.get(Uri.parse(url), headers: _headers).timeout(_timeout);
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        return (
+          null,
+          'Server returned HTTP ${res.statusCode} — please try again.'
+        );
+      }
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      for (final p in ((body['products'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()) {
+        if ((p['_id'] ?? '').toString() == productId) return (p, null);
+      }
+      return (null, 'This medicine is no longer in the catalogue.');
+    } on TimeoutException {
+      return (null, 'Server is taking too long to respond — please try again.');
+    } catch (e) {
+      debugPrint('[OutletStock] product lookup failed: $e');
+      return (null, 'Could not reach the server. Check your connection.');
+    }
+  }
+
+  /// Total units across a raw `batches` payload, using the server's own
+  /// per-lot quantities.
+  static int _sumAvailable(List<dynamic> batches) => batches
+      .whereType<Map>()
+      .fold(0, (sum, b) => sum + _int(b['available_quantity']));
+
+  /// Asks the backend for the FEFO batch allocation of [quantity] for a product,
+  /// honouring any manual [overrides] — POST /outlet/allocate-preview. The
+  /// backend is the single source of truth: it validates, auto-fills the
+  /// remainder FEFO and returns the corrected breakdown. NON-mutating.
+  ///
+  /// Returns `(allocations, remaining, availableBatches, error)`.
+  Future<(List<OutletBatchAllocation>, int, List<OutletBatch>, String?)>
+      previewAllocation(
+    String productId,
+    int quantity, {
+    List<OutletBatchAllocation> overrides = const [],
+  }) async {
+    final url = '$baseUrl/vsArogya/outlet/allocate-preview';
+    try {
+      final res = await _client
+          .post(
+            Uri.parse(url),
+            headers: _headers,
+            body: jsonEncode({
+              'productId': productId,
+              'quantity': quantity,
+              if (overrides.isNotEmpty)
+                'overrides': overrides.map((o) => o.toJson()).toList(),
+            }),
+          )
+          .timeout(_timeout);
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      if (res.statusCode < 200 || res.statusCode >= 300 || body['success'] != true) {
+        return (
+          <OutletBatchAllocation>[],
+          quantity,
+          <OutletBatch>[],
+          (body['message'] ?? 'Could not allocate batches').toString(),
+        );
+      }
+      final allocs = ((body['allocations'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(OutletBatchAllocation.fromJson)
+          .toList();
+      final avail = ((body['availableBatches'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(OutletBatch.fromJson)
+          .toList();
+      final remaining = (body['remaining'] as num?)?.toInt() ?? 0;
+      return (allocs, remaining, avail, null);
+    } catch (_) {
+      return (
+        <OutletBatchAllocation>[],
+        quantity,
+        <OutletBatch>[],
+        'Could not reach the server. Check your connection.',
+      );
+    }
+  }
+
   /// Places the bill. [customer] carries the walk-in's details (name/firm/
   /// address/city/state/pincode/phone/gstin) for the invoice; [items] is a list
-  /// of `{productId, quantity}`. Returns `(orderId, totalAmount, error)`.
+  /// of `{productId, quantity, allocations?}` — when a line carries `allocations`
+  /// the backend honours that manual FEFO override (after validating it).
+  /// Returns `(orderId, totalAmount, error)`.
   Future<(String?, double?, String?)> placeOutletBill({
     required Map<String, dynamic> customer,
     required List<Map<String, dynamic>> items,
@@ -578,12 +804,23 @@ class OutletApi {
 
     final serverStatus = (j['orderStatus'] ?? 'Pending').toString();
 
+    // The fulfilment status alone can't say whether the money arrived: an order
+    // the outlet has already collected Razorpay payment for stays "Pending"
+    // until the team confirms it. paymentInfo.status is the server's OWN paid
+    // flag (rolePaymentController's isPaid), so read it and never offer to
+    // collect payment twice.
+    final payInfo = j['paymentInfo'] is Map ? j['paymentInfo'] as Map : const {};
+    final paid = (payInfo['status'] ?? '').toString() == 'Completed';
+    final mapped = _statusFromServer(serverStatus);
+
     return OutletOrder(
       id: (j['_id'] ?? '').toString(),
       // The vendor pipeline has no counter/delivery notion — these orders are
       // shipped to the vendor's registered address.
       type: OutletOrderType.delivery,
-      status: _statusFromServer(serverStatus),
+      status: paid && mapped == OutletOrderStatus.awaitingPayment
+          ? OutletOrderStatus.paid
+          : mapped,
       paymentMethod: OutletPaymentMethod.fromApi(null),
       lines: lines,
       customer: OutletCustomerInfo(
@@ -596,6 +833,7 @@ class OutletApi {
       total: _num(j['totalAmount']),
       createdAt:
           DateTime.tryParse((j['createdAt'] ?? '').toString()) ?? DateTime.now(),
+      paidAt: DateTime.tryParse((j['paidAt'] ?? '').toString()),
       teamFulfilled: true,
       serverStatusLabel: serverStatus,
     );

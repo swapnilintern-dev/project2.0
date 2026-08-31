@@ -124,19 +124,24 @@ class OutletHeader extends StatelessWidget {
   final Widget? leading;
   final Widget? trailing;
 
+  /// Extra green below the text. Screens that place a card right under the
+  /// header pass a smaller value so there's no dead gap.
+  final double bottomPadding;
+
   const OutletHeader({
     super.key,
     required this.title,
     required this.subtitle,
     this.leading,
     this.trailing,
+    this.bottomPadding = 40,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 40),
+      padding: EdgeInsets.fromLTRB(18, 18, 18, bottomPadding),
       decoration: const BoxDecoration(
         gradient: OutletColors.headerGradient,
         borderRadius: BorderRadius.only(
@@ -225,8 +230,13 @@ class OutletBottomNav extends StatelessWidget {
   }
 }
 
-// White overlay card that sits on top of the header (negative margin look).
-
+// White summary card that sits directly under the header.
+//
+// This used to be pulled up over the header with a Transform.translate, but a
+// transform doesn't move the widget's layout box: inside a scroll view the
+// shifted top got clipped by the viewport edge (the card's title was cut in
+// half) and it left an equal-sized dead gap underneath. It's a plain card now —
+// headers above it pass a smaller [OutletHeader.bottomPadding] instead.
 class OutletCardOverlay extends StatelessWidget {
   final Widget child;
 
@@ -234,18 +244,15 @@ class OutletCardOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Transform.translate(
-      offset: const Offset(0, -26),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 14),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: OutletColors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: OutletColors.cardShadow,
-        ),
-        child: child,
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: OutletColors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: OutletColors.cardShadow,
       ),
+      child: child,
     );
   }
 }

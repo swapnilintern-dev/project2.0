@@ -22,6 +22,7 @@ import 'customer_controllers.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
 import 'invoice_card.dart';
+import '../shared/short_id.dart';
 
 class OrderDetailsScreen extends StatefulWidget {
   const OrderDetailsScreen({
@@ -204,13 +205,23 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Order #${order.id}',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800)),
+              // "Order #" plus a 24-character ObjectId at 18/w800 is wider than
+              // this card, so the row overflowed past the status pill. Showing
+              // the last six (the short form Admin and Delivery already use)
+              // fixes it at the source and matches the orders list, so the id
+              // a user reads here is the one they just tapped. Expanded +
+              // ellipsis stays as a guard for any longer id.
+              Expanded(
+                child: Text('Order #${shortId(order.id)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800)),
+              ),
+              const SizedBox(width: 8),
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -565,3 +576,4 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen>
     );
   }
 }
+

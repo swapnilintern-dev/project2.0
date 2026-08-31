@@ -15,6 +15,7 @@ import 'package:image_picker/image_picker.dart' show XFile;
 import '../customer/customer_api.dart';
 import '../customer/customer_models.dart' show PromoBanner;
 import '../services/product_media.dart';
+import '../widgets/batch_selector.dart' show BatchAllocation;
 import 'marketing_api.dart';
 import 'marketing_models.dart';
 
@@ -117,17 +118,26 @@ class MarketingOrdersController extends ChangeNotifier {
   /// Creates an order on a vendor's behalf (phone order). Same lifecycle as a
   /// vendor-placed order — it lands in the Pending pipeline on success and in
   /// the vendor's own panel (their GET /get-order). Returns `(orderId, error)`.
+  /// [batches] pins the lots each product must be drawn from (keyed by product
+  /// id) — the batches chosen in the FEFO picker. Omitted → pure FEFO.
   Future<(String?, String?)> createManualOrder({
     required String vendorId,
     required Map<String, int> items,
     required String clientOrderId,
+    Map<String, List<BatchAllocation>> batches = const {},
   }) async {
     final (orderId, error) = await _api.createManualOrder(
       vendorId: vendorId,
       items: items,
       clientOrderId: clientOrderId,
+      batches: batches,
     );
-    if (error == null) await refresh();
+    if (error == null) {
+      await refresh();
+      // The order consumed batch stock server-side — pull the fresh numbers so
+      // inventory, the product pickers and the customer catalogue all follow.
+      unawaited(refreshStock());
+    }
     return (orderId, error);
   }
 

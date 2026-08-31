@@ -134,6 +134,24 @@ class _CartLine extends StatelessWidget {
 
   final CartItem item;
 
+  /// The stock warning for this line, or null when there is nothing to say.
+  /// Two different problems, in order of seriousness:
+  ///   • the line is ALREADY above the stock — it ran down after the item was
+  ///     added, and the vendor must lower it before this order can go through
+  ///   • the medicine is merely running low
+  /// Live figures come from the catalogue, not the snapshot on the cart line.
+  String? _liveStockNote(Product p) {
+    final left = CartController.instance.availableStockFor(p.id, fallback: p);
+    if (left == null) return null;
+    if (item.quantity > left) {
+      return left == 0
+          ? 'Out of stock — remove to continue'
+          : 'Only $left left — reduce the quantity';
+    }
+    if (left < kLowStockThreshold) return 'Low stock — only $left left';
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = item.product;
@@ -180,6 +198,28 @@ class _CartLine extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                           fontSize: 12, color: AppColors.greyText)),
+                  // Warn right where the vendor is about to check out. Reads
+                  // from the live catalogue, so a medicine that ran low while
+                  // sitting in the cart still says so.
+                  if (_liveStockNote(p) case final note?) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(Icons.warning_amber_rounded,
+                            size: 13, color: kLowStockAmber),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(note,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: kLowStockAmber)),
+                        ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   Row(
                     children: [
@@ -192,9 +232,27 @@ class _CartLine extends StatelessWidget {
                       QuantityStepper(
                         quantity: item.quantity,
                         min: 1,
+                        // Stop the stepper AT the stock, so "+" simply stops
+                        // responding at the last available unit instead of
+                        // letting the vendor tap on into a quantity that
+                        // cannot be supplied.
+                        max: CartController.instance
+                            .availableStockFor(p.id, fallback: p),
                         compact: true,
-                        onChanged: (q) =>
-                            CartController.instance.setQuantity(p.id, q),
+                        onChanged: (q) {
+                          final applied =
+                              CartController.instance.setQuantity(p.id, q);
+                          // The cap bit (or stock dropped under the line while
+                          // it sat in the cart) — say so rather than silently
+                          // snapping the number back.
+                          if (applied < q) {
+                            showAppSnack(
+                              context,
+                              'Only $applied left in stock for ${p.title}',
+                              success: false,
+                            );
+                          }
+                        },
                       ),
                     ],
                   ),
@@ -430,9 +488,28 @@ class _CheckoutBar extends StatelessWidget {
               child: PrimaryButton(
                 label: 'Proceed to Checkout',
                 icon: Icons.arrow_forward,
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const CheckoutScreen()),
-                ),
+                onPressed: () {
+                  // Last check before the order is built. A line can be over
+                  // stock without the vendor having done anything wrong (stock
+                  // fell while the cart sat open), so name the medicine and let
+                  // them fix it rather than failing later at the server.
+                  final over = cart.overStockedLines;
+                  if (over.isNotEmpty) {
+                    final first = over.first.product.title;
+                    showAppSnack(
+                      context,
+                      over.length == 1
+                          ? 'Not enough stock for $first — reduce the quantity'
+                          : 'Not enough stock for $first and '
+                              '${over.length - 1} more — reduce the quantities',
+                      success: false,
+                    );
+                    return;
+                  }
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const CheckoutScreen()),
+                  );
+                },
               ),
             ),
           ],

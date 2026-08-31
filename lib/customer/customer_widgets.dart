@@ -14,6 +14,12 @@ import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_widgets.dart';
 import 'customer_models.dart';
 
+/// The "Low Stock" warning colour — amber, sitting between the in-stock green
+/// and the out-of-stock red. Deliberately the SAME value the staff-side batch
+/// picker uses (widgets/batch_selector.dart) so a low-stock warning looks
+/// identical whichever role is looking at it.
+const Color kLowStockAmber = Color(0xFFE8710A);
+
 /// Formats a rupee amount as e.g. ₹1,234 or ₹1,234.50.
 String formatRupees(double value, {bool decimals = false}) {
   final fixed = decimals ? value.toStringAsFixed(2) : value.round().toString();
@@ -61,6 +67,7 @@ class PrimaryButton extends StatelessWidget {
             disabledBackgroundColor: AppColors.primary.withValues(alpha: 0.5),
             disabledForegroundColor: Colors.white,
             minimumSize: const Size(double.infinity, 54),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
@@ -77,14 +84,24 @@ class PrimaryButton extends StatelessWidget {
                 )
               : Row(
                   mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     if (icon != null) ...[
                       Icon(icon, size: 20),
                       const SizedBox(width: 8),
                     ],
-                    Text(label,
-                        style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w700)),
+                    // The label carries a formatted price, so its width grows
+                    // with the order total and the platform text scale.
+                    // Flexible + ellipsis keeps it inside the button instead of
+                    // painting past its edge.
+                    Flexible(
+                      child: Text(label,
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w700)),
+                    ),
                   ],
                 ),
         ),
@@ -113,15 +130,26 @@ class SecondaryButton extends StatelessWidget {
       style: OutlinedButton.styleFrom(
         foregroundColor: AppColors.darkGreen,
         minimumSize: const Size(0, 48),
+        // Material's default 24px side padding leaves too little room when the
+        // button shares a row with a wider primary action, which is where the
+        // icon + label used to spill past the border.
+        padding: const EdgeInsets.symmetric(horizontal: 12),
         side: const BorderSide(color: AppColors.primary),
         shape:
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           if (icon != null) ...[Icon(icon, size: 18), const SizedBox(width: 6)],
-          Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+          Flexible(
+            child: Text(label,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+          ),
         ],
       ),
     );
@@ -135,12 +163,19 @@ class QuantityStepper extends StatelessWidget {
     required this.quantity,
     required this.onChanged,
     this.min = 1,
+    this.max,
     this.compact = false,
   });
 
   final int quantity;
   final ValueChanged<int> onChanged;
   final int min;
+
+  /// Highest quantity "+" will go to — the available stock. Null means no
+  /// ceiling (stock unknown), which is the behaviour every existing caller
+  /// that omits it keeps.
+  final int? max;
+
   final bool compact;
 
   @override
@@ -175,7 +210,11 @@ class QuantityStepper extends StatelessWidget {
           _stepIcon(
             icon: Icons.add,
             size: size,
-            enabled: true,
+            // Greys out on the last available unit. `quantity < max` (rather
+            // than <=) also keeps it disabled when the line already sits ABOVE
+            // the stock, which happens when stock falls while the item waits
+            // in the cart — "-" stays live so the vendor can correct it.
+            enabled: max == null || quantity < max!,
             onTap: () => onChanged(quantity + 1),
             tooltip: 'Increase quantity',
           ),

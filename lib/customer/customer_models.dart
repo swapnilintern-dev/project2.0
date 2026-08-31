@@ -13,6 +13,15 @@ import 'package:flutter/material.dart';
 
 import '../services/product_media.dart';
 
+/// Stock at or above this figure is "healthy"; below it the vendor sees a
+/// "Low Stock" warning on the product card, the details screen and the cart.
+///
+/// This is the VENDOR-FACING threshold and is deliberately its own number.
+/// Marketing has a per-product `lowThreshold` (default 10) that drives the
+/// staff-side badge and answers "should I reorder?"; this one answers "should I
+/// buy now before it runs out?", so it is higher and uniform across the shop.
+const int kLowStockThreshold = 30;
+
 /// A purchasable medicine / healthcare product.
 @immutable
 class Product {
@@ -69,6 +78,28 @@ class Product {
     final m = mrp;
     if (m == null || m <= price) return 0;
     return (((m - price) / m) * 100).round();
+  }
+
+  /// How many units the vendor may actually buy, or NULL when the backend has
+  /// not told us.
+  ///
+  /// The distinction matters: `stockCount` is 0 both for a sold-out medicine
+  /// AND for one whose response carried no `stock` field at all (older/partial
+  /// payloads — see fromJson, where a missing `stock` also leaves `inStock`
+  /// true). Treating that second case as "0 available" would refuse to sell a
+  /// perfectly stocked product, so it reads as unknown here and the cart simply
+  /// does not cap. A real sold-out product has inStock == false and returns 0.
+  int? get availableStock {
+    if (!inStock) return 0;
+    return stockCount > 0 ? stockCount : null;
+  }
+
+  /// True when stock is known and has fallen below [kLowStockThreshold] — the
+  /// vendor-facing "Low Stock" warning. Out-of-stock is NOT "low": that has its
+  /// own out-of-stock treatment everywhere, so this stays false for it.
+  bool get isLowStock {
+    final left = availableStock;
+    return left != null && left > 0 && left < kLowStockThreshold;
   }
 
   factory Product.fromJson(Map<String, dynamic> json) {

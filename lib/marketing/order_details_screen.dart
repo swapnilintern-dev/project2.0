@@ -16,6 +16,7 @@ import 'marketing_controllers.dart';
 import 'marketing_models.dart';
 import 'assign_agent_sheet.dart';
 import 'invoice_screen.dart';
+import '../shared/short_id.dart';
 
 class OrderDetailsScreen extends StatelessWidget {
   const OrderDetailsScreen({super.key, required this.orderId});
@@ -282,12 +283,19 @@ class OrderDetailsScreen extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text('#${order.id}',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800)),
-              const Spacer(),
+              // A 24-char ObjectId at 18/w800 is wider than this card, and a
+              // Spacer only hands out space that is already left over — so the
+              // row overflowed past the pill. Short form fixes it at the source.
+              Expanded(
+                child: Text('#${shortId(order.id)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800)),
+              ),
+              const SizedBox(width: 8),
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 4),

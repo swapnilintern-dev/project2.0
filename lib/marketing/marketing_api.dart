@@ -24,6 +24,8 @@ import '../services/auth_service.dart';
 import '../services/product_media.dart';
 import '../customer/customer_models.dart' show PromoBanner;
 import '../customer/invoice_pdf.dart' show InvoicePdf;
+import '../shared/api_date.dart';
+import '../widgets/batch_selector.dart' show BatchOption, BatchAllocation;
 import 'marketing_models.dart';
 
 class MarketingApi {
@@ -37,8 +39,18 @@ class MarketingApi {
   /// Uploads can be large (up to 10 images + a 100 MB video); give them room.
   static const Duration _uploadTimeout = Duration(minutes: 5);
 
-  /// The scalar (non-media) product fields sent on both create and update.
-  Map<String, String> _productFields(InventoryProduct p) => {
+  /// The scalar (non-media) product fields.
+  ///
+  /// [includeInventory] carries the legacy single-batch fields (stock / batch_no
+  /// / exp_date). It is TRUE on create (the backend materialises them into the
+  /// product's first batch) but FALSE on update — an existing product's stock is
+  /// owned by its batches (managed via [BatchApi]), so an edit must never write
+  /// a scalar stock/batch/expiry that would fight the batch model.
+  Map<String, String> _productFields(
+    InventoryProduct p, {
+    bool includeInventory = true,
+  }) =>
+      {
         'title': p.name,
         'description': p.description,
         'price': p.price.toString(),
@@ -48,7 +60,6 @@ class MarketingApi {
         'code': p.code,
         'manufacturer': p.manufacturer,
         'marketedBy': p.marketedBy,
-        'stock': p.stock.toString(),
         'active': p.active.toString(),
         'packOf': p.packOf.toString(),
         'hsnCode': p.hsnCode,
@@ -57,11 +68,12 @@ class MarketingApi {
         'lowThreshold': p.lowThreshold.toString(),
         'prescriptionRequired': p.prescriptionRequired.toString(),
         'packInfo': p.packInfo,
-        'batch_no': p.batchNo,
+        if (includeInventory) 'stock': p.stock.toString(),
+        if (includeInventory) 'batch_no': p.batchNo,
         // Send an ISO date the backend parses with `new Date(...)`; omit when
         // absent so an edit that doesn't touch expiry leaves it unchanged.
-        if (p.expiryDate != null)
-          'exp_date': p.expiryDate!.toIso8601String(),
+        if (includeInventory && p.expiryDate != null)
+          'exp_date': apiCalendarDate(p.expiryDate!),
         if (p.badge != null) 'badge': p.badge!,
       };
 
@@ -114,7 +126,9 @@ class MarketingApi {
         'PUT',
         Uri.parse('$baseUrl/vsArogya/update-product/${p.id}'),
       );
-      req.fields.addAll(_productFields(p));
+      // Inventory (stock/batch/expiry) is owned by the batch model on an edit —
+      // see BatchApi — so it is intentionally left out here.
+      req.fields.addAll(_productFields(p, includeInventory: false));
       req.fields['keptImages'] = ProductMedia.encodeKept(keptImages);
       if (removeVideo) req.fields['removeVideo'] = 'true';
       for (final img in newImages) {
@@ -347,6 +361,183 @@ class MarketingApi {
       return body is! Map || body['success'] != false;
     } catch (_) {
       return true;
+    }
+  }
+}
+
+/// Multi-batch inventory for a product (Marketing "Add New Batch" workflow).
+///   GET    /vsArogya/product/:id/batches
+///   POST   /vsArogya/product/:id/batches
+///   PUT    /vsArogya/batch/:batchId
+///   DELETE /vsArogya/batch/:batchId
+///
+/// Every mutation is applied on the backend immediately; the server recomputes
+/// the product's total stock (= SUM of batch available quantities) so the shop
+/// and inventory list stay in sync after a refresh.
+class BatchApi {
+  BatchApi({http.Client? client}) : _client = client ?? http.Client();
+
+  final http.Client _client;
+  static const Duration _timeout = Duration(seconds: 30);
+  static String get baseUrl => ApiConfig.baseUrl;
+
+  /// Same staff-session headers the other marketing endpoints send (the routes
+  /// are unauthenticated like product CRUD, but sending the token is harmless).
+  Map<String, String> get _headers => {
+        'Content-Type': 'application/json',
+        if (AuthService.authToken != null)
+          'Authorization': 'Bearer ${AuthService.authToken}',
+        if (AuthService.sessionCookie != null)
+          'Cookie': AuthService.sessionCookie!,
+      };
+
+  /// All batches for [productId], in FEFO order. Returns `(batches, error)` —
+  /// batches on success, else a user-facing message.
+  Future<(List<ProductBatch>?, String?)> getBatches(String productId) async {
+    final url = '$baseUrl/vsArogya/product/$productId/batches';
+    try {
+      final res =
+          await _client.get(Uri.parse(url), headers: _headers).timeout(_timeout);
+      if (!MarketingApi._isOk(res)) {
+        return (
+          null,
+          MarketingOrdersApi._serverMessage(res) ?? 'Could not load batches',
+        );
+      }
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final list = (body['batches'] as List?) ?? const [];
+      final batches = list
+          .whereType<Map<String, dynamic>>()
+          .map(ProductBatch.fromJson)
+          .toList();
+      return (batches, null);
+    } catch (_) {
+      return (null, 'Could not reach the server. Check your connection.');
+    }
+  }
+
+  /// The product's SELLABLE catalog batches — available > 0 and not expired —
+  /// in the backend's FEFO order (nearest expiry first). This is the list every
+  /// batch picker shows: an expired or emptied lot is filtered out server-side,
+  /// so it can never be selected.
+  ///
+  /// Returns `(batches, error)`.
+  Future<(List<BatchOption>?, String?)> getAvailableBatches(
+      String productId) async {
+    final url = '$baseUrl/vsArogya/product/$productId/available-batches';
+    try {
+      final res =
+          await _client.get(Uri.parse(url), headers: _headers).timeout(_timeout);
+      if (!MarketingApi._isOk(res)) {
+        return (
+          null,
+          MarketingOrdersApi._serverMessage(res) ?? 'Could not load batches',
+        );
+      }
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final list = (body['batches'] as List?) ?? const [];
+      return (
+        list
+            .whereType<Map<String, dynamic>>()
+            .map(BatchOption.fromJson)
+            .toList(),
+        null,
+      );
+    } catch (_) {
+      return (null, 'Could not reach the server. Check your connection.');
+    }
+  }
+
+  /// Asks the backend to allocate [quantity] of [productId] across its catalog
+  /// batches FEFO, honouring any [overrides] the user pinned. Nothing is
+  /// deducted — this is the dry run that keeps the app from ever computing
+  /// inventory itself.
+  ///
+  /// Returns `(allocations, remaining, error)`; `remaining` > 0 means the
+  /// catalog cannot cover the quantity from sellable lots.
+  Future<(List<BatchAllocation>, int, String?)> previewAllocation(
+    String productId,
+    int quantity, {
+    List<BatchAllocation> overrides = const [],
+  }) async {
+    final url = '$baseUrl/vsArogya/allocate-preview';
+    try {
+      final res = await _client
+          .post(
+            Uri.parse(url),
+            headers: _headers,
+            body: jsonEncode({
+              'productId': productId,
+              'quantity': quantity,
+              if (overrides.isNotEmpty)
+                'overrides': overrides.map((a) => a.toJson()).toList(),
+            }),
+          )
+          .timeout(_timeout);
+
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      if (!MarketingApi._isOk(res)) {
+        return (
+          const <BatchAllocation>[],
+          quantity,
+          (body['message'] ?? 'Could not allocate batches').toString(),
+        );
+      }
+      final allocs = ((body['allocations'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(BatchAllocation.fromJson)
+          .toList();
+      final remaining = (body['remaining'] as num?)?.toInt() ?? 0;
+      return (allocs, remaining, null);
+    } catch (_) {
+      return (
+        const <BatchAllocation>[],
+        quantity,
+        'Could not reach the server. Check your connection.',
+      );
+    }
+  }
+
+  /// Adds a new batch to [productId]. Returns null on success, else a
+  /// user-facing error (the server explains duplicates / bad quantities).
+  Future<String?> addBatch(String productId, ProductBatch b) async {
+    final url = '$baseUrl/vsArogya/product/$productId/batches';
+    try {
+      final res = await _client
+          .post(Uri.parse(url), headers: _headers, body: jsonEncode(b.toJson()))
+          .timeout(_timeout);
+      if (MarketingApi._isOk(res)) return null;
+      return MarketingOrdersApi._serverMessage(res) ?? 'Could not add batch';
+    } catch (_) {
+      return 'Could not reach the server. Check your connection.';
+    }
+  }
+
+  /// Updates the batch [batchId]. Returns null on success, else an error.
+  Future<String?> updateBatch(String batchId, ProductBatch b) async {
+    final url = '$baseUrl/vsArogya/batch/$batchId';
+    try {
+      final res = await _client
+          .put(Uri.parse(url), headers: _headers, body: jsonEncode(b.toJson()))
+          .timeout(_timeout);
+      if (MarketingApi._isOk(res)) return null;
+      return MarketingOrdersApi._serverMessage(res) ?? 'Could not update batch';
+    } catch (_) {
+      return 'Could not reach the server. Check your connection.';
+    }
+  }
+
+  /// Deletes the batch [batchId]. Returns null on success, else an error.
+  Future<String?> deleteBatch(String batchId) async {
+    final url = '$baseUrl/vsArogya/batch/$batchId';
+    try {
+      final res = await _client
+          .delete(Uri.parse(url), headers: _headers)
+          .timeout(_timeout);
+      if (MarketingApi._isOk(res)) return null;
+      return MarketingOrdersApi._serverMessage(res) ?? 'Could not delete batch';
+    } catch (_) {
+      return 'Could not reach the server. Check your connection.';
     }
   }
 }
@@ -745,10 +936,15 @@ class MarketingOrdersApi {
   ///
   /// Returns `(orderId, error)`: orderId set on success; error set with a
   /// user-facing message when the server rejected the call or was unreachable.
+  /// [batches] optionally pins the lots each product must be drawn from, keyed
+  /// by product id — the batches the user chose in the FEFO picker. They ride on
+  /// the cart line and are re-validated by the server when the order is placed;
+  /// a product with no entry is allocated pure FEFO.
   Future<(String?, String?)> createManualOrder({
     required String vendorId,
     required Map<String, int> items,
     required String clientOrderId,
+    Map<String, List<BatchAllocation>> batches = const {},
   }) async {
     try {
       // 1) Build the selected vendor's cart — the server adds ONE unit per
@@ -762,8 +958,23 @@ class MarketingOrdersApi {
         for (var i = 0; i < quantity; i++) {
           final cartUrl =
               '$baseUrl/vsArogya/manual-cart/$vendorId/$productId';
+          // The pinned batches describe the WHOLE line, so they are sent once
+          // with the LAST unit — by then the line's quantity is final and the
+          // server stores the allocation against it (a later call replaces it,
+          // never appends).
+          final isLastUnit = i == quantity - 1;
+          final pinned = batches[productId] ?? const <BatchAllocation>[];
           final res = await _client
-              .post(Uri.parse(cartUrl), headers: _headers)
+              .post(
+                Uri.parse(cartUrl),
+                headers: _headers,
+                body: (isLastUnit && pinned.isNotEmpty)
+                    ? jsonEncode({
+                        'allocations':
+                            pinned.map((a) => a.toJson()).toList(),
+                      })
+                    : null,
+              )
               .timeout(_timeout);
           if (!MarketingApi._isOk(res)) {
             return (
@@ -970,11 +1181,18 @@ class OutletApi {
   /// already holds (`quantity += n`), deducting the same amount from
   /// `product.stock`. It rejects the call when the catalog doesn't have enough.
   ///
+  /// [allocations] are the batches the head explicitly chose to send. The server
+  /// re-validates them against live availability and consumes exactly those
+  /// lots, recording the same batch identity on the outlet's own stock — so the
+  /// outlet knows precisely which lots it received. Passing an empty list falls
+  /// back to pure FEFO.
+  ///
   /// Returns null on success, or a user-facing error message.
   Future<String?> assignStock({
     required String outletId,
     required String productId,
     required int quantity,
+    List<BatchAllocation> allocations = const [],
   }) async {
     final url = '$baseUrl/vsArogya/outlet-stock';
     try {
@@ -986,6 +1204,8 @@ class OutletApi {
               'outletId': outletId,
               'productId': productId,
               'quantity': quantity,
+              if (allocations.isNotEmpty)
+                'allocations': allocations.map((a) => a.toJson()).toList(),
             }),
           )
           .timeout(_timeout);

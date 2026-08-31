@@ -17,6 +17,10 @@
 // =============================================================================
 
 import 'outlet_enums.dart';
+// For [OutletApiException] — the one error type every outlet screen already
+// renders. (LiveOutletDataSource imports this file for its fallback; Dart
+// resolves the pair fine, and both need the shared exception.)
+import 'outlet_live_datasource.dart' show OutletApiException;
 import 'outlet_models.dart';
 import 'outlet_repository.dart';
 
@@ -54,11 +58,53 @@ class MockOutletDataSource implements OutletDataSource {
   @override
   Future<List<OutletStockItem>> fetchStock() async {
     await Future<void>.delayed(_latency);
-    // Own-outlet rows reflect live (reserved-adjusted) quantities.
-    final own = _seedOwnStock
+    // Own-outlet rows only, reflecting live (reserved-adjusted) quantities. The
+    // outlet role sells its OWN stock and nothing else, so there is no
+    // district-stock seed to browse — matching the live endpoint, which only
+    // ever returns this outlet's rows.
+    return _seedOwnStock
         .map((s) => s.copyWith(qtyAvailable: _ownStock[s.id] ?? s.qtyAvailable))
         .toList();
-    return [...own, ..._seedDistrictStock];
+  }
+
+  /// Deliberately NOT mocked. Batch-wise inventory is what staff sell against,
+  /// so a seeded answer here would be an invitation to hand over stock that
+  /// does not exist. The demo session has no outlet to read real lots for, so
+  /// this reports that plainly instead.
+  @override
+  Future<OutletMedicineDetail> fetchMedicineDetail(String productId) async {
+    await Future<void>.delayed(_latency);
+    throw OutletApiException(
+      'Batch details need a signed-in outlet — they are read live from the '
+      'server and are not available in the demo session.',
+    );
+  }
+
+  /// Also deliberately NOT mocked, for the same reason: a seeded lot number and
+  /// expiry would let the demo session pin a batch that does not exist, and the
+  /// order it produced would name stock nobody holds.
+  @override
+  Future<List<OutletBatch>> fetchAvailableBatches(String productId) async {
+    await Future<void>.delayed(_latency);
+    throw OutletApiException(
+      'Batches need a signed-in outlet — they are read live from the server '
+      'and are not available in the demo session.',
+    );
+  }
+
+  /// Allocation is an inventory decision, so it is never simulated either — the
+  /// backend is the only thing that can say what a lot can give.
+  @override
+  Future<OutletAllocationPreview> previewAllocation(
+    String productId,
+    int quantity, {
+    List<OutletBatchAllocation> overrides = const [],
+  }) async {
+    await Future<void>.delayed(_latency);
+    throw OutletApiException(
+      'Batch allocation needs a signed-in outlet — it is computed by the '
+      'server and is not available in the demo session.',
+    );
   }
 
   @override
@@ -317,55 +363,6 @@ final List<OutletStockItem> _seedOwnStock = const [
     qtyAvailable: 4,
     isOwnOutlet: true,
     outletName: 'Ballari Outlet',
-    district: 'Ballari',
-  ),
-];
-
-/// District stock at OTHER outlets — READ-ONLY (locked rule #1): no add-to-cart,
-/// no edit. Shown so staff can see where stock exists across the district.
-final List<OutletStockItem> _seedDistrictStock = const [
-  OutletStockItem(
-    id: 'dist-1',
-    name: 'Paracetamol 500mg',
-    packSize: '10 tablets',
-    category: 'medicine',
-    price: 28.0,
-    qtyAvailable: 340,
-    isOwnOutlet: false,
-    outletName: 'Hospet Outlet',
-    district: 'Ballari',
-  ),
-  OutletStockItem(
-    id: 'dist-2',
-    name: 'Insulin Injection',
-    packSize: '10ml vial',
-    category: 'injections',
-    price: 310.0,
-    qtyAvailable: 26,
-    isOwnOutlet: false,
-    outletName: 'Hospet Outlet',
-    district: 'Ballari',
-  ),
-  OutletStockItem(
-    id: 'dist-3',
-    name: 'Azithromycin 500mg',
-    packSize: '5 tablets',
-    category: 'medicine',
-    price: 78.0,
-    qtyAvailable: 90,
-    isOwnOutlet: false,
-    outletName: 'Sandur Outlet',
-    district: 'Ballari',
-  ),
-  OutletStockItem(
-    id: 'dist-4',
-    name: 'Tetanus Vaccine',
-    packSize: '0.5ml vial',
-    category: 'vaccines',
-    price: 145.0,
-    qtyAvailable: 0,
-    isOwnOutlet: false,
-    outletName: 'Sandur Outlet',
     district: 'Ballari',
   ),
 ];

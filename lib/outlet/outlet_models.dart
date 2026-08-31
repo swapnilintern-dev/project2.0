@@ -40,6 +40,7 @@ class OutletStockItem {
     this.imageUrl = '',
     this.expiry,
     this.batch = '',
+    this.batchCount = 0,
     this.gstPercent = 0,
     this.discountPercent = 0,
     this.hsnCode = '',
@@ -65,11 +66,17 @@ class OutletStockItem {
   /// First product image URL, or '' when none.
   final String imageUrl;
 
-  /// Batch expiry date, when the product carries one.
+  /// Expiry of the lot this outlet will sell NEXT — i.e. the FEFO-front batch
+  /// of the outlet's own stock, not the catalog's. Null when the lot carries no
+  /// printed expiry (or the outlet holds no batched stock).
   final DateTime? expiry;
 
-  /// Batch number, or '' when none.
+  /// Batch number of that same FEFO-front lot, or '' when none.
   final String batch;
+
+  /// How many distinct lots of this medicine the outlet holds. > 1 means the
+  /// next bill may span more than one batch, which the UI says explicitly.
+  final int batchCount;
 
   /// GST slab % embedded in [price] (prices are GST-inclusive).
   final double gstPercent;
@@ -121,6 +128,7 @@ class OutletStockItem {
       imageUrl: (json['imageUrl'] ?? json['image'] ?? '').toString(),
       expiry: json['expiry'] == null ? null : _toDate(json['expiry']),
       batch: (json['batch'] ?? json['batch_no'] ?? '').toString(),
+      batchCount: _toInt(json['batchCount'] ?? json['batch_count']),
       gstPercent: _toDouble(json['gstPercent']),
       discountPercent: _toDouble(json['discountPercent']),
       hsnCode: (json['hsnCode'] ?? '').toString(),
@@ -141,6 +149,7 @@ class OutletStockItem {
         'imageUrl': imageUrl,
         if (expiry != null) 'expiry': expiry!.toIso8601String(),
         'batch': batch,
+        'batchCount': batchCount,
         'gstPercent': gstPercent,
         'discountPercent': discountPercent,
         'hsnCode': hsnCode,
@@ -160,6 +169,7 @@ class OutletStockItem {
         imageUrl: imageUrl,
         expiry: expiry,
         batch: batch,
+        batchCount: batchCount,
         gstPercent: gstPercent,
         discountPercent: discountPercent,
         hsnCode: hsnCode,
@@ -167,11 +177,311 @@ class OutletStockItem {
 }
 
 // -----------------------------------------------------------------------------
+// BATCHES (FEFO allocation for POS billing — backend is the source of truth)
+// -----------------------------------------------------------------------------
+
+/// One batch the outlet holds for a product. Read-only — the backend computes
+/// availability, ordering (FEFO) and the ≤90-day [isExpiringSoon] flag.
+///
+/// The SAME model backs two reads of the one endpoint:
+///   • the manual-override picker — sellable lots only (available > 0, not
+///     expired), which is the default response;
+///   • Medicine Details (`?all=1`) — every lot, expired and emptied included,
+///     with the lot's own pricing, supplier and dates.
+/// The extra fields simply stay at their defaults on the sellable read, so
+/// nothing that already consumes this model changes.
+class OutletBatch {
+  const OutletBatch({
+    required this.id,
+    required this.batchNumber,
+    required this.available,
+    this.expiry,
+    this.purchaseDate,
+    this.isExpiringSoon = false,
+    this.manufacturingDate,
+    this.purchasePrice = 0,
+    this.sellingPrice = 0,
+    this.supplier = '',
+    this.updatedAt,
+  });
+
+  final String id;
+  final String batchNumber;
+  final int available;
+  final DateTime? expiry;
+
+  /// When this lot was credited to the outlet (`createdAt` server-side).
+  final DateTime? purchaseDate;
+  final bool isExpiringSoon;
+
+  /// Printed manufacturing date. Carried by the CATALOG lot this outlet batch
+  /// came from (outlet batches never copied it), so it is null for stock whose
+  /// source lot no longer exists — the UI shows "—" rather than inventing one.
+  final DateTime? manufacturingDate;
+
+  /// The lot's own rates, as recorded when the stock was assigned. 0 means the
+  /// lot carries none and the product's price applies.
+  final double purchasePrice;
+  final double sellingPrice;
+
+  final String supplier;
+
+  /// Last server-side change to this lot (a sale, a re-assignment).
+  final DateTime? updatedAt;
+
+  /// True when the printed expiry has already passed. The sellable read never
+  /// returns these (the server filters them out), so this only ever fires on the
+  /// `?all=1` read — where the UI must show them as un-sellable.
+  bool get isExpired {
+    final e = expiry;
+    return e != null && !e.isAfter(DateTime.now());
+  }
+
+  /// True when this lot can actually be issued right now — the same rule the
+  /// backend applies when it allocates FEFO.
+  bool get isSellable => available > 0 && !isExpired;
+
+  factory OutletBatch.fromJson(Map<String, dynamic> j) => OutletBatch(
+        id: (j['_id'] ?? j['batch'] ?? '').toString(),
+        batchNumber: (j['batch_number'] ?? '').toString(),
+        available: _toInt(j['available_quantity']),
+        expiry: j['expiry_date'] == null ? null : _toDate(j['expiry_date']),
+        purchaseDate:
+            j['created_at'] == null ? null : _toDate(j['created_at']),
+        isExpiringSoon: j['isExpiringSoon'] == true,
+        manufacturingDate: j['manufacturing_date'] == null
+            ? null
+            : _toDate(j['manufacturing_date']),
+        purchasePrice: _toDouble(j['purchase_price']),
+        sellingPrice: _toDouble(j['selling_price']),
+        supplier: (j['supplier'] ?? '').toString(),
+        updatedAt: j['updated_at'] == null ? null : _toDate(j['updated_at']),
+      );
+}
+
+/// Everything the Stock → Medicine Details screen shows, as returned by ONE
+/// call to `GET /outlet/product/:id/available-batches?all=1`: the catalog
+/// product, this outlet's stock totals, and every lot it holds.
+///
+/// Nothing here is computed on the client — [totalStock] is the server's SUM
+/// over the lots and [stockMirror] the outlet's stored quantity, so the screen
+/// can only ever show what the database holds.
+class OutletMedicineDetail {
+  const OutletMedicineDetail({
+    required this.productId,
+    required this.name,
+    required this.batches,
+    required this.totalStock,
+    required this.stockMirror,
+    required this.batchCount,
+    this.description = '',
+    this.category = '',
+    this.brand = '',
+    this.manufacturer = '',
+    this.marketedBy = '',
+    this.code = '',
+    this.packInfo = '',
+    this.packOf = 0,
+    this.hsnCode = '',
+    this.gstPercent = 0,
+    this.discountPercent = 0,
+    this.price = 0,
+    this.mrp = 0,
+    this.imageUrl = '',
+    this.coldStored = '',
+    this.prescriptionRequired = false,
+    this.createdAt,
+    this.updatedAt,
+    this.showsAllLots = true,
+  });
+
+  final String productId;
+  final String name;
+
+  /// Every lot this outlet holds, in the backend's FEFO order (nearest expiry
+  /// first). Never re-sorted here — the server's order IS the policy.
+  final List<OutletBatch> batches;
+
+  /// Sum of the lots' available quantities, computed server-side.
+  final int totalStock;
+
+  /// The outlet's stored `outletStock.quantity` mirror. Equals [totalStock]
+  /// for batched stock; shown separately so a drift is visible rather than
+  /// silently hidden.
+  final int stockMirror;
+
+  final int batchCount;
+
+  final String description;
+  final String category;
+  final String brand;
+  final String manufacturer;
+  final String marketedBy;
+  final String code;
+  final String packInfo;
+  final int packOf;
+  final String hsnCode;
+  final double gstPercent;
+  final double discountPercent;
+
+  /// The selling price charged at billing (GST-inclusive).
+  final double price;
+  final double mrp;
+  final String imageUrl;
+  final String coldStored;
+  final bool prescriptionRequired;
+
+  /// When the medicine was added to the catalog / last edited.
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+
+  /// True when [batches] is every lot the outlet holds. False when the server
+  /// answering the call predates the `?all=1` flag and could only return the
+  /// SELLABLE lots — the figures shown are still live and correct, but expired
+  /// and emptied lots are missing, and the screen says so rather than implying
+  /// they don't exist.
+  final bool showsAllLots;
+
+  double get mrpSaving => mrp > price ? mrp - price : 0;
+
+  /// Lots that can actually be sold right now — the same rule the backend
+  /// applies when it allocates FEFO (in stock and not past expiry).
+  int get sellableBatchCount => batches
+      .where((b) =>
+          b.available > 0 &&
+          (b.expiry == null || b.expiry!.isAfter(DateTime.now())))
+      .length;
+
+  /// Reads the `?all=1` response body. [showsAllLots] is false when the caller
+  /// assembled this from a server that predates that flag (see
+  /// [OutletApi.fetchMedicineDetail]).
+  factory OutletMedicineDetail.fromJson(
+    Map<String, dynamic> json, {
+    bool showsAllLots = true,
+  }) {
+    final p = (json['product'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final rows = (json['batches'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(OutletBatch.fromJson)
+        .toList();
+
+    return OutletMedicineDetail(
+      productId: (p['_id'] ?? p['id'] ?? '').toString(),
+      name: (p['title'] ?? '').toString(),
+      batches: rows,
+      totalStock: _toInt(json['total_stock']),
+      stockMirror: _toInt(json['stock']),
+      batchCount: _toInt(json['batch_count']),
+      description: (p['description'] ?? '').toString(),
+      category: (p['category'] ?? '').toString(),
+      brand: (p['brand'] ?? '').toString(),
+      manufacturer: (p['manufacturer'] ?? '').toString(),
+      marketedBy: (p['marketedBy'] ?? '').toString(),
+      code: (p['code'] ?? '').toString(),
+      packInfo: (p['packInfo'] ?? '').toString(),
+      packOf: _toInt(p['packOf']),
+      hsnCode: (p['hsnCode'] ?? '').toString(),
+      gstPercent: _toDouble(p['gstPercent']),
+      discountPercent: _toDouble(p['discountPercent']),
+      price: _toDouble(p['price']),
+      mrp: _toDouble(p['mrp']),
+      imageUrl: _firstImageUrl(p['image']),
+      coldStored: (p['cold_stored'] ?? '').toString(),
+      prescriptionRequired: p['prescriptionRequired'] == true,
+      createdAt: p['createdAt'] == null ? null : _toDate(p['createdAt']),
+      updatedAt: p['updatedAt'] == null ? null : _toDate(p['updatedAt']),
+      showsAllLots: showsAllLots,
+    );
+  }
+
+  /// The first usable URL from a product's `image: [{ url, publicId }]` array.
+  static String _firstImageUrl(Object? images) {
+    if (images is List) {
+      for (final img in images) {
+        if (img is Map && (img['url'] ?? '').toString().isNotEmpty) {
+          return img['url'].toString();
+        }
+      }
+    }
+    return '';
+  }
+}
+
+/// One batch allocated to a bill line (part of the FEFO breakdown). The backend
+/// returns these; the app displays them and, on override, sends them back.
+class OutletBatchAllocation {
+  const OutletBatchAllocation({
+    required this.batchId,
+    required this.batchNumber,
+    required this.quantity,
+    this.expiry,
+  });
+
+  final String batchId;
+  final String batchNumber;
+  final int quantity;
+  final DateTime? expiry;
+
+  factory OutletBatchAllocation.fromJson(Map<String, dynamic> j) =>
+      OutletBatchAllocation(
+        batchId: (j['batch'] ?? '').toString(),
+        batchNumber: (j['batch_number'] ?? '').toString(),
+        quantity: _toInt(j['quantity']),
+        expiry: j['expiry_date'] == null ? null : _toDate(j['expiry_date']),
+      );
+
+  /// The override payload the backend expects: a pinned batch + quantity.
+  Map<String, dynamic> toJson() => {
+        'batch': batchId,
+        'batch_number': batchNumber,
+        'quantity': quantity,
+      };
+
+  OutletBatchAllocation copyWith({int? quantity}) => OutletBatchAllocation(
+        batchId: batchId,
+        batchNumber: batchNumber,
+        quantity: quantity ?? this.quantity,
+        expiry: expiry,
+      );
+}
+
+/// The backend's answer to "can this quantity be issued, from these lots?" —
+/// POST /outlet/allocate-preview. NON-mutating, so it is the safe way to
+/// validate a cart line (stock, batch, expiry and outlet ownership are all
+/// checked server-side) before anything is committed.
+class OutletAllocationPreview {
+  const OutletAllocationPreview({
+    required this.allocations,
+    required this.remaining,
+    this.availableBatches = const [],
+  });
+
+  /// The lots the server would actually consume, in FEFO order.
+  final List<OutletBatchAllocation> allocations;
+
+  /// Units the server could NOT place on any lot. 0 means the line is fully
+  /// coverable right now; anything higher means the outlet is short.
+  final int remaining;
+
+  /// The outlet's sellable lots for the product, as the server sees them.
+  final List<OutletBatch> availableBatches;
+
+  bool get isComplete => remaining <= 0;
+}
+
+// -----------------------------------------------------------------------------
 // CART (staff's working basket, before the order is created)
 // -----------------------------------------------------------------------------
 
 /// A single line in the staff's working cart. Built from an own-outlet
-/// [OutletStockItem]; [qty] is editable in the Create Manual Order screen.
+/// [OutletStockItem] together with the LOT it will be issued from; both [qty]
+/// and the pinned batch are editable in the Create Manual Order screen.
+///
+/// BATCH-WISE ORDERING: a line carries the exact [batchId] the user picked, so
+/// the order pins that lot instead of leaving the server to pick FEFO. The
+/// backend still re-validates the pin against live availability at order time
+/// (previewOutletAllocation → allocateOutletFEFO) and remains the final
+/// authority on what is actually deducted.
 class OutletCartLine {
   const OutletCartLine({
     required this.productId,
@@ -179,6 +489,11 @@ class OutletCartLine {
     required this.price,
     required this.qty,
     this.packSize = '',
+    this.batch = '',
+    this.expiry,
+    this.batchCount = 0,
+    this.batchId = '',
+    this.batchAvailable = 0,
   });
 
   final String productId;
@@ -187,15 +502,64 @@ class OutletCartLine {
   final double price;
   final int qty;
 
+  /// Batch NUMBER of the pinned lot (what staff and the invoice read).
+  final String batch;
+  final DateTime? expiry;
+
+  /// How many lots of this medicine the outlet holds; > 1 means another lot
+  /// could have been chosen instead.
+  final int batchCount;
+
+  /// The `outletStockBatch._id` of the pinned lot — the id the backend pins an
+  /// allocation to. Empty means no batch has been chosen yet, which the order
+  /// screen refuses to submit.
+  final String batchId;
+
+  /// Units the pinned lot held when it was last read from the server. This is
+  /// the quantity CEILING for this line: a single batch can never give more
+  /// than it holds.
+  final int batchAvailable;
+
+  bool get hasBatch => batchId.isNotEmpty;
+
+  /// The most this line may be raised to, or 0 when the server has not reported
+  /// a per-lot figure (no batch pinned yet) — a cap is never invented here.
+  int get maxQty => batchAvailable;
+
+  /// True when the line is already at its pinned lot's ceiling.
+  bool get isAtMax => batchAvailable > 0 && qty >= batchAvailable;
+
   double get lineTotal => price * qty;
 
-  factory OutletCartLine.fromStock(OutletStockItem item, {int qty = 1}) =>
+  /// Builds the line from a stock row plus the lot the user chose. Without
+  /// [batch] the line falls back to the row's FEFO-front lot for display only —
+  /// [batchId] stays empty, so it still counts as "no batch chosen".
+  factory OutletCartLine.fromStock(
+    OutletStockItem item, {
+    int qty = 1,
+    OutletBatch? batch,
+  }) =>
       OutletCartLine(
         productId: item.id,
         name: item.name,
         packSize: item.packSize,
         price: item.price,
         qty: qty,
+        batch: batch?.batchNumber ?? item.batch,
+        expiry: batch?.expiry ?? item.expiry,
+        batchCount: item.batchCount,
+        batchId: batch?.id ?? '',
+        batchAvailable: batch?.available ?? 0,
+      );
+
+  /// The `allocations` entry every batch-aware backend endpoint accepts: this
+  /// line's whole quantity pinned to the chosen lot. Both identifiers are sent
+  /// so the server can still resolve the lot if its id changed.
+  OutletBatchAllocation get allocation => OutletBatchAllocation(
+        batchId: batchId,
+        batchNumber: batch,
+        quantity: qty,
+        expiry: expiry,
       );
 
   Map<String, dynamic> toJson() => {
@@ -204,14 +568,26 @@ class OutletCartLine {
         'packSize': packSize,
         'price': price,
         'qty': qty,
+        'batch': batch,
+        if (expiry != null) 'expiry': expiry!.toIso8601String(),
+        'batchCount': batchCount,
+        'batchId': batchId,
+        'batchAvailable': batchAvailable,
       };
 
-  OutletCartLine copyWith({int? qty}) => OutletCartLine(
+  /// Copies the line. Passing [batch] re-pins it to another lot (which also
+  /// resets [batchAvailable], the quantity cap).
+  OutletCartLine copyWith({int? qty, OutletBatch? batch}) => OutletCartLine(
         productId: productId,
         name: name,
         packSize: packSize,
         price: price,
         qty: qty ?? this.qty,
+        batch: batch?.batchNumber ?? this.batch,
+        expiry: batch == null ? expiry : batch.expiry,
+        batchCount: batchCount,
+        batchId: batch?.id ?? batchId,
+        batchAvailable: batch?.available ?? batchAvailable,
       );
 }
 

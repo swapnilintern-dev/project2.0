@@ -387,7 +387,13 @@ void _showSupportCard(BuildContext context) {
       ),
     ),
     builder: (context) {
-      return Padding(
+      // The card is ~570pt tall at the 1.3x text cap. That fits a portrait
+      // iPhone, but Info.plist allows landscape, where the sheet has ~375pt to
+      // work with — as a bare Column it overflowed instead of scrolling.
+      // SafeArea keeps the Contact Us button clear of the home indicator.
+      return SafeArea(
+        top: false,
+        child: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -454,6 +460,7 @@ void _showSupportCard(BuildContext context) {
 
             const SizedBox(height: 20),
           ],
+        ),
         ),
       );
     },

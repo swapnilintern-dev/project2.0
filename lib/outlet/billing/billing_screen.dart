@@ -67,6 +67,13 @@ class _BillingScreenState extends State<BillingScreen> {
   }
 
   Future<void> _placeBill() async {
+    // Block only on a real, unresolved batch problem (e.g. an over-allocated
+    // manual override). A plain empty/loading allocation is fine — the backend
+    // does the final FEFO + validation inside the billing transaction.
+    if (_controller.lines.any((l) => l.allocError != null)) {
+      _snack('Fix the highlighted batch allocation before placing the bill.');
+      return;
+    }
     final result = await _controller.submit();
     if (!mounted) return;
     if (!result.ok) {
@@ -75,10 +82,15 @@ class _BillingScreenState extends State<BillingScreen> {
     }
     final order = result.order!;
 
-    // Razorpay → collect payment on the existing outlet payment screen first.
+    // Razorpay → collect payment on the existing outlet payment screen first,
+    // with the checkout sheet opening straight away (the same shared flow the
+    // manual-order screen uses). The QR / payment link and a retry stay on that
+    // screen for a customer who cancels or would rather pay on their own phone.
     if (_controller.payment == BillingPayment.razorpay) {
       await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => OutletPaymentScreen(order: order)),
+        MaterialPageRoute(
+          builder: (_) => OutletPaymentScreen(order: order, autoCollect: true),
+        ),
       );
       if (!mounted) return;
     }

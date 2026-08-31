@@ -64,12 +64,16 @@ class _OutletMainState extends State<OutletMain> {
     _openManualOrder();
   }
 
-  void _onAddToCart(OutletStockItem item) {
-    OutletCart.instance.add(item);
+  /// Adds a medicine to the cart already pinned to the lot staff chose in the
+  /// Stock tab's batch picker — an outlet line is never created without one.
+  void _onAddToCart(OutletStockItem item, OutletBatch batch) {
+    OutletCart.instance.add(item, batch: batch);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('${item.name} added to cart'),
-        duration: const Duration(milliseconds: 900),
+        content: Text(batch.batchNumber.isEmpty
+            ? '${item.name} added to cart'
+            : '${item.name} added · batch ${batch.batchNumber}'),
+        duration: const Duration(milliseconds: 1200),
       ),
     );
   }
@@ -278,6 +282,7 @@ class _OutletProfileTabState extends State<_OutletProfileTab>
         OutletHeader(
           title: 'Profile',
           subtitle: 'Outlet Staff account',
+          bottomPadding: 22,
         ),
         Expanded(
           child: RefreshIndicator(

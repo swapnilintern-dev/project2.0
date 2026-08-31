@@ -18,6 +18,13 @@
 // The server ADDS to whatever the outlet already holds and deducts the same
 // amount from the global product stock, so quantities here are "how much more
 // to send", not "set the outlet's stock to this".
+//
+// BATCH SELECTION IS MANDATORY. Stock is physical: the head must state exactly
+// which lot leaves the warehouse, so "Add" always goes through the FEFO picker
+// (sellable batches only, nearest expiry first, pre-selected). The chosen lots
+// travel with the assignment; the server consumes those catalog batches and
+// records the SAME batch identity on the outlet's stock, so the outlet knows
+// precisely which lots — and expiries — it received.
 // =============================================================================
 
 import 'dart:async' show unawaited;
@@ -26,6 +33,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
+import '../widgets/batch_selector.dart';
+import '../widgets/expiry_alert.dart';
 import 'marketing_api.dart';
 import 'marketing_controllers.dart';
 import 'marketing_models.dart';
@@ -73,6 +82,19 @@ class _SelectOutletScreenState extends State<SelectOutletScreen> {
 
   /// Chosen quantity per product id. Absent / 0 = not in the order.
   final Map<String, int> _qty = {};
+
+  /// The lots each product will be sent from, keyed by product id. A product is
+  /// only ever added to the order together with its batches, so an entry here
+  /// exists for every entry in [_qty] — there is no "assigned but unbatched"
+  /// state.
+  final Map<String, List<BatchAllocation>> _alloc = {};
+
+  /// Batch reads for the picker. The backend decides which lots are sellable
+  /// and in what order; this screen only displays and returns the choice.
+  final BatchApi _batchApi = BatchApi();
+
+  /// True while a product's batches are being fetched for the picker.
+  String? _loadingBatchesFor;
 
   /// Per-product quantity input controllers for the search-result boxes.
   /// Created lazily and reused; all disposed in [dispose].
@@ -125,7 +147,11 @@ class _SelectOutletScreenState extends State<SelectOutletScreen> {
 
   /// Adds (or updates) [product] in the order using the quantity typed in its
   /// box. Invalid / empty quantity is rejected with a hint.
-  void _addProduct(InventoryProduct product) {
+  ///
+  /// Batch selection is MANDATORY, so this always opens the FEFO picker and
+  /// only records the line once the head has confirmed which lots to send.
+  /// Backing out of the picker leaves the order untouched.
+  Future<void> _addProduct(InventoryProduct product) async {
     final raw = _qtyControllerFor(product.id).text.trim();
     final qty = int.tryParse(raw) ?? 0;
     if (qty <= 0) {
@@ -135,23 +161,107 @@ class _SelectOutletScreenState extends State<SelectOutletScreen> {
       return;
     }
     FocusScope.of(context).unfocus();
-    setState(() => _qty[product.id] = qty);
+
+    final picked = await _chooseBatches(product, qty);
+    if (picked == null || !mounted) return;
+
+    setState(() {
+      _qty[product.id] = qty;
+      _alloc[product.id] = picked;
+    });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        duration: const Duration(milliseconds: 900),
-        content: Text('${product.name} × $qty added'),
+        duration: const Duration(milliseconds: 1200),
+        content: Text(
+          '${product.name} × $qty from '
+          '${picked.map((a) => a.batchNumber).join(", ")}',
+        ),
       ),
     );
   }
 
-  void _removeProduct(String productId) {
-    setState(() => _qty.remove(productId));
+  /// Loads [product]'s sellable batches and opens the shared FEFO picker for
+  /// [qty] units. Returns the chosen allocation, or null when the head backed
+  /// out / the batches could not be loaded / nothing is sellable.
+  Future<List<BatchAllocation>?> _chooseBatches(
+    InventoryProduct product,
+    int qty, {
+    List<BatchAllocation> initial = const [],
+  }) async {
+    setState(() => _loadingBatchesFor = product.id);
+    final (batches, error) = await _batchApi.getAvailableBatches(product.id);
+    if (!mounted) return null;
+    setState(() => _loadingBatchesFor = null);
+
+    if (batches == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error ?? 'Could not load batches')),
+      );
+      return null;
+    }
+
+    // Expired and emptied lots are filtered out server-side, so an empty list
+    // genuinely means there is nothing that may be sent.
+    final sellable = batches.fold(0, (sum, b) => sum + b.available);
+    if (batches.isEmpty || sellable <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'No sellable batch for ${product.name} — every lot is empty or '
+            'past its expiry date.',
+          ),
+        ),
+      );
+      return null;
+    }
+    if (sellable < qty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Only $sellable unit(s) of ${product.name} are in sellable '
+            'batches — expired lots cannot be assigned.',
+          ),
+        ),
+      );
+      return null;
+    }
+
+    return showBatchSelector(
+      context: context,
+      productName: product.name,
+      quantity: qty,
+      batches: batches,
+      initial: initial,
+      lowStockThreshold: product.lowThreshold,
+    );
   }
 
-  /// Clears the whole working order (quantities + search) and resets the qty
-  /// input boxes back to "1".
+  /// Re-opens the picker for a line already in the order, seeded with its
+  /// current lots so the head adjusts rather than starts over.
+  Future<void> _changeBatches(InventoryProduct product) async {
+    final qty = _qty[product.id] ?? 0;
+    if (qty <= 0) return;
+    final picked = await _chooseBatches(
+      product,
+      qty,
+      initial: _alloc[product.id] ?? const [],
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _alloc[product.id] = picked);
+  }
+
+  void _removeProduct(String productId) {
+    setState(() {
+      _qty.remove(productId);
+      _alloc.remove(productId);
+    });
+  }
+
+  /// Clears the whole working order (quantities + batches + search) and resets
+  /// the qty input boxes back to "1".
   void _resetOrder() {
     _qty.clear();
+    _alloc.clear();
     _search = '';
     _searchController.clear();
     for (final c in _qtyControllers.values) {
@@ -185,6 +295,9 @@ class _SelectOutletScreenState extends State<SelectOutletScreen> {
         outletId: outlet.id,
         productId: p.id,
         quantity: qty,
+        // The lots the head explicitly chose. The server re-validates them
+        // against live availability and consumes exactly these batches.
+        allocations: _alloc[p.id] ?? const [],
       );
       if (error == null) {
         sent.add('${p.name} × $qty');
@@ -643,13 +756,43 @@ class _SelectOutletScreenState extends State<SelectOutletScreen> {
                           : AppColors.greyText)),
             ],
           ),
+          // The lot FEFO will offer first, from the product's server-synced
+          // mirror (batch_no/exp_date always track the nearest-expiry batch).
+          if (product.batchNo.isNotEmpty || product.expiryDate != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Row(
+                children: [
+                  if (product.batchNo.isNotEmpty) ...[
+                    Flexible(
+                      child: Text('Next batch ${product.batchNo}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.darkText)),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                  Text(formatExpiry(product.expiryDate),
+                      style: TextStyle(
+                          fontSize: 11.5,
+                          color: expiryTierOf(product.expiryDate).color)),
+                  const SizedBox(width: 4),
+                  ExpiryTierBadge(expiry: product.expiryDate, dense: true),
+                ],
+              ),
+            ),
           const SizedBox(height: 10),
           Row(
             children: [
               _qtyField(product),
               const SizedBox(width: 10),
               ElevatedButton(
-                onPressed: () => _addProduct(product),
+                onPressed: _loadingBatchesFor == product.id
+                    ? null
+                    : () => _addProduct(product),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
@@ -660,7 +803,12 @@ class _SelectOutletScreenState extends State<SelectOutletScreen> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
-                child: Text(inOrder > 0 ? 'Update' : 'Add',
+                // "Choose batch" makes the mandatory step explicit before the
+                // picker opens.
+                child: Text(
+                    _loadingBatchesFor == product.id
+                        ? 'Loading…'
+                        : (inOrder > 0 ? 'Update' : 'Choose batch'),
                     style: const TextStyle(fontWeight: FontWeight.w800)),
               ),
               const Spacer(),
@@ -715,28 +863,43 @@ class _SelectOutletScreenState extends State<SelectOutletScreen> {
     );
   }
 
-  /// A row in the "In this order" list — name × qty with a remove button.
+  /// A row in the "In this order" list — name × qty, the exact lots being sent,
+  /// and a remove button.
   Widget _orderedRow(InventoryProduct product) {
     final qty = _qty[product.id] ?? 0;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.check_circle,
-              size: 18, color: AppColors.primary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text('${product.name}  ×  $qty',
-                style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.darkText)),
+          Row(
+            children: [
+              const Icon(Icons.check_circle,
+                  size: 18, color: AppColors.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('${product.name}  ×  $qty',
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.darkText)),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.delete_outline_rounded,
+                    size: 20, color: AppColors.greyText),
+                onPressed: () => _removeProduct(product.id),
+              ),
+            ],
           ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.delete_outline_rounded,
-                size: 20, color: AppColors.greyText),
-            onPressed: () => _removeProduct(product.id),
+          // The lots this line will draw from — never hidden, always editable.
+          Padding(
+            padding: const EdgeInsets.only(left: 26, top: 2),
+            child: BatchSummary(
+              allocations: _alloc[product.id] ?? const [],
+              loading: _loadingBatchesFor == product.id,
+              onChange: () => _changeBatches(product),
+            ),
           ),
         ],
       ),

@@ -16,6 +16,7 @@ import 'package:printing/printing.dart';
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
 import 'customer_api.dart';
+import '../theme/app_widgets.dart' show shareOriginFor;
 import 'customer_models.dart';
 import 'customer_widgets.dart';
 import 'invoice_pdf.dart';
@@ -70,7 +71,11 @@ class _InvoiceCardState extends State<InvoiceCard> {
       return;
     }
     try {
-      await Printing.sharePdf(bytes: bytes, filename: '$_invoiceNo.pdf');
+      await Printing.sharePdf(
+        bytes: bytes,
+        filename: '$_invoiceNo.pdf',
+        bounds: shareOriginFor(context),
+      );
     } catch (_) {
       if (mounted) {
         showAppSnack(context, 'Could not open the save sheet. Try again.',

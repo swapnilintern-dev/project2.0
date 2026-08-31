@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../services/product_media.dart';
+import '../shared/api_date.dart';
 
 /// Status-only accent colours not present in the shared palette.
 class MarketingColors {
@@ -396,6 +397,112 @@ class InventoryProduct {
       packInfo: packInfo ?? this.packInfo,
       images: images ?? this.images,
       video: clearVideo ? null : (video ?? this.video),
+    );
+  }
+}
+
+/// One physical inventory lot of a product (see the backend `productBatch`
+/// collection). A product owns many of these — one per purchase over time. The
+/// product's total stock is the SUM of every batch's [availableQuantity];
+/// stock is consumed FEFO (nearest [expiryDate] first) by the backend.
+@immutable
+class ProductBatch {
+  const ProductBatch({
+    this.id = '',
+    required this.batchNumber,
+    required this.purchaseQuantity,
+    required this.availableQuantity,
+    this.purchasePrice = 0,
+    this.sellingPrice = 0,
+    this.manufacturingDate,
+    this.expiryDate,
+    this.supplier = '',
+    this.isExpiringSoon = false,
+  });
+
+  final String id;
+  final String batchNumber;
+  final int purchaseQuantity;
+  final int availableQuantity;
+  final double purchasePrice;
+  final double sellingPrice;
+  final DateTime? manufacturingDate;
+  final DateTime? expiryDate;
+  final String supplier;
+
+  /// Server-computed flag: this batch expires within 90 days (or already has).
+  final bool isExpiringSoon;
+
+  factory ProductBatch.fromJson(Map<String, dynamic> j) {
+    double toDouble(Object? v) {
+      if (v is num) return v.toDouble();
+      if (v is String) return double.tryParse(v) ?? 0;
+      return 0;
+    }
+
+    int toInt(Object? v) {
+      if (v is num) return v.toInt();
+      if (v is String) return int.tryParse(v) ?? 0;
+      return 0;
+    }
+
+    DateTime? toDate(Object? v) {
+      if (v == null) return null;
+      final s = v.toString();
+      if (s.isEmpty || s == 'N/A') return null;
+      return DateTime.tryParse(s);
+    }
+
+    return ProductBatch(
+      id: (j['_id'] ?? '').toString(),
+      batchNumber: (j['batch_number'] ?? '').toString(),
+      purchaseQuantity: toInt(j['purchase_quantity']),
+      availableQuantity: toInt(j['available_quantity']),
+      purchasePrice: toDouble(j['purchase_price']),
+      sellingPrice: toDouble(j['selling_price']),
+      manufacturingDate: toDate(j['manufacturing_date']),
+      expiryDate: toDate(j['expiry_date']),
+      supplier: (j['supplier'] ?? '').toString(),
+      isExpiringSoon: j['isExpiringSoon'] == true,
+    );
+  }
+
+  /// The payload the batch endpoints expect (snake_case keys). Dates go as
+  /// timezone-independent `YYYY-MM-DD` calendar dates (see [apiCalendarDate]);
+  /// omitted when null so an edit that doesn't touch a date leaves it unchanged.
+  Map<String, dynamic> toJson() => {
+        'batch_number': batchNumber,
+        'purchase_quantity': purchaseQuantity,
+        'available_quantity': availableQuantity,
+        'purchase_price': purchasePrice,
+        'selling_price': sellingPrice,
+        if (manufacturingDate != null)
+          'manufacturing_date': apiCalendarDate(manufacturingDate!),
+        if (expiryDate != null) 'expiry_date': apiCalendarDate(expiryDate!),
+        'supplier': supplier,
+      };
+
+  ProductBatch copyWith({
+    String? batchNumber,
+    int? purchaseQuantity,
+    int? availableQuantity,
+    double? purchasePrice,
+    double? sellingPrice,
+    DateTime? manufacturingDate,
+    DateTime? expiryDate,
+    String? supplier,
+  }) {
+    return ProductBatch(
+      id: id,
+      batchNumber: batchNumber ?? this.batchNumber,
+      purchaseQuantity: purchaseQuantity ?? this.purchaseQuantity,
+      availableQuantity: availableQuantity ?? this.availableQuantity,
+      purchasePrice: purchasePrice ?? this.purchasePrice,
+      sellingPrice: sellingPrice ?? this.sellingPrice,
+      manufacturingDate: manufacturingDate ?? this.manufacturingDate,
+      expiryDate: expiryDate ?? this.expiryDate,
+      supplier: supplier ?? this.supplier,
+      isExpiringSoon: isExpiringSoon,
     );
   }
 }

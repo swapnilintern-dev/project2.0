@@ -241,6 +241,309 @@ void main() {
     });
   });
 
+  // The Stock → Medicine Details screen. Everything it renders comes from this
+  // ONE call, so the mapping is pinned against the exact shape
+  // getOutletAvailableBatches returns for `?all=1`.
+  group('OutletApi.fetchMedicineDetail', () {
+    /// A product holding four lots that between them cover every batch state
+    /// the screen has to render: healthy, expiring, expired and emptied.
+    Map<String, dynamic> detailBody() => {
+          'success': true,
+          'product': {
+            '_id': 'p1',
+            'title': 'Paracetamol 650 mg Tablet',
+            'description': 'Antipyretic and analgesic.',
+            'category': 'medicine',
+            'brand': 'Calpol',
+            'manufacturer': 'Micro Labs',
+            'marketedBy': 'VS Arogya',
+            'code': 'PAR650',
+            'packInfo': '15 tablets',
+            'packOf': 15,
+            'hsnCode': '30049099',
+            'gstPercent': 12,
+            'discountPercent': 5,
+            'price': 31,
+            'mrp': 38.5,
+            'cold_stored': '',
+            'prescriptionRequired': false,
+            'image': [
+              {'url': 'https://cdn/para.png', 'publicId': 'para'}
+            ],
+            'createdAt': '2026-01-04T10:00:00.000Z',
+            'updatedAt': '2026-07-20T08:30:00.000Z',
+          },
+          'stock': 794,
+          'total_stock': 794,
+          'batch_count': 4,
+          'batches': [
+            {
+              '_id': 'b-expired',
+              'batch_number': 'PAR650A2401',
+              'expiry_date': '2026-02-01T00:00:00.000Z',
+              'manufacturing_date': '2024-02-01T00:00:00.000Z',
+              'available_quantity': 12,
+              'purchase_price': 24,
+              'selling_price': 31,
+              'supplier': 'Kaveri Distributors',
+              'isExpiringSoon': true,
+              'created_at': '2026-01-10T00:00:00.000Z',
+              'updated_at': '2026-03-01T00:00:00.000Z',
+            },
+            {
+              '_id': 'b-empty',
+              'batch_number': 'PAR650A2502',
+              'expiry_date': '2027-11-01T00:00:00.000Z',
+              'manufacturing_date': null,
+              'available_quantity': 0,
+              'purchase_price': 25,
+              'selling_price': 31,
+              'supplier': '',
+              'isExpiringSoon': false,
+              'created_at': '2026-04-10T00:00:00.000Z',
+              'updated_at': '2026-07-01T00:00:00.000Z',
+            },
+            {
+              '_id': 'b-soon',
+              'batch_number': 'PAR650A2507',
+              'expiry_date': '2026-09-15T00:00:00.000Z',
+              'manufacturing_date': '2025-09-15T00:00:00.000Z',
+              'available_quantity': 282,
+              'purchase_price': 26,
+              'selling_price': 31,
+              'supplier': 'Kaveri Distributors',
+              'isExpiringSoon': true,
+              'created_at': '2026-05-02T00:00:00.000Z',
+              'updated_at': '2026-07-25T00:00:00.000Z',
+            },
+            {
+              '_id': 'b-healthy',
+              'batch_number': 'PAR650A2601',
+              'expiry_date': '2028-06-30T00:00:00.000Z',
+              'manufacturing_date': '2026-06-30T00:00:00.000Z',
+              'available_quantity': 500,
+              'purchase_price': 27,
+              'selling_price': 31,
+              'supplier': 'Sri Balaji Agencies',
+              'isExpiringSoon': false,
+              'created_at': '2026-07-01T00:00:00.000Z',
+              'updated_at': '2026-07-26T00:00:00.000Z',
+            },
+          ],
+        };
+
+    test('asks the outlet-scoped endpoint for ALL lots, not just sellable ones',
+        () async {
+      late Uri called;
+      final client = MockClient((req) async {
+        called = req.url;
+        return http.Response(jsonEncode(detailBody()), 200);
+      });
+
+      final (detail, error) =
+          await OutletApi(client: client).fetchMedicineDetail('p1');
+
+      expect(error, isNull);
+      expect(detail, isNotNull);
+      expect(
+        called.path,
+        endsWith('/vsArogya/outlet/product/p1/available-batches'),
+        reason: 'must reuse the existing endpoint, not a new one',
+      );
+      expect(called.queryParameters['all'], '1',
+          reason: 'without ?all=1 the server hides expired and emptied lots');
+    });
+
+    test('maps the product, the outlet totals and every batch', () async {
+      final client = MockClient(
+          (_) async => http.Response(jsonEncode(detailBody()), 200));
+
+      final (detail, error) =
+          await OutletApi(client: client).fetchMedicineDetail('p1');
+
+      expect(error, isNull);
+      final d = detail!;
+
+      expect(d.productId, 'p1');
+      expect(d.name, 'Paracetamol 650 mg Tablet');
+      expect(d.manufacturer, 'Micro Labs');
+      expect(d.marketedBy, 'VS Arogya');
+      expect(d.hsnCode, '30049099');
+      expect(d.gstPercent, 12);
+      expect(d.packOf, 15);
+      expect(d.price, 31);
+      expect(d.mrp, 38.5);
+      expect(d.mrpSaving, closeTo(7.5, 0.001));
+      expect(d.imageUrl, 'https://cdn/para.png');
+      expect(d.createdAt, isNotNull);
+      expect(d.updatedAt, isNotNull);
+
+      // Stock is the SERVER's arithmetic — never recomputed on the client.
+      expect(d.totalStock, 794);
+      expect(d.stockMirror, 794);
+      expect(d.batchCount, 4);
+
+      // Order is preserved exactly as the server sent it (FEFO is its policy).
+      expect(d.batches.map((b) => b.batchNumber).toList(), [
+        'PAR650A2401',
+        'PAR650A2502',
+        'PAR650A2507',
+        'PAR650A2601',
+      ]);
+
+      final soon = d.batches[2];
+      expect(soon.available, 282);
+      expect(soon.expiry, DateTime.parse('2026-09-15T00:00:00.000Z'));
+      expect(soon.manufacturingDate,
+          DateTime.parse('2025-09-15T00:00:00.000Z'));
+      expect(soon.purchasePrice, 26);
+      expect(soon.sellingPrice, 31);
+      expect(soon.supplier, 'Kaveri Distributors');
+      expect(soon.isExpiringSoon, isTrue);
+      expect(soon.purchaseDate, isNotNull);
+      expect(soon.updatedAt, isNotNull);
+
+      // A lot with no printed manufacturing date stays null — not "today".
+      expect(d.batches[1].manufacturingDate, isNull);
+      expect(d.batches[1].available, 0);
+      expect(d.batches[1].supplier, isEmpty);
+    });
+
+    test('counts only lots that are in stock AND unexpired as sellable',
+        () async {
+      final client = MockClient(
+          (_) async => http.Response(jsonEncode(detailBody()), 200));
+
+      final (detail, _) =
+          await OutletApi(client: client).fetchMedicineDetail('p1');
+
+      // b-expired is past, b-empty holds nothing → 2 of the 4 can be issued.
+      expect(detail!.batches.length, 4);
+      expect(detail.sellableBatchCount, 2);
+    });
+
+    // A server that hasn't been redeployed yet ignores `?all=1` and answers
+    // with the sellable lots and NO product. The screen must still work off
+    // live data rather than dead-ending.
+    test('falls back to /all-products when the server predates ?all=1',
+        () async {
+      final paths = <String>[];
+      final client = MockClient((req) async {
+        paths.add(req.url.path);
+        if (req.url.path.endsWith('/available-batches')) {
+          return http.Response(
+            jsonEncode({
+              'success': true,
+              'batches': [
+                {
+                  '_id': 'b-soon',
+                  'batch_number': 'PAR650A2507',
+                  'expiry_date': '2026-09-15T00:00:00.000Z',
+                  'available_quantity': 282,
+                  'created_at': '2026-05-02T00:00:00.000Z',
+                  'isExpiringSoon': true,
+                },
+                {
+                  '_id': 'b-healthy',
+                  'batch_number': 'PAR650A2601',
+                  'expiry_date': '2028-06-30T00:00:00.000Z',
+                  'available_quantity': 500,
+                  'created_at': '2026-07-01T00:00:00.000Z',
+                  'isExpiringSoon': false,
+                },
+              ],
+            }),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'success': true,
+            'products': [
+              {'_id': 'other', 'title': 'Something else', 'price': 10},
+              {
+                '_id': 'p1',
+                'title': 'Paracetamol 650 mg Tablet',
+                'manufacturer': 'Micro Labs',
+                'hsnCode': '30049099',
+                'gstPercent': 12,
+                'price': 31,
+                'mrp': 38.5,
+                'createdAt': '2026-01-04T10:00:00.000Z',
+                'updatedAt': '2026-07-20T08:30:00.000Z',
+              },
+            ],
+          }),
+          200,
+        );
+      });
+
+      final (detail, error) =
+          await OutletApi(client: client).fetchMedicineDetail('p1');
+
+      expect(error, isNull);
+      final d = detail!;
+
+      // The product came from the deployed catalog endpoint — live, not faked.
+      expect(paths.last, endsWith('/vsArogya/all-products'));
+      expect(d.name, 'Paracetamol 650 mg Tablet');
+      expect(d.manufacturer, 'Micro Labs');
+      expect(d.hsnCode, '30049099');
+
+      // Totals are summed from the server's own per-lot quantities.
+      expect(d.batches.length, 2);
+      expect(d.batchCount, 2);
+      expect(d.totalStock, 782);
+
+      // …and the screen is told the expired/emptied lots are missing.
+      expect(d.showsAllLots, isFalse);
+    });
+
+    test('the full response is never treated as a fallback', () async {
+      final client = MockClient(
+          (_) async => http.Response(jsonEncode(detailBody()), 200));
+
+      final (detail, _) =
+          await OutletApi(client: client).fetchMedicineDetail('p1');
+
+      expect(detail!.showsAllLots, isTrue);
+    });
+
+    test('reports a deleted medicine instead of an empty batch list', () async {
+      final client = MockClient((_) async => http.Response(
+            jsonEncode({'success': false, 'message': 'Product not found'}),
+            404,
+          ));
+
+      final (detail, error) =
+          await OutletApi(client: client).fetchMedicineDetail('gone');
+
+      expect(detail, isNull);
+      expect(error, 'Product not found');
+    });
+
+    test('reports an expired session rather than a blank screen', () async {
+      final client = MockClient((_) async => http.Response('Unauthorized', 401));
+
+      final (detail, error) =
+          await OutletApi(client: client).fetchMedicineDetail('p1');
+
+      expect(detail, isNull);
+      expect(error, contains('session has expired'));
+    });
+
+    test('survives a non-JSON gateway error', () async {
+      final client =
+          MockClient((_) async => http.Response('<html>502</html>', 502));
+
+      final (detail, error) =
+          await OutletApi(client: client).fetchMedicineDetail('p1');
+
+      expect(detail, isNull);
+      expect(error, contains('502'));
+    });
+  });
+
   group('OutletApi.fetchVendors', () {
     test('keeps only approved buyers — drops staff and unapproved', () async {
       final client = MockClient((req) async {

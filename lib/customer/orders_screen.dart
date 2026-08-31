@@ -16,6 +16,7 @@ import 'customer_controllers.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
 import 'order_details_screen.dart';
+import '../shared/short_id.dart';
 
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({super.key, this.embedded = false});
@@ -211,10 +212,22 @@ class _OrderCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Text('#${order.id}',
-                    style: const TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w800)),
-                const Spacer(),
+                // The backend id is a 24-character ObjectId, which at this
+                // weight is wider than the space left beside the status pill;
+                // a Spacer cannot shrink either side, so the row overflowed.
+                // Showing the last six (as Admin and Delivery already do)
+                // fixes it at the source AND reads better: an ObjectId starts
+                // with a timestamp, so every order placed the same day shares
+                // its opening characters — it is the tail that identifies one.
+                // Expanded + ellipsis stays as a guard for any longer id.
+                Expanded(
+                  child: Text('#${shortId(order.id)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w800)),
+                ),
+                const SizedBox(width: 8),
                 _statusPill(order.status),
               ],
             ),
@@ -271,3 +284,4 @@ class _OrderCard extends StatelessWidget {
     );
   }
 }
+

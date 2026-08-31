@@ -157,22 +157,31 @@ class _HomeScreenState extends State<HomeScreen> with LiveRefreshMixin {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('$_greeting,',
-                      style: const TextStyle(
-                          fontSize: 14, color: AppColors.darkText)),
-                  const SizedBox(height: 2),
-                  // Real store name when the backend provides it; a neutral,
-                  // non-fake greeting otherwise.
-                  Text('${AuthService.storeName ?? 'Welcome back'} 👋',
-                      style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.darkText)),
-                ],
+              // Expanded, because spaceBetween only shares out space that is
+              // already spare. Pharmacy store names are long ("Shri Krishna
+              // Medical & General Stores") and this renders at 18/w800, so an
+              // unconstrained Column pushed the bell button off the edge.
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('$_greeting,',
+                        style: const TextStyle(
+                            fontSize: 14, color: AppColors.darkText)),
+                    const SizedBox(height: 2),
+                    // Real store name when the backend provides it; a neutral,
+                    // non-fake greeting otherwise.
+                    Text('${AuthService.storeName ?? 'Welcome back'} 👋',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.darkText)),
+                  ],
+                ),
               ),
+              const SizedBox(width: 8),
               _bellButton(),
             ],
           ),

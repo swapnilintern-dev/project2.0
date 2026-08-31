@@ -120,8 +120,28 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     setState(() => _adding = true);
     await Future<void>.delayed(const Duration(milliseconds: 350));
     if (!mounted) return;
-    CartController.instance.add(_p, quantity: _qty);
+    final added = CartController.instance.add(_p, quantity: _qty);
     setState(() => _adding = false);
+
+    // The cart may already hold some of this medicine, so the shortfall is only
+    // known once the controller has applied the cap — report what really went
+    // in rather than what was asked for.
+    if (added <= 0) {
+      showAppSnack(
+        context,
+        'All available stock of ${_p.title} is already in your cart',
+        success: false,
+      );
+      return;
+    }
+    if (added < _qty) {
+      showAppSnack(
+        context,
+        'Only $added more in stock — added ${added}x ${_p.title}',
+        success: false,
+      );
+      return;
+    }
     showAppSnack(context, '${_qty}x ${_p.title} added to cart');
   }
 
@@ -130,7 +150,21 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
   /// — or Cash on Delivery). Respects the chosen quantity, GST and any coupon
   /// via the standard checkout flow.
   void _buyNow() {
-    CartController.instance.add(_p, quantity: _qty);
+    final added = CartController.instance.add(_p, quantity: _qty);
+    // Nothing could be added (cart already holds the whole stock) — going on to
+    // Checkout would silently buy the wrong thing, so stop here.
+    if (added <= 0) {
+      showAppSnack(
+        context,
+        'All available stock of ${_p.title} is already in your cart',
+        success: false,
+      );
+      return;
+    }
+    if (added < _qty) {
+      showAppSnack(context, 'Only $added in stock — quantity reduced',
+          success: false);
+    }
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const CheckoutScreen()),
     );
@@ -257,7 +291,11 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     final text = (url != null && url.isNotEmpty)
         ? '${_p.title} — VS Arogya\n$url'
         : '${_p.title} — VS Arogya';
-    await Share.share(text, subject: _p.title);
+    await Share.share(
+      text,
+      subject: _p.title,
+      sharePositionOrigin: shareOriginFor(context),
+    );
   }
 
   /// Pinned white top bar with the search field, plus wishlist + share.
@@ -528,6 +566,9 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                       TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
               QuantityStepper(
                 quantity: _qty,
+                // Can't pick more than exists. add() caps again against what is
+                // already in the cart, so this only stops the obvious case.
+                max: _p.availableStock,
                 onChanged: (q) => setState(() => _qty = q),
               ),
             ],
@@ -616,19 +657,32 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
 
   Widget _stockChip() {
     final ok = _p.inStock;
+    // Three states, not two: running low reads as its own warning so the vendor
+    // can see it is about to sell out rather than only finding out at zero.
+    final low = _p.isLowStock;
+    final colour = !ok
+        ? AppColors.error
+        : low
+            ? kLowStockAmber
+            : AppColors.primary;
+    final text = !ok
+        ? 'Out of Stock'
+        : low
+            ? 'Low Stock: only ${_p.stockCount} left'
+            : (_p.stockCount > 0 ? 'In Stock: ${_p.stockCount}' : 'In Stock');
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: (ok ? AppColors.primary : AppColors.error)
-            .withValues(alpha: 0.12),
+        color: colour.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
-        ok ? (_p.stockCount > 0 ? 'In Stock: ${_p.stockCount}' : 'In Stock') : 'Out of Stock',
+        text,
         style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w700,
-            color: ok ? AppColors.darkGreen : AppColors.error),
+            color: ok && !low ? AppColors.darkGreen : colour),
       ),
     );
   }
@@ -691,10 +745,17 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                               fontWeight: FontWeight.w700)),
                     ),
                     const SizedBox(width: 8),
-                    Text(r.$1,
-                        style: const TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w700)),
-                    const Spacer(),
+                    // Reviewer name is free text from the backend; the Spacer
+                    // beside it can only give away space that is already left
+                    // over, so a long name would push the star row off-screen.
+                    Expanded(
+                      child: Text(r.$1,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w700)),
+                    ),
+                    const SizedBox(width: 8),
                     Row(
                       children: List.generate(
                         5,

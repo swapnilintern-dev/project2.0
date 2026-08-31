@@ -5,10 +5,9 @@
 // derived from the repository (orders + own-outlet stock), a primary
 // "New manual order" action, and a short recent-orders strip.
 //
-// Fully wired to [OutletRepository] (mock for now). Quick actions that lead to
-// not-yet-built screens (New order → Step 6) call the [onNewOrder] /
-// [onViewStock] / [onViewOrders] callbacks the shell provides, so no wiring
-// changes when those screens land.
+// Fully wired to [OutletRepository], which is live against the backend for
+// every real session. Quick actions call the [onNewOrder] / [onViewStock] /
+// [onViewOrders] callbacks the shell provides.
 // =============================================================================
 
 import 'package:flutter/material.dart';
@@ -79,41 +78,48 @@ class _OutletDashboardScreenState extends State<OutletDashboardScreen>
   @override
   Widget build(BuildContext context) {
     final session = OutletSession.instance;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        OutletHeader(
-          title: 'Hello${session.staffName != null ? ', ${session.staffName}' : ''} 👋',
-          subtitle: session.outletLabel,
-        ),
-        Expanded(
-          child: RefreshIndicator(
-            key: _refreshKey,
-            onRefresh: _refresh,
-            color: OutletColors.success,
-            child: FutureBuilder<_DashboardData>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const _CenteredLoader();
-                }
-                final data = snap.data ?? const _DashboardData(orders: [], stock: []);
-                return ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
+    // The header scrolls with the content instead of being pinned above a
+    // nested list: on short screens the pinned version left the body barely
+    // any room and the first card was cut off at the top.
+    return RefreshIndicator(
+      key: _refreshKey,
+      onRefresh: _refresh,
+      color: OutletColors.success,
+      child: FutureBuilder<_DashboardData>(
+        future: _future,
+        builder: (context, snap) {
+          final loading = snap.connectionState == ConnectionState.waiting;
+          final data = snap.data ?? const _DashboardData(orders: [], stock: []);
+          return ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
+            children: [
+              OutletHeader(
+                title:
+                    'Hello${session.staffName != null ? ', ${session.staffName}' : ''} 👋',
+                subtitle: session.outletLabel,
+                bottomPadding: 22,
+              ),
+              const SizedBox(height: 14),
+              if (loading)
+                const _CenteredLoader()
+              else ...[
+                _statsCard(data),
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: _primaryAction(),
+                ),
+                const SizedBox(height: 20),
+                Padding(
                   padding: const EdgeInsets.fromLTRB(14, 0, 14, 24),
-                  children: [
-                    _statsCard(data),
-                    const SizedBox(height: 16),
-                    _primaryAction(),
-                    const SizedBox(height: 20),
-                    _recentOrders(data.orders),
-                  ],
-                );
-              },
-            ),
-          ),
-        ),
-      ],
+                  child: _recentOrders(data.orders),
+                ),
+              ],
+            ],
+          );
+        },
+      ),
     );
   }
 
