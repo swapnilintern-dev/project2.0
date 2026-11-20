@@ -543,7 +543,7 @@ class _ProductMediaEditorState extends State<ProductMediaEditor> {
                   fontWeight: FontWeight.w600,
                   color: AppColors.darkText)),
           SizedBox(height: 2),
-          Text('At least one image is required',
+          Text('Required for a new medicine',
               style: TextStyle(fontSize: 11.5, color: AppColors.greyText)),
         ],
       ),

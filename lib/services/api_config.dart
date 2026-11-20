@@ -25,6 +25,78 @@ class ApiConfig {
     return override.isNotEmpty ? override : _defaultBaseUrl;
   }
 
+  /// Every route on the server is mounted under this prefix (server/index.js).
+  static const String apiPrefix = '/vsArogya';
+
+  /// Absolute URL for an API path, e.g. `api('/eotp')`.
+  static String api(String path) => '$baseUrl$apiPrefix$path';
+
+  // ---------------------------------------------------------------------------
+  // Email + OTP sign-in  (server/routes/eotpRoute.js)
+  //
+  // The primary sign-in method. A code is mailed to the address, then exchanged
+  // for the SAME authentication body the password login returns.
+  // ---------------------------------------------------------------------------
+
+  /// POST { email } → mails a 6-digit code (valid 10 minutes).
+  static String get sendEmailOtp => api('/eotp');
+
+  /// POST { email, otp } → { success, token, role, id, name, pincode, … }.
+  static String get verifyEmailOtp => api('/eotp-verify');
+
+  // ---------------------------------------------------------------------------
+  // Account self-service  (server/routes/userRoute.js)
+  // ---------------------------------------------------------------------------
+
+  /// DELETE → permanently removes the signed-in account. No approval step: the
+  /// server deletes the row immediately.
+  static String get deleteAccount => api('/vendor-delete');
+
+  /// PUT { newPassword, currentPassword? } → sets a new password.
+  ///
+  /// Used by BOTH password screens. Change Password sends currentPassword;
+  /// Forgot Password does not, having already proved ownership via email OTP.
+  static String get updatePassword => api('/update-password');
+
+  /// PUT { category, enabled } → per-category notification opt-in/out.
+  static String get notificationPreferences => api('/notifications/preferences');
+
+  /// GET → the account's notification settings (categories + push opt-in).
+  static String get notificationSettings => api('/notifications/settings');
+
+  // ---------------------------------------------------------------------------
+  // Bulk product upload  (server/routes/bulkUploadRoute.js)
+  //
+  // Marketing/admin only, enforced server-side from the signed JWT.
+  // ---------------------------------------------------------------------------
+
+  /// POST multipart `file` (.xlsx/.xls/.csv) → per-row upload result.
+  static String get bulkUploadProducts => api('/bulk-upload');
+
+  // ---------------------------------------------------------------------------
+  // Per-user notification inbox  (server/routes/notificationRoute.js)
+  //
+  // Transactional notifications for ONE account (order shipped, payment taken,
+  // vendor approved). Separate from the marketing broadcast campaign system,
+  // which lives under /notifications/* and is handled by NotificationApi.
+  // ---------------------------------------------------------------------------
+
+  /// GET → this account's notifications, newest first.
+  static String get myNotifications => api('/get-notification');
+
+  /// GET → { count } of unread notifications.
+  static String get unreadNotificationCount => api('/unread-notification');
+
+  /// PATCH → marks ONE notification read.
+  static String markNotificationRead(String id) =>
+      api('/mark-read-notification/$id');
+
+  /// POST → marks every notification read.
+  static String get markAllNotificationsRead => api('/mark-all-read');
+
+  /// POST → creates a notification for an account.
+  static String get createNotification => api('/createNotification');
+
   // ---------------------------------------------------------------------------
   // Outlet Staff role (additive) — endpoint paths.
   //

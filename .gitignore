@@ -105,11 +105,10 @@ linux/flutter/ephemeral/
 windows/flutter/ephemeral/
 
 # =========================
-
 # Node.js Backend
-
 # =========================
 
+server/
 server/node_modules/
 server/npm-debug.log*
 server/yarn-debug.log*

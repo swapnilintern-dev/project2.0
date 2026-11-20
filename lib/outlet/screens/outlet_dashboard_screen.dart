@@ -136,7 +136,8 @@ class _OutletDashboardScreenState extends State<OutletDashboardScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Today at a glance', style: OutletTextStyles.sectionTitle),
+          // All-time counts (not today's), so the heading says exactly that.
+          const Text('At a glance', style: OutletTextStyles.sectionTitle),
           const SizedBox(height: 14),
           Row(
             children: [

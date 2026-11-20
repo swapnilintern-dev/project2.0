@@ -14,12 +14,17 @@
 // to the user's portal, otherwise it advances to SignInScreen.
 // =============================================================================
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import 'auth/session.dart' show homeForRole;
+import 'services/api_config.dart';
+import 'services/buyer_pricing.dart';
 import 'services/auth_service.dart';
+import 'services/vendor_approval.dart';
 import 'vendor_registration_screen.dart' show AppColors;
 import 'sign_in_screen.dart';
 
@@ -74,15 +79,40 @@ class _SplashScreenState extends State<SplashScreen>
 
     _intro.forward();
 
+    // Wake the backend right away. The free-tier Render host sleeps when idle
+    // and takes ~55 s to answer its first request — longer than the login (45 s)
+    // and catalogue (12 s) timeouts. Pinging it here, fire-and-forget, means it
+    // has been booting the whole time the user spends on the splash and the
+    // sign-in form, so their first real request finds it awake.
+    unawaited(_wakeBackend());
+
     // While the intro plays, try to restore the saved login (the backend
     // session lasts 1 day — see AuthService.restoreSession). If a valid
     // session exists the user lands straight in their portal; otherwise the
     // normal Sign In screen is shown.
     final restore = AuthService.restoreSession();
+    // The vendor's last known approval state is saved next to the session, so
+    // a restored (offline) start doesn't come back as "unknown" and re-hide
+    // prices from an approved vendor. Overwritten by the backend value at the
+    // next sign-in — see lib/services/vendor_approval.dart.
+    final restoreApproval = VendorApproval.instance.restore();
 
     // Advance once the intro has had time to play.
     Future.delayed(const Duration(milliseconds: 2600), () async {
       final restored = await restore;
+      await restoreApproval;
+
+      // Re-derive the rate card from the buyer type the session carries.
+      // Without this a restored start would fall back to the retail price and
+      // a hospital/wholesale account would see the wrong figures until it
+      // signed in again.
+      if (restored) {
+        BuyerPricing.instance.set(BuyerPricing.tierFrom(
+          vendorType: AuthService.vendorType,
+          shopType: AuthService.shopType,
+        ));
+      }
+
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
@@ -96,6 +126,19 @@ class _SplashScreenState extends State<SplashScreen>
         ),
       );
     });
+  }
+
+  /// One throwaway GET to the backend root, only to start it booting. The
+  /// response is ignored and any failure (offline, timeout) is swallowed — the
+  /// real requests that follow have their own error handling.
+  static Future<void> _wakeBackend() async {
+    try {
+      await http
+          .get(Uri.parse(ApiConfig.baseUrl))
+          .timeout(const Duration(seconds: 90));
+    } catch (_) {
+      // ignored — this ping is best-effort
+    }
   }
 
   @override

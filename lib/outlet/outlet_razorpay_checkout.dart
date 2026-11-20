@@ -30,6 +30,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:razorpay_flutter/razorpay_flutter.dart';
 
+import '../services/razorpay_web_stub.dart'
+    if (dart.library.js_interop) '../services/razorpay_web.dart';
 import 'outlet_live_datasource.dart' show OutletApiException;
 import 'outlet_models.dart';
 import 'outlet_repository.dart';
@@ -120,9 +122,10 @@ class OutletRazorpayCheckout {
         message: 'A payment is already in progress.',
       );
     }
-    if (kIsWeb) {
-      // razorpay_flutter is a mobile-only plugin — the QR / payment link on the
-      // Payment screen is the web path (same gateway, customer's own phone).
+    if (kIsWeb && !razorpayWebAvailable) {
+      // razorpay_flutter is mobile-only; the web uses Checkout.js (see _open).
+      // If that script could not load, the QR / payment link on the Payment
+      // screen is still there (same gateway, customer's own phone).
       return const OutletCheckoutResult(
         outcome: OutletCheckoutOutcome.unavailable,
         message: 'On-device Razorpay checkout is available in the mobile app. '
@@ -221,6 +224,21 @@ class OutletRazorpayCheckout {
     // no event is ever emitted — which would leave the caller waiting forever
     // on a spinner. Running the plugin inside a guarded zone turns that into a
     // normal failure result the screen can show and retry.
+    if (kIsWeb) {
+      // Same options, same three success fields → same server verification.
+      final opened = openRazorpayWeb(
+        options,
+        onSuccess: (paymentId, orderId, signature) => finish(
+            PaymentSuccessResponse(paymentId, orderId, signature, null)),
+        onFailure: (message) => finish(
+            PaymentFailureResponse(Razorpay.UNKNOWN_ERROR, message, null)),
+        onDismiss: () => finish(PaymentFailureResponse(
+            Razorpay.PAYMENT_CANCELLED, 'Payment cancelled', null)),
+      );
+      if (!opened) finish(const _OpenFailure('Could not open Razorpay'));
+      return completer.future;
+    }
+
     runZonedGuarded(
       () {
         final razorpay = Razorpay()

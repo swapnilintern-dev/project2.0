@@ -9,8 +9,6 @@
 
 import 'package:flutter/material.dart';
 
-import '../../account_deletion/account_deletion_controller.dart';
-import '../../account_deletion/admin_deletion_requests_screen.dart';
 import '../../services/live_refresh.dart';
 import '../../vendor_registration_screen.dart' show AppColors;
 import '../admin_common.dart';
@@ -137,28 +135,9 @@ class _AdminUsersScreenState extends State<AdminUsersScreen>
                       adminPush(context, const DeliveryManagementScreen()),
                 ),
               ),
-            // Account-deletion requests raised by vendors / delivery partners.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-              child: ListenableBuilder(
-                listenable: AccountDeletionController.instance,
-                builder: (context, _) {
-                  final pending =
-                      AccountDeletionController.instance.pendingCount;
-                  return AdminButton(
-                    label: pending > 0
-                        ? 'Deletion Requests · $pending pending'
-                        : 'Deletion Requests',
-                    icon: Icons.delete_sweep_outlined,
-                    outlined: true,
-                    color: AdminColors.red,
-                    height: 44,
-                    onPressed: () => adminPush(
-                        context, const AdminDeletionRequestsScreen()),
-                  );
-                },
-              ),
-            ),
+            // (No "Deletion Requests" entry: a user's Delete Account now
+            // deletes the account on the server immediately, so there is no
+            // request queue for the admin to review.)
             Expanded(
               child: ListenableBuilder(
                 listenable: AdminUsersController.instance,

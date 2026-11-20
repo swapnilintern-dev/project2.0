@@ -1,6 +1,0 @@
-.env
-# Puppeteer ka Chrome cache (~150MB) — git me kabhi push mat karo.
-# Render build command isse khud install karta hai:
-#   npm install && npx puppeteer browsers install chrome
-.cache/
-uploads/

@@ -20,6 +20,7 @@ import 'customer_api.dart';
 import 'customer_controllers.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
+import '../notifications/notifications_screen.dart';
 import 'product_card.dart';
 import 'product_list_screen.dart';
 import 'promo_carousel.dart';
@@ -224,7 +225,10 @@ class _HomeScreenState extends State<HomeScreen> with LiveRefreshMixin {
       button: true,
       label: 'Notifications',
       child: InkResponse(
-        onTap: () => showAppSnack(context, 'No new notifications'),
+        // The real inbox (it used to always say "No new notifications").
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+        ),
         radius: 26,
         child: Container(
           padding: const EdgeInsets.all(10),

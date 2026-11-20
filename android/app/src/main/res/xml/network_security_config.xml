@@ -1,19 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Allows plain-HTTP (cleartext) traffic ONLY to local development hosts so the
-  app can reach the Express backend during development:
-    - 10.0.2.2   : the host machine as seen from the Android emulator
-    - localhost / 127.0.0.1 : on-device loopback
-  All other domains still require HTTPS (cleartext denied by default on API 28+),
-  so this does not weaken production security.
+  RELEASE network policy: HTTPS only, everywhere. Plain-HTTP (cleartext)
+  traffic is denied for every host — the store build only ever talks to the
+  HTTPS backend in lib/services/api_config.dart.
+
+  The dev hosts (emulator 10.0.2.2, localhost, the LAN IP of the dev PC) are
+  allowed ONLY in debug builds, by the same-named file in
+  android/app/src/debug/res/xml/, which overrides this one for `flutter run`.
 -->
 <network-security-config>
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">10.0.2.2</domain>
-        <domain includeSubdomains="false">localhost</domain>
-        <domain includeSubdomains="false">127.0.0.1</domain>
-        <!-- Dev: this PC's LAN IP, for testing on a physical device over WiFi.
-             Update if your IP changes (run `ipconfig`). -->
-        <domain includeSubdomains="false">192.168.1.4</domain>
-    </domain-config>
+    <base-config cleartextTrafficPermitted="false" />
 </network-security-config>

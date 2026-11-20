@@ -14,7 +14,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart' show XFile;
@@ -54,7 +54,7 @@ class MarketingApi {
         'title': p.name,
         'description': p.description,
         'price': p.price.toString(),
-        'category': _categoryToId(p.category), // store canonical id
+        'category': _categoryToSend(p),
         'mrp': p.mrp?.toString() ?? '',
         'brand': p.brand,
         'code': p.code,
@@ -75,6 +75,16 @@ class MarketingApi {
         if (includeInventory && p.expiryDate != null)
           'exp_date': apiCalendarDate(p.expiryDate!),
         if (p.badge != null) 'badge': p.badge!,
+        // Medicine information. Sent on create AND edit: the edit form is
+        // pre-filled with the stored values, so an untouched field is re-sent
+        // unchanged. Side effects travel as a JSON array so an entry that
+        // contains a comma or semicolon stays one entry.
+        'composition': p.composition,
+        'uses': p.uses,
+        'storage': p.storage,
+        'precautions': p.precautions,
+        'directions': p.directions,
+        'sideEffects': jsonEncode(p.sideEffects),
       };
 
   /// Creates a product on the backend with one or more [images] (the first is
@@ -115,7 +125,7 @@ class MarketingApi {
   /// [onProgress] reports 0.0–1.0. Returns true on success.
   Future<bool> updateProduct(
     InventoryProduct p, {
-    required List<ProductMedia> keptImages,
+    required List<ProductMedia>? keptImages,
     List<XFile> newImages = const [],
     XFile? video,
     bool removeVideo = false,
@@ -129,7 +139,10 @@ class MarketingApi {
       // Inventory (stock/batch/expiry) is owned by the batch model on an edit —
       // see BatchApi — so it is intentionally left out here.
       req.fields.addAll(_productFields(p, includeInventory: false));
-      req.fields['keptImages'] = ProductMedia.encodeKept(keptImages);
+      // Omitted (null) → the server leaves the stored images untouched.
+      if (keptImages != null) {
+        req.fields['keptImages'] = ProductMedia.encodeKept(keptImages);
+      }
       if (removeVideo) req.fields['removeVideo'] = 'true';
       for (final img in newImages) {
         req.files.add(await _imagePart('images', img));
@@ -248,6 +261,7 @@ class MarketingApi {
       stock: _int(j['stock']),
       active: j['active'] is bool ? j['active'] as bool : true,
       category: _categoryToLabel(j['category']),
+      rawCategory: j['category']?.toString(),
       packOf: _int(j['packOf'], 1),
       hsnCode: (j['hsnCode'] ?? '').toString(),
       gstPercent: _num(j['gstPercent']),
@@ -266,8 +280,21 @@ class MarketingApi {
       packInfo: (j['packInfo'] ?? '').toString(),
       images: images,
       video: video,
+      composition: _text(j['composition']),
+      uses: _text(j['uses']),
+      storage: _text(j['storage']),
+      precautions: _text(j['precautions']),
+      directions: _text(j['directions']),
+      sideEffects: (j['sideEffects'] is List)
+          ? (j['sideEffects'] as List)
+              .map(_text)
+              .where((s) => s.isNotEmpty)
+              .toList()
+          : const [],
     );
   }
+
+  static String _text(Object? v) => v == null ? '' : v.toString().trim();
 
   /// Marketing uses human labels (kMedicineCategories); the backend + customer
   /// filter use short ids. These two keep both sides in sync regardless of
@@ -278,6 +305,21 @@ class MarketingApi {
     if (s.contains('vaccin')) return 'vaccines';
     if (s.contains('medic')) return 'medicine';
     return s.isEmpty ? 'medicine' : s;
+  }
+
+  /// The category to store. New products, and edits where the user picked a
+  /// different dropdown entry, get the canonical id. An edit that left the
+  /// dropdown on the label derived from the stored value keeps that stored
+  /// value ("Tablet" stays "Tablet").
+  @visibleForTesting
+  static String categoryToSend(InventoryProduct p) => _categoryToSend(p);
+
+  static String _categoryToSend(InventoryProduct p) {
+    final raw = p.rawCategory?.trim();
+    if (raw != null && raw.isNotEmpty && _categoryToLabel(raw) == p.category) {
+      return raw;
+    }
+    return _categoryToId(p.category);
   }
 
   static String _categoryToLabel(Object? value) {
@@ -668,6 +710,16 @@ class CouponApi {
   static const Duration _timeout = Duration(seconds: 20);
   static String get baseUrl => ApiConfig.baseUrl;
 
+  /// Create / toggle / delete are staff-only on the server (marketing/admin),
+  /// so the logged-in session must ride along.
+  Map<String, String> get _headers => {
+        'Content-Type': 'application/json',
+        if (AuthService.authToken != null)
+          'Authorization': 'Bearer ${AuthService.authToken}',
+        if (AuthService.sessionCookie != null)
+          'Cookie': AuthService.sessionCookie!,
+      };
+
   Future<List<MarketingCoupon>?> getCoupons() async {
     try {
       final res = await _client
@@ -696,7 +748,7 @@ class CouponApi {
       final res = await _client
           .post(
             Uri.parse('$baseUrl/vsArogya/coupons'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _headers,
             body: jsonEncode({
               'code': code,
               'description': description,
@@ -719,7 +771,8 @@ class CouponApi {
   Future<bool> toggleCoupon(String code) async {
     try {
       final res = await _client
-          .put(Uri.parse('$baseUrl/vsArogya/coupons/$code/toggle'))
+          .put(Uri.parse('$baseUrl/vsArogya/coupons/$code/toggle'),
+              headers: _headers)
           .timeout(_timeout);
       return MarketingApi._isOk(res);
     } catch (_) {
@@ -730,7 +783,8 @@ class CouponApi {
   Future<bool> deleteCoupon(String code) async {
     try {
       final res = await _client
-          .delete(Uri.parse('$baseUrl/vsArogya/coupons/$code'))
+          .delete(Uri.parse('$baseUrl/vsArogya/coupons/$code'),
+              headers: _headers)
           .timeout(_timeout);
       return MarketingApi._isOk(res);
     } catch (_) {

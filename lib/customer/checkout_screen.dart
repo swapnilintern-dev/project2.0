@@ -10,6 +10,9 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
 
+import '../services/razorpay_web_stub.dart'
+    if (dart.library.js_interop) '../services/razorpay_web.dart';
+
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppShadows;
 import 'catalog.dart';
@@ -19,6 +22,7 @@ import 'customer_models.dart';
 import 'customer_widgets.dart';
 import 'order_details_screen.dart';
 import 'addresses_screen.dart';
+import 'price_gate.dart' show ensureCanOrder;
 
 class CheckoutScreen extends StatefulWidget {
   const CheckoutScreen({super.key});
@@ -81,6 +85,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// order, creates a server-side Razorpay order and opens the gateway — the
   /// order is only marked paid after the server verifies the signature.
   Future<void> _placeOrder() async {
+    if (!ensureCanOrder(context)) return;
     final cart = CartController.instance;
     // Nothing to place unless there's a cart, OR a pending online order to retry.
     if (cart.isEmpty && _pendingOrderId == null) return;
@@ -94,12 +99,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
 
-    // razorpay_flutter is a MOBILE-ONLY plugin: on Flutter web the gateway never
-    // opens and no callback fires, so the button would spin forever. Guide the
-    // user to COD / the mobile app instead of hanging.
-    if (_payment == PaymentMethod.razorpay && kIsWeb) {
+    // On the web, online payment goes through Razorpay Checkout.js (see
+    // _openRazorpayGateway). If that script could not load (blocked by an
+    // extension / network), say so BEFORE an order is placed.
+    if (_payment == PaymentMethod.razorpay && kIsWeb && !razorpayWebAvailable) {
       showAppSnack(context,
-          'Online payment opens only in the mobile app. Use Cash on Delivery here, or test on an Android/iOS device.',
+          'Online payment could not load in this browser. Please refresh the page, or use Cash on Delivery.',
           success: false);
       return;
     }
@@ -228,7 +233,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       'amount': pay.amount, // paise, from the server (matches the order)
       'currency': pay.currency,
       'name': 'VS Arogya',
-      'description': 'MediCaPlus order payment',
+      'description': 'VS Arogya order payment',
       if (contact.length >= 10)
         'prefill': <String, dynamic>{
           'contact': contact.substring(contact.length - 10),
@@ -236,6 +241,23 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       'theme': <String, dynamic>{'color': '#1E8E5A'},
     };
     try {
+      if (kIsWeb) {
+        // razorpay_flutter is mobile-only; the website uses Checkout.js with
+        // the same options and reports back through the same handlers.
+        final opened = openRazorpayWeb(
+          options,
+          onSuccess: (paymentId, orderId, signature) => _onPaymentSuccess(
+              PaymentSuccessResponse(paymentId, orderId, signature, null)),
+          onFailure: (message) => _onPaymentError(
+              PaymentFailureResponse(Razorpay.UNKNOWN_ERROR, message, null)),
+          onDismiss: () => _onPaymentError(PaymentFailureResponse(
+              Razorpay.PAYMENT_CANCELLED, 'Payment cancelled', null)),
+        );
+        if (!opened) {
+          throw StateError('Razorpay checkout is not available');
+        }
+        return;
+      }
       _razorpay.open(options);
     } catch (e) {
       if (!mounted) return;

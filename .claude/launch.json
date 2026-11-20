@@ -4,31 +4,66 @@
     {
       "name": "flicktalk",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "C:/swapnil2/dating/flicktalk", "run", "dev", "--", "--port", "5300", "--strictPort"],
+      "runtimeArgs": [
+        "--prefix",
+        "/Users/spocart/Desktop/untitled folder/swapnil2/dating/flicktalk",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "5300",
+        "--strictPort"
+      ],
       "port": 5300
     },
     {
       "name": "portfolio",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "C:/Portfolio", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "C:/Portfolio",
+        "run",
+        "dev"
+      ],
       "port": 5173
     },
     {
       "name": "krveo-web",
       "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "cd /d C:\\swapnil2\\sport && flutter run -d web-server --web-port 8099"],
+      "runtimeArgs": [
+        "/c",
+        "cd /d C:\\swapnil2\\sport && flutter run -d web-server --web-port 8099"
+      ],
       "port": 8099
     },
     {
       "name": "hhgoa",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "C:/swapnil2/HHGOA", "run", "dev", "--", "--port", "5310", "--strictPort"],
+      "runtimeArgs": [
+        "--prefix",
+        "C:/swapnil2/HHGOA",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "5310",
+        "--strictPort"
+      ],
       "port": 5310
     },
     {
       "name": "hhgoa-prod",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "C:/swapnil2/HHGOA", "run", "preview", "--", "--port", "5311", "--strictPort"],
+      "runtimeArgs": [
+        "--prefix",
+        "C:/swapnil2/HHGOA",
+        "run",
+        "preview",
+        "--",
+        "--port",
+        "5311",
+        "--strictPort"
+      ],
       "port": 5311
     },
     {
@@ -43,6 +78,21 @@
         "-c-1"
       ],
       "port": 5089
+    },
+    {
+      "name": "spocart-web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/spocart/Desktop/swapnil2/sport && flutter run -d web-server --web-port 8099 --web-hostname 127.0.0.1"
+      ],
+      "port": 8099
+    },
+    {
+      "name": "rounak-portfolio",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "5420", "--directory", "/Users/spocart/Desktop/untitled folder/medicine/self/rounak-portfolio"],
+      "port": 5420
     }
   ]
 }

@@ -25,7 +25,10 @@ import '../marketing/marketing_role_main.dart';
 import '../outlet/outlet_main.dart';
 import '../outlet/outlet_session.dart';
 import '../services/auth_service.dart';
+import '../services/vendor_approval.dart';
 import '../sign_in_screen.dart';
+import '../services/buyer_pricing.dart';
+import '../notifications/user_inbox_controller.dart';
 
 /// The portal shell for an account's [role] — shared by the sign-in screen
 /// (fresh login) and the splash screen (restored session), so both always
@@ -79,6 +82,13 @@ void logout(BuildContext context) {
   AgentSession.instance.clear();
   // Drop the captured login cookie so the next account starts unauthenticated.
   AuthService.clearSession();
+  // Forget this vendor's approval state so it never leaks into the next account.
+  VendorApproval.instance.clear();
+  // Back to the undiscounted retail rate, so one account's doctor/wholesale
+  // pricing can never carry into the next session.
+  BuyerPricing.instance.reset();
+  // One account's notifications must never be visible to the next.
+  UserInboxController.instance.reset();
 
   Navigator.of(context).pushAndRemoveUntil(
     MaterialPageRoute(builder: (_) => const SignInScreen()),

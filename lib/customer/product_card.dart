@@ -12,10 +12,12 @@ import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_theme.dart' show AppPalette, AppShadows;
+import '../services/buyer_pricing.dart';
 import '../theme/app_widgets.dart';
 import 'customer_controllers.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
+import 'price_gate.dart';
 import 'product_details_screen.dart';
 
 class ProductCard extends StatefulWidget {
@@ -46,6 +48,8 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   Future<void> _addToCart() async {
+    // Browse-only account (OTP guest / unapproved vendor): no cart.
+    if (!ensureCanOrder(context)) return;
     if (!widget.product.inStock) {
       showAppSnack(context, '${widget.product.title} is out of stock',
           success: false);
@@ -120,6 +124,18 @@ class _ProductCardState extends State<ProductCard> {
                               color: kLowStockAmber,
                             ),
                           ),
+                        // Sold out is said on the card itself, not only after a
+                        // tap on "+" (isLowStock is false for it, so the two
+                        // never overlap).
+                        if (!p.inStock)
+                          const Positioned(
+                            top: 6,
+                            right: 6,
+                            child: TagBadge(
+                              text: 'OUT OF STOCK',
+                              color: AppColors.error,
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -148,7 +164,11 @@ class _ProductCardState extends State<ProductCard> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   // Price block takes remaining width and scales down if needed.
-                  Expanded(child: _priceBlock(p)),
+                  Expanded(
+                    child: PriceOrLocked(
+                      child: _priceBlock(p),
+                    ),
+                  ),
                   const SizedBox(width: 6),
                   AnimatedScale(
                     scale: _scale,
@@ -163,7 +183,10 @@ class _ProductCardState extends State<ProductCard> {
                           width: 30,
                           height: 30,
                           decoration: BoxDecoration(
-                            color: AppColors.primary,
+                            // Greyed when sold out; a tap still explains why.
+                            color: p.inStock
+                                ? AppColors.primary
+                                : AppColors.greyText.withValues(alpha: 0.35),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: const Icon(
@@ -196,12 +219,35 @@ class _ProductCardState extends State<ProductCard> {
   /// FittedBox so it shrinks instead of overflowing on narrow cards.
   Widget _priceBlock(Product p) {
     final discount = p.discountPercent;
+
+    // A hospital/clinic or wholesale account pays less than the listed price.
+    // The rate card comes from the signed-in vendor's own registration type —
+    // see lib/services/buyer_pricing.dart. Retail accounts get tier == retail
+    // and `tierOff` is 0, so this whole branch is a no-op for them.
+    final tier = BuyerPricing.instance.tier;
+    final tierOff = p.discountPercentFor(tier);
+    final payable = p.priceFor(tier);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (tierOff > 0) ...[
+          Text(
+            '${tier.label} · ${tierOff.toStringAsFixed(0)}% off',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 9.5,
+              fontWeight: FontWeight.w800,
+              letterSpacing: .2,
+              color: AppColors.primary,
+            ),
+          ),
+          const SizedBox(height: 1),
+        ],
         Text(
-          formatRupees(p.price),
+          formatRupees(payable),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
@@ -210,7 +256,21 @@ class _ProductCardState extends State<ProductCard> {
             color: AppColors.darkGreen,
           ),
         ),
-        if (discount > 0)
+        if (tierOff > 0)
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              // The price a retail buyer would pay, so the saving is visible.
+              formatRupees(p.price),
+              style: const TextStyle(
+                fontSize: 11,
+                color: AppColors.greyText,
+                decoration: TextDecoration.lineThrough,
+              ),
+            ),
+          )
+        else if (discount > 0)
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
@@ -306,9 +366,11 @@ class ProductListTile extends StatelessWidget {
                           child: FittedBox(
                             fit: BoxFit.scaleDown,
                             alignment: Alignment.centerLeft,
-                            child: PriceTag(
-                              price: product.price,
-                              mrp: product.mrp,
+                            child: PriceOrLocked(
+                              child: PriceTag(
+                                price: product.price,
+                                mrp: product.mrp,
+                              ),
                             ),
                           ),
                         ),
@@ -337,6 +399,7 @@ class _AddButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkResponse(
       onTap: () {
+        if (!ensureCanOrder(context)) return;
         if (!product.inStock) {
           showAppSnack(context, '${product.title} is out of stock',
               success: false);

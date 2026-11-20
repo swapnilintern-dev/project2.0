@@ -12,6 +12,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/product_media.dart';
+import '../services/buyer_pricing.dart';
 
 /// Stock at or above this figure is "healthy"; below it the vendor sees a
 /// "Low Stock" warning on the product card, the details screen and the cart.
@@ -33,6 +34,7 @@ class Product {
     required this.price,
     this.mrp,
     required this.category,
+    this.categoryLabel = '',
     this.imageUrl,
     this.imageUrls = const [],
     this.videoUrl,
@@ -43,6 +45,16 @@ class Product {
     this.stockCount = 0,
     this.badge,
     this.packInfo = '',
+    this.doctorDiscountPercent = 0,
+    this.wholesellerDiscountPercent = 0,
+    this.manufacturer = '',
+    this.marketedBy = '',
+    this.composition = '',
+    this.uses = '',
+    this.storage = '',
+    this.precautions = '',
+    this.directions = '',
+    this.sideEffects = const [],
   });
 
   final String id;
@@ -51,7 +63,13 @@ class Product {
   final String description;
   final double price;
   final double? mrp;
+  /// Canonical category id ('injections' / 'vaccines' / 'medicine') — what the
+  /// category chips filter on.
   final String category;
+
+  /// The category exactly as the backend stores it (e.g. "Tablet",
+  /// "Capsule") for display; '' when unknown.
+  final String categoryLabel;
 
   /// The primary image URL (first image), or null. Kept for the many call-sites
   /// that show a single thumbnail.
@@ -70,6 +88,73 @@ class Product {
   final int stockCount;
   final String? badge;
   final String packInfo;
+
+  /// Extra discount for a Hospital/Clinic ("doctor") buyer, in percent.
+  ///
+  /// Backend field `drDisPercent` (server/model/productModel.js). Stored there
+  /// as a STRING, so it is parsed leniently here — an empty or non-numeric
+  /// value means "no special rate" rather than an error.
+  final double doctorDiscountPercent;
+
+  /// Extra discount for a wholesale buyer, in percent. Backend field
+  /// `wholesellerPercent`, same string-typed caveat as above.
+  final double wholesellerDiscountPercent;
+
+  // --- Medicine information (display only) ---------------------------------
+  // Backend fields of the same names (server/model/productModel.js). All are
+  // optional: a product that predates them, or whose sheet left a cell blank,
+  // arrives with an empty value and the details screen hides that section.
+
+  /// Company that manufactures the medicine ("Mfd. by").
+  final String manufacturer;
+
+  /// Company that markets it ("Marketed by") — often the same as [manufacturer].
+  final String marketedBy;
+
+  /// Salt(s) and strength, e.g. "Mycophenolate mofetil (500mg)".
+  final String composition;
+
+  /// What the medicine is used for.
+  final String uses;
+
+  /// Storage instructions, e.g. "Store below 30°C".
+  final String storage;
+
+  final String precautions;
+
+  /// How to take / administer it.
+  final String directions;
+
+  /// One entry per side effect, shown as a bulleted list.
+  final List<String> sideEffects;
+
+  /// The discount this account actually gets, in percent.
+  ///
+  /// The backend prices one product differently per buyer type, so the shown
+  /// price depends on who is signed in. Returns 0 for an ordinary retail buyer.
+  double discountPercentFor(BuyerPricingTier tier) => switch (tier) {
+        BuyerPricingTier.doctor => doctorDiscountPercent,
+        BuyerPricingTier.wholeseller => wholesellerDiscountPercent,
+        BuyerPricingTier.retail => 0,
+      };
+
+  /// The price this account pays, after its tier discount.
+  ///
+  /// NOTE: this is a DISPLAY value. The server remains the authority on what is
+  /// actually charged — the order total is computed there at placement.
+  double priceFor(BuyerPricingTier tier) {
+    final pct = discountPercentFor(tier);
+    if (pct <= 0) return price;
+    final discounted = price * (1 - (pct / 100));
+    // Never below zero, and never above the base price, however odd the
+    // configured percentage is. Rounded to paise exactly as the server does,
+    // so the figure shown here is the figure charged.
+    final clamped = discounted.clamp(0, price).toDouble();
+    return (clamped * 100).roundToDouble() / 100;
+  }
+
+  /// How much this account saves against the base price.
+  double savingFor(BuyerPricingTier tier) => price - priceFor(tier);
 
   bool get hasVideo => videoUrl != null && videoUrl!.isNotEmpty;
 
@@ -122,6 +207,7 @@ class Product {
       price: _toDouble(json['price']),
       mrp: json['mrp'] == null ? null : _toDouble(json['mrp']),
       category: _normalizeCategory(json['category']),
+      categoryLabel: _toText(json['categoryLabel'] ?? json['category']),
       imageUrl: imageUrls.isNotEmpty ? imageUrls.first : null,
       imageUrls: imageUrls,
       videoUrl: video?.url,
@@ -137,6 +223,16 @@ class Product {
           : _toInt(json['stock']),
       badge: json['badge'] as String?,
       packInfo: (json['packInfo'] ?? '').toString(),
+      doctorDiscountPercent: _toDouble(json['drDisPercent']),
+      wholesellerDiscountPercent: _toDouble(json['wholesellerPercent']),
+      manufacturer: _toText(json['manufacturer']),
+      marketedBy: _toText(json['marketedBy']),
+      composition: _toText(json['composition']),
+      uses: _toText(json['uses']),
+      storage: _toText(json['storage']),
+      precautions: _toText(json['precautions']),
+      directions: _toText(json['directions']),
+      sideEffects: _toTextList(json['sideEffects']),
     );
   }
 
@@ -148,6 +244,7 @@ class Product {
         'price': price,
         'mrp': mrp,
         'category': category,
+        'categoryLabel': categoryLabel,
         'image': imageUrl,
         'imageUrls': imageUrls,
         'videoUrl': videoUrl,
@@ -157,6 +254,16 @@ class Product {
         'stockCount': stockCount,
         'badge': badge,
         'packInfo': packInfo,
+        'drDisPercent': doctorDiscountPercent,
+        'wholesellerPercent': wholesellerDiscountPercent,
+        'manufacturer': manufacturer,
+        'marketedBy': marketedBy,
+        'composition': composition,
+        'uses': uses,
+        'storage': storage,
+        'precautions': precautions,
+        'directions': directions,
+        'sideEffects': sideEffects,
       };
 
   Product copyWith({
@@ -167,6 +274,7 @@ class Product {
     double? price,
     double? mrp,
     String? category,
+    String? categoryLabel,
     String? imageUrl,
     List<String>? imageUrls,
     String? videoUrl,
@@ -177,6 +285,16 @@ class Product {
     int? stockCount,
     String? badge,
     String? packInfo,
+    double? doctorDiscountPercent,
+    double? wholesellerDiscountPercent,
+    String? manufacturer,
+    String? marketedBy,
+    String? composition,
+    String? uses,
+    String? storage,
+    String? precautions,
+    String? directions,
+    List<String>? sideEffects,
   }) {
     return Product(
       id: id ?? this.id,
@@ -186,6 +304,7 @@ class Product {
       price: price ?? this.price,
       mrp: mrp ?? this.mrp,
       category: category ?? this.category,
+      categoryLabel: categoryLabel ?? this.categoryLabel,
       imageUrl: imageUrl ?? this.imageUrl,
       imageUrls: imageUrls ?? this.imageUrls,
       videoUrl: videoUrl ?? this.videoUrl,
@@ -196,6 +315,18 @@ class Product {
       stockCount: stockCount ?? this.stockCount,
       badge: badge ?? this.badge,
       packInfo: packInfo ?? this.packInfo,
+      doctorDiscountPercent:
+          doctorDiscountPercent ?? this.doctorDiscountPercent,
+      wholesellerDiscountPercent:
+          wholesellerDiscountPercent ?? this.wholesellerDiscountPercent,
+      manufacturer: manufacturer ?? this.manufacturer,
+      marketedBy: marketedBy ?? this.marketedBy,
+      composition: composition ?? this.composition,
+      uses: uses ?? this.uses,
+      storage: storage ?? this.storage,
+      precautions: precautions ?? this.precautions,
+      directions: directions ?? this.directions,
+      sideEffects: sideEffects ?? this.sideEffects,
     );
   }
 }
@@ -312,7 +443,12 @@ class CartItem {
   final Product product;
   final int quantity;
 
-  double get lineTotal => product.price * quantity;
+  /// What this buyer pays per unit — the regular price minus their tier's
+  /// discount (wholesale / doctor). The server charges this same figure
+  /// (server/utils/buyerPricing.js), so the cart total matches the order.
+  double get unitPrice => product.priceFor(BuyerPricing.instance.tier);
+
+  double get lineTotal => unitPrice * quantity;
 
   CartItem copyWith({Product? product, int? quantity}) => CartItem(
         product: product ?? this.product,
@@ -475,7 +611,7 @@ class OrderItem {
   factory OrderItem.fromCartItem(CartItem item) => OrderItem(
         title: item.product.title,
         brand: item.product.brand,
-        price: item.product.price,
+        price: item.unitPrice,
         quantity: item.quantity,
         icon: item.product.icon,
       );
@@ -600,11 +736,12 @@ class Coupon {
         maxDiscount: j['maxDiscount'] == null ? null : _toDouble(j['maxDiscount']),
       );
 
-  /// Computes the rupee discount for a given [subtotal].
+  /// Computes the rupee discount for a given [subtotal]. Mirrors the server
+  /// (orderController.placeOrder): a missing or 0 cap means "no cap".
   double discountFor(double subtotal) {
     var value = subtotal * percentOff / 100;
     final cap = maxDiscount;
-    if (cap != null && value > cap) value = cap;
+    if (cap != null && cap > 0 && value > cap) value = cap;
     return double.parse(value.toStringAsFixed(2));
   }
 }
@@ -623,15 +760,33 @@ int _toInt(Object? v) {
   return 0;
 }
 
+/// A trimmed string, or '' for null / missing — never the literal "null".
+String _toText(Object? v) => v == null ? '' : v.toString().trim();
+
+/// A clean list of non-empty strings. The backend sends an array, but a single
+/// newline-separated string (older payloads, hand-edited data) is accepted too.
+List<String> _toTextList(Object? v) {
+  final Iterable<Object?> items = switch (v) {
+    List() => v,
+    String() => v.split('\n'),
+    _ => const [],
+  };
+  return List.unmodifiable(
+      items.map(_toText).where((s) => s.isNotEmpty));
+}
+
 /// Normalises a category (a human label like "Medicine" or an id like
 /// "medicine") to the canonical id the category filter chips use
 /// ('injections' / 'vaccines' / 'medicine').
+///
+/// Everything that is not an injection or a vaccine — "Tablet", "Capsule",
+/// "Syrup", … — is a medicine. Passing those through unchanged left them under
+/// no chip at all, so they could only be found via "All".
 String _normalizeCategory(Object? v) {
   final s = (v ?? '').toString().trim().toLowerCase();
   if (s.contains('inject')) return 'injections';
   if (s.contains('vaccin')) return 'vaccines';
-  if (s.contains('medic')) return 'medicine';
-  return s.isEmpty ? 'medicine' : s;
+  return 'medicine';
 }
 
 /// Parses a hex colour string ("#4CAF82", "4CAF82" or "0xFF4CAF82").

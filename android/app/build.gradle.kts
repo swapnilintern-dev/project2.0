@@ -28,7 +28,16 @@ if (hasReleaseKeystore) {
 
 android {
     namespace = "com.vsarogya.app"
-    compileSdk = flutter.compileSdkVersion
+    // Pinned ahead of flutter.compileSdkVersion (34 for this Flutter release).
+    // flutter_plugin_android_lifecycle — pulled in by file_picker and
+    // image_picker — now ships AAR metadata demanding API 36, and the build
+    // fails outright below it.
+    //
+    // compileSdk only controls which APIs the code may be COMPILED against. It
+    // does not change runtime behaviour (that is targetSdk) and does not change
+    // which devices can install the app (that is minSdk) — both of those stay
+    // on the Flutter defaults below.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

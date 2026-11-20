@@ -45,6 +45,10 @@ dependencies:
   # for the product promotional video (Android + iOS).
   video_compress: ^3.1.2
 
+  # Spreadsheet selection for the Marketing bulk product upload. image_picker
+  # cannot offer .xlsx/.csv, so a general file picker is needed for that screen.
+  file_picker: ^8.1.2
+
   # HTTP client + MediaType (Content-Type) for multipart uploads to the API.
   http: ^1.6.0
   http_parser: ^4.0.0

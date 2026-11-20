@@ -252,6 +252,14 @@ class InventoryProduct {
     this.packInfo = '',
     this.images = const [],
     this.video,
+    // --- Medicine information (shown under the name in the shop) ---
+    this.composition = '',
+    this.uses = '',
+    this.storage = '',
+    this.precautions = '',
+    this.directions = '',
+    this.sideEffects = const [],
+    this.rawCategory,
   });
 
   final String id;
@@ -299,6 +307,24 @@ class InventoryProduct {
 
   /// The optional promotional video, or null when the product has none.
   final ProductMedia? video;
+
+  // Medicine information — display only, no effect on price or stock. Same
+  // backend fields as the customer Product (server/model/productModel.js).
+  final String composition;
+  final String uses;
+  final String storage;
+  final String precautions;
+  final String directions;
+
+  /// One entry per side effect.
+  final List<String> sideEffects;
+
+  /// The category exactly as stored on the server (e.g. "Tablet", "Capsule"),
+  /// or null for a product not loaded from it. [category] is the coarse
+  /// dropdown label derived from it; this lets an edit that leaves the
+  /// dropdown alone write the ORIGINAL value back instead of flattening
+  /// "Tablet" into "medicine".
+  final String? rawCategory;
 
   /// The primary image URL (first image), or null when the product has none.
   /// Kept so the many existing call-sites that read a single image URL still
@@ -365,6 +391,13 @@ class InventoryProduct {
     List<ProductMedia>? images,
     ProductMedia? video,
     bool clearVideo = false,
+    String? composition,
+    String? uses,
+    String? storage,
+    String? precautions,
+    String? directions,
+    List<String>? sideEffects,
+    String? rawCategory,
   }) {
     return InventoryProduct(
       id: id,
@@ -397,6 +430,13 @@ class InventoryProduct {
       packInfo: packInfo ?? this.packInfo,
       images: images ?? this.images,
       video: clearVideo ? null : (video ?? this.video),
+      composition: composition ?? this.composition,
+      uses: uses ?? this.uses,
+      storage: storage ?? this.storage,
+      precautions: precautions ?? this.precautions,
+      directions: directions ?? this.directions,
+      sideEffects: sideEffects ?? this.sideEffects,
+      rawCategory: rawCategory ?? this.rawCategory,
     );
   }
 }

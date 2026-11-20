@@ -10,6 +10,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../auth/session.dart' show logout;
 import '../vendor_registration_screen.dart' show AppColors;
 import '../services/auth_service.dart';
 import '../services/live_refresh.dart';
@@ -22,6 +23,7 @@ import 'marketing_models.dart';
 import 'order_details_screen.dart';
 import 'outlet_registration_screen.dart';
 import 'reports_screen.dart';
+import 'bulk_upload_screen.dart';
 import 'select_outlet_screen.dart';
 
 class MarketingDashboardScreen extends StatefulWidget {
@@ -191,6 +193,19 @@ class _MarketingDashboardScreenState extends State<MarketingDashboardScreen>
                 ),
               ),
               Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: _ActionCard(
+                  icon: Icons.cloud_upload_outlined,
+                  iconColor: AppColors.darkGreen,
+                  title: 'Bulk Upload',
+                  subtitle: 'Add many medicines at once from an Excel sheet',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => const BulkUploadScreen()),
+                  ),
+                ),
+              ),
+              Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                 child: SectionHeader(
                   title: 'New Orders',
@@ -238,7 +253,31 @@ class _MarketingDashboardScreenState extends State<MarketingDashboardScreen>
         ),
         borderRadius: BorderRadius.vertical(bottom: Radius.circular(24)),
       ),
-      child: Column(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: _headerText()),
+          // Logout lives IN the header so it scrolls away with it. (It used to
+          // float over every tab, covering the Coupons "Create" button and
+          // the cards scrolled beneath it.)
+          Material(
+            color: Colors.black.withValues(alpha: 0.18),
+            shape: const CircleBorder(),
+            clipBehavior: Clip.antiAlias,
+            child: IconButton(
+              onPressed: () => logout(context),
+              icon: const Icon(Icons.logout, color: Colors.white, size: 20),
+              tooltip: 'Logout',
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _headerText() {
+    return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Real logged-in store/company name; the line is hidden entirely when
@@ -257,7 +296,6 @@ class _MarketingDashboardScreenState extends State<MarketingDashboardScreen>
           const Text('Manage orders, stock & promotions',
               style: TextStyle(color: Colors.white70, fontSize: 13)),
         ],
-      ),
     );
   }
 }

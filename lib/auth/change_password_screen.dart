@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import 'auth_widgets.dart';
+import '../services/account_api.dart';
 
 class ChangePasswordScreen extends StatefulWidget {
   const ChangePasswordScreen({super.key});
@@ -35,10 +36,36 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     FocusScope.of(context).unfocus();
     setState(() => _saving = true);
-    // TODO(backend): POST change-password { newPassword } for the logged-in user.
-    await Future<void>.delayed(const Duration(milliseconds: 700));
+
+    // No currentPassword: the user is already signed in and reached this screen
+    // from inside their own account. The server treats a missing
+    // currentPassword as "ownership already proved", which a live session is.
+    final result = await const AccountApi()
+        .updatePassword(newPassword: _newPassCtrl.text);
+
     if (!mounted) return;
     setState(() => _saving = false);
+
+    if (!result.success) {
+      // Nothing changed — keep the user here with the server's own wording.
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          icon: const Icon(Icons.error_outline,
+              color: AppColors.error, size: 40),
+          title: const Text('Could not update password'),
+          content: Text(result.message),
+          actions: [
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
 
     await showDialog<void>(
       context: context,

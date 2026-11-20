@@ -11,6 +11,8 @@ import 'package:flutter/material.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import 'account_deletion_controller.dart';
+import '../services/account_api.dart';
+import '../auth/session.dart' show logout;
 
 class DeleteAccountScreen extends StatefulWidget {
   const DeleteAccountScreen({
@@ -51,13 +53,19 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     FocusScope.of(context).unfocus();
 
+    // The server deletes the account outright — there is no request queue and
+    // no admin approval step (see AccountApi). The wording below says exactly
+    // that, because the one thing worse than a scary dialog is a reassuring one
+    // in front of an irreversible action.
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Submit deletion request?'),
+        title: const Text('Delete your account?'),
         content: const Text(
-          'Your account and associated data may be permanently removed once '
-          'the admin team approves this request. This may not be reversible.',
+          'This deletes your VS Arogya account immediately and permanently. '
+          'Your profile, saved addresses and order history will no longer be '
+          'accessible.\n\nThis CANNOT be undone. Settle any pending orders or '
+          'dues first.',
         ),
         actions: [
           TextButton(
@@ -67,7 +75,7 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AppColors.error),
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Submit Request'),
+            child: const Text('Delete Permanently'),
           ),
         ],
       ),
@@ -75,26 +83,55 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
     if (confirmed != true) return;
 
     setState(() => _submitting = true);
-    // TODO(backend): POST the request to the server here.
-    final req = _controller.submit(
+
+    final result = await const AccountApi()
+        .deleteMyAccount(reason: _reasonCtrl.text.trim());
+
+    if (!mounted) return;
+    setState(() => _submitting = false);
+
+    if (!result.success) {
+      // Nothing was deleted — keep the user on the form with the server's own
+      // wording so they can act on it.
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          icon: const Icon(Icons.error_outline, color: AppColors.error, size: 40),
+          title: const Text('Could not delete account'),
+          content: Text(result.message),
+          actions: [
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    // Keep the local record so the admin screen still shows what happened in
+    // this session; the account itself is already gone server-side.
+    _controller.submit(
       userName: widget.userName,
       role: widget.role,
       reason: _reasonCtrl.text,
       contact: widget.contact,
     );
-    await Future<void>.delayed(const Duration(milliseconds: 350));
-    if (!mounted) return;
-    setState(() => _submitting = false);
 
     await showDialog<void>(
       context: context,
+      // The session is dead at this point — there is nothing to go back to, so
+      // the dialog cannot be dismissed around the sign-out below.
+      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        icon: const Icon(Icons.mark_email_read_outlined,
+        icon: const Icon(Icons.check_circle_outline,
             color: AppColors.primary, size: 40),
-        title: const Text('Request submitted'),
-        content: Text(
-          'Your deletion request (#${req.id}) has been sent to the VS Arogya '
-          'admin team for review. You will be notified once it is processed.',
+        title: const Text('Account deleted'),
+        content: const Text(
+          'Your account has been permanently deleted. You will now be signed '
+          'out.\n\nThank you for using VS Arogya.',
         ),
         actions: [
           FilledButton(
@@ -105,7 +142,11 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
         ],
       ),
     );
-    if (mounted) Navigator.of(context).pop();
+
+    if (!mounted) return;
+    // Clears every per-role session and returns to sign-in. Staying signed in
+    // against a deleted account would 401 on the next call.
+    logout(context);
   }
 
   @override
@@ -186,14 +227,14 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'Deleting your account may permanently remove access to your '
-            'profile and associated data.',
+            'Deleting your account permanently removes your profile, saved '
+            'addresses and access to your order history.',
             style: TextStyle(
                 fontSize: 13.5, color: AppColors.darkText, height: 1.45),
           ),
           const SizedBox(height: 8),
           const Text(
-            'This action may not be reversible.',
+            'This action cannot be undone.',
             style: TextStyle(
               fontSize: 13.5,
               fontWeight: FontWeight.w700,
@@ -228,8 +269,8 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
             ),
             const SizedBox(height: 2),
             const Text(
-              'Tell us why you want to delete your account. This helps the '
-              'admin team review your request.',
+              'Tell us why you are leaving. This is optional feedback for the '
+              'VS Arogya team — it does not delay or stop the deletion.',
               style: TextStyle(fontSize: 12, color: AppColors.greyText),
             ),
             const SizedBox(height: 12),
@@ -294,8 +335,8 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
           SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Your request is sent to the VS Arogya admin team for review. '
-              "You'll be notified once it is approved or rejected.",
+              'Settle any pending orders or outstanding dues before deleting. '
+              'Once deleted, the account cannot be recovered.',
               style: TextStyle(
                   fontSize: 12.5, color: AppColors.darkGreen, height: 1.4),
             ),
@@ -327,7 +368,7 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
               )
             : const Icon(Icons.delete_outline, size: 20),
         label: Text(
-          _submitting ? 'Submitting…' : 'Submit Deletion Request',
+          _submitting ? 'Deleting…' : 'Delete My Account',
           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
         ),
       ),

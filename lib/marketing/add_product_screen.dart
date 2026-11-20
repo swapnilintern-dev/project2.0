@@ -39,6 +39,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   late final TextEditingController _description;
   late final TextEditingController _mrp;
   late final TextEditingController _packOf;
+  late final TextEditingController _packInfo;
   late final TextEditingController _hsn;
   late final TextEditingController _gst;
   late final TextEditingController _discount;
@@ -46,6 +47,13 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   late final TextEditingController _stock;
   late final TextEditingController _lowThreshold;
   late final TextEditingController _batch;
+  // Medicine information (shown under the name on the product page).
+  late final TextEditingController _composition;
+  late final TextEditingController _uses;
+  late final TextEditingController _storage;
+  late final TextEditingController _sideEffects; // one side effect per line
+  late final TextEditingController _precautions;
+  late final TextEditingController _directions;
 
   late String _category;
   late bool _active;
@@ -77,6 +85,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     _description = TextEditingController(text: e?.description ?? '');
     _mrp = TextEditingController(text: e?.mrp?.toString() ?? '');
     _packOf = TextEditingController(text: (e?.packOf ?? 1).toString());
+    _packInfo = TextEditingController(text: e?.packInfo ?? '');
     _hsn = TextEditingController(text: e?.hsnCode ?? '');
     _gst = TextEditingController(text: (e?.gstPercent ?? 5).toString());
     _discount = TextEditingController(text: (e?.discountPercent ?? 0).toString());
@@ -84,6 +93,13 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     _stock = TextEditingController(text: e?.stock.toString() ?? '');
     _lowThreshold = TextEditingController(text: (e?.lowThreshold ?? 10).toString());
     _batch = TextEditingController(text: e?.batchNo ?? '');
+    _composition = TextEditingController(text: e?.composition ?? '');
+    _uses = TextEditingController(text: e?.uses ?? '');
+    _storage = TextEditingController(text: e?.storage ?? '');
+    _sideEffects =
+        TextEditingController(text: (e?.sideEffects ?? const []).join('\n'));
+    _precautions = TextEditingController(text: e?.precautions ?? '');
+    _directions = TextEditingController(text: e?.directions ?? '');
     _expiry = e?.expiryDate;
     // Always start on a category that exists in the (3-item) list, so the
     // dropdown never gets a value with no matching item.
@@ -100,8 +116,9 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   void dispose() {
     for (final c in [
       _name, _code, _brand, _manufacturer, _marketedBy, _description,
-      _mrp, _packOf, _hsn, _gst, _discount, _sell, _stock, _lowThreshold,
-      _batch,
+      _mrp, _packOf, _packInfo, _hsn, _gst, _discount, _sell, _stock, _lowThreshold,
+      _batch, _composition, _uses, _storage, _sideEffects, _precautions,
+      _directions,
     ]) {
       c.dispose();
     }
@@ -186,6 +203,68 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                     icon: Icons.notes_outlined,
                     hint: 'Description (optional)',
                     controller: _description,
+                    maxLines: 3,
+                  ),
+                  _gap(),
+                  _field(
+                    icon: Icons.inventory_2_outlined,
+                    hint: 'Pack Info (optional) — e.g. Strip of 15 tablets',
+                    controller: _packInfo,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _sectionHeader(Icons.science_outlined, 'Medicine Information'),
+            const SizedBox(height: 8),
+            _card(
+              child: Column(
+                children: [
+                  _field(
+                    icon: Icons.science_outlined,
+                    label: 'Composition (optional)',
+                    hint: 'e.g. Mycophenolate mofetil (500mg)',
+                    controller: _composition,
+                    maxLines: 2,
+                  ),
+                  _gap(),
+                  _field(
+                    icon: Icons.healing_outlined,
+                    label: 'Uses (optional)',
+                    hint: 'What the medicine is used for',
+                    controller: _uses,
+                    maxLines: 2,
+                  ),
+                  _gap(),
+                  _field(
+                    icon: Icons.ac_unit,
+                    label: 'Storage (optional)',
+                    hint: 'e.g. Store below 30°C',
+                    controller: _storage,
+                  ),
+                  _gap(),
+                  _field(
+                    icon: Icons.report_gmailerrorred_outlined,
+                    label: 'Side Effects (optional)',
+                    hint: 'One side effect per line',
+                    controller: _sideEffects,
+                    maxLines: 5,
+                    keyboardType: TextInputType.multiline,
+                  ),
+                  _gap(),
+                  _field(
+                    icon: Icons.warning_amber_rounded,
+                    label: 'Precautions (optional)',
+                    hint: 'Warnings before use',
+                    controller: _precautions,
+                    maxLines: 3,
+                  ),
+                  _gap(),
+                  _field(
+                    icon: Icons.menu_book_outlined,
+                    label: 'Directions for Use (optional)',
+                    hint: 'How to take / administer it',
+                    controller: _directions,
                     maxLines: 3,
                   ),
                 ],
@@ -384,12 +463,16 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         return;
       }
     }
-    if (!_media.hasImages) {
+    final existing = widget.existing;
+    // A NEW product needs an image. An existing one needs to keep at least one
+    // only if it had any — most of the catalogue (bulk-imported) has none, and
+    // refusing to save those would make them impossible to edit at all.
+    final hadImages = existing?.images.isNotEmpty ?? false;
+    if (!_media.hasImages && (!_isEdit || hadImages)) {
       showAppSnack(context, 'Please add at least one product image',
           success: false);
       return;
     }
-    final existing = widget.existing;
     final product = InventoryProduct(
       id: existing?.id ?? 'm${DateTime.now().millisecondsSinceEpoch}',
       name: _name.text.trim(),
@@ -414,6 +497,24 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       expiryDate: _expiry,
       inactiveReason: _active ? null : (existing?.inactiveReason),
       icon: existing?.icon ?? Icons.medication_liquid_outlined,
+      // Shop-facing fields this form does not edit itself are carried over
+      // from the stored product; otherwise saving an edit would send them
+      // blank and silently wipe them.
+      packInfo: _packInfo.text.trim(),
+      badge: existing?.badge,
+      rating: existing?.rating ?? 4.5,
+      reviewCount: existing?.reviewCount ?? 0,
+      rawCategory: existing?.rawCategory,
+      composition: _composition.text.trim(),
+      uses: _uses.text.trim(),
+      storage: _storage.text.trim(),
+      sideEffects: _sideEffects.text
+          .split('\n')
+          .map((l) => l.trim())
+          .where((l) => l.isNotEmpty)
+          .toList(),
+      precautions: _precautions.text.trim(),
+      directions: _directions.text.trim(),
     );
 
     final controller = MarketingProductsController.instance;
@@ -431,7 +532,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       // replace / remove / keep the video — all in one request.
       ok = await controller.updateRemote(
         product,
-        keptImages: _media.keptImages,
+        // Null = "leave images alone" for a product that has none and gets
+        // none now; sending an empty list would ask the server to strip all
+        // images, which it rejects.
+        keptImages: (!hadImages && !_media.hasImages) ? null : _media.keptImages,
         newImages: _media.newImageFiles,
         video: _media.videoToUpload,
         removeVideo: _media.removeVideo,

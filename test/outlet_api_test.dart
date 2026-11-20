@@ -245,6 +245,18 @@ void main() {
   // ONE call, so the mapping is pinned against the exact shape
   // getOutletAvailableBatches returns for `?all=1`.
   group('OutletApi.fetchMedicineDetail', () {
+    /// Dates are RELATIVE to the moment the test runs.
+    ///
+    /// They used to be hardcoded ISO strings, which made this a time bomb: once
+    /// real time passed the "expiring soon" lot's date, that lot became expired
+    /// and `sellableBatchCount` dropped from 2 to 1 — a green suite started
+    /// failing with no code change. Anchoring to `now` keeps each lot in the
+    /// state it is meant to represent forever.
+    String daysOut(int days) => DateTime.now()
+        .toUtc()
+        .add(Duration(days: days))
+        .toIso8601String();
+
     /// A product holding four lots that between them cover every batch state
     /// the screen has to render: healthy, expiring, expired and emptied.
     Map<String, dynamic> detailBody() => {
@@ -280,7 +292,7 @@ void main() {
             {
               '_id': 'b-expired',
               'batch_number': 'PAR650A2401',
-              'expiry_date': '2026-02-01T00:00:00.000Z',
+              'expiry_date': daysOut(-240), // expired
               'manufacturing_date': '2024-02-01T00:00:00.000Z',
               'available_quantity': 12,
               'purchase_price': 24,
@@ -293,7 +305,7 @@ void main() {
             {
               '_id': 'b-empty',
               'batch_number': 'PAR650A2502',
-              'expiry_date': '2027-11-01T00:00:00.000Z',
+              'expiry_date': daysOut(395), // healthy, but emptied
               'manufacturing_date': null,
               'available_quantity': 0,
               'purchase_price': 25,
@@ -306,7 +318,7 @@ void main() {
             {
               '_id': 'b-soon',
               'batch_number': 'PAR650A2507',
-              'expiry_date': '2026-09-15T00:00:00.000Z',
+              'expiry_date': daysOut(45), // expiring soon (<= 90 days)
               'manufacturing_date': '2025-09-15T00:00:00.000Z',
               'available_quantity': 282,
               'purchase_price': 26,
@@ -319,7 +331,7 @@ void main() {
             {
               '_id': 'b-healthy',
               'batch_number': 'PAR650A2601',
-              'expiry_date': '2028-06-30T00:00:00.000Z',
+              'expiry_date': daysOut(640), // healthy
               'manufacturing_date': '2026-06-30T00:00:00.000Z',
               'available_quantity': 500,
               'purchase_price': 27,
@@ -393,9 +405,12 @@ void main() {
 
       final soon = d.batches[2];
       expect(soon.available, 282);
-      expect(soon.expiry, DateTime.parse('2026-09-15T00:00:00.000Z'));
-      expect(soon.manufacturingDate,
-          DateTime.parse('2025-09-15T00:00:00.000Z'));
+      // Dates are relative to now (see daysOut) — assert the position in time
+      // the lot is meant to occupy rather than a fixed calendar date.
+      expect(soon.expiry!.isAfter(DateTime.now().toUtc()), isTrue);
+      expect(soon.expiry!.difference(DateTime.now().toUtc()).inDays,
+          inInclusiveRange(40, 50));
+      expect(soon.manufacturingDate!.isBefore(DateTime.now().toUtc()), isTrue);
       expect(soon.purchasePrice, 26);
       expect(soon.sellingPrice, 31);
       expect(soon.supplier, 'Kaveri Distributors');
@@ -438,7 +453,7 @@ void main() {
                 {
                   '_id': 'b-soon',
                   'batch_number': 'PAR650A2507',
-                  'expiry_date': '2026-09-15T00:00:00.000Z',
+                  'expiry_date': daysOut(45), // expiring soon (<= 90 days)
                   'available_quantity': 282,
                   'created_at': '2026-05-02T00:00:00.000Z',
                   'isExpiringSoon': true,
@@ -446,7 +461,7 @@ void main() {
                 {
                   '_id': 'b-healthy',
                   'batch_number': 'PAR650A2601',
-                  'expiry_date': '2028-06-30T00:00:00.000Z',
+                  'expiry_date': daysOut(640), // healthy
                   'available_quantity': 500,
                   'created_at': '2026-07-01T00:00:00.000Z',
                   'isExpiringSoon': false,

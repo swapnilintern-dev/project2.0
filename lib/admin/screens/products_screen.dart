@@ -16,7 +16,7 @@ import '../admin_api.dart';
 import '../admin_common.dart';
 import '../admin_main.dart';
 import '../admin_models.dart';
-import 'add_product_screen.dart';
+import '../../marketing/add_product_screen.dart' show AddMedicineScreen;
 
 class AdminProductsScreen extends StatefulWidget {
   const AdminProductsScreen({super.key});
@@ -108,13 +108,13 @@ class _AdminProductsScreenState extends State<AdminProductsScreen>
               icon: Icons.add,
               expand: false,
               height: 40,
+              // The real Add Medicine form (same one marketing uses): it
+              // uploads images and creates the product on the server, and
+              // confirms with its own message. The old admin form only
+              // pretended to publish.
               onPressed: () async {
-                final created =
-                    await adminPush<bool>(context, const AddProductScreen());
-                if (created == true && context.mounted) {
-                  adminSnack(context, 'Product added to catalogue');
-                  _load();
-                }
+                await adminPush<void>(context, const AddMedicineScreen());
+                if (context.mounted) _load();
               },
             ),
           ),
@@ -127,7 +127,6 @@ class _AdminProductsScreenState extends State<AdminProductsScreen>
             child: AdminSearchField(
               hint: 'Search products…',
               onChanged: (v) => setState(() => _query = v),
-              onFilter: () => adminSnack(context, 'Filters'),
             ),
           ),
           Padding(
@@ -142,7 +141,7 @@ class _AdminProductsScreenState extends State<AdminProductsScreen>
                 const SizedBox(width: 10),
                 Expanded(
                     child: MiniStat(
-                        value: '${_products.length - _outCount}',
+                        value: '${_products.where((p) => p.active).length}',
                         label: 'Active',
                         color: AppColors.primary)),
                 const SizedBox(width: 10),

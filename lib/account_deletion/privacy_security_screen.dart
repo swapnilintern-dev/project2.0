@@ -25,18 +25,6 @@ class PrivacySecurityScreen extends StatelessWidget {
   final String userName;
   final String contact;
 
-  void _snack(BuildContext context, String msg) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: AppColors.darkGreen,
-        ),
-      );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -62,12 +50,8 @@ class PrivacySecurityScreen extends StatelessWidget {
                     builder: (_) => const ChangePasswordScreen()),
               ),
             ),
-            _Row(
-              icon: Icons.privacy_tip_outlined,
-              title: 'Privacy Policy',
-              subtitle: 'How we use and protect your data',
-              onTap: () => _snack(context, 'Opening privacy policy'),
-            ),
+            // (A "Privacy Policy" row lived here but only showed a snackbar —
+            // there is no policy page in the app yet.)
           ]),
           const SizedBox(height: 8),
           // Destructive zone — visually separated.
@@ -75,7 +59,7 @@ class PrivacySecurityScreen extends StatelessWidget {
             _Row(
               icon: Icons.delete_outline,
               title: 'Delete Account',
-              subtitle: 'Request permanent account deletion',
+              subtitle: 'Permanently delete your account',
               destructive: true,
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(

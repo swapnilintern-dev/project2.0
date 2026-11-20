@@ -1,15 +1,20 @@
 // =============================================================================
 // MediCaPlus — Product Details Screen
 //
-// Hero image, title/brand, rating, price, description, quantity selector,
-// wishlist toggle, reviews preview and related products. A sticky bottom bar
+// Image, name, rating/stock, MRP / price, composition, marketer, storage,
+// product information, precautions, uses, side effects, directions of use,
+// quantity selector, related products and — always last — the medical
+// disclaimer. Wishlist toggle in the app bar. A sticky bottom bar
 // adds the chosen quantity to the cart and offers Buy Now (straight to checkout).
 // =============================================================================
 
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../vendor_registration_screen.dart' show AppColors;
+import '../services/vendor_approval.dart';
+import '../vendor_registration_screen.dart'
+    show AppColors, VendorRegistrationScreen;
+import '../vendor_status_screen.dart';
 import '../theme/app_widgets.dart';
 import '../theme/video_player_view.dart';
 import 'catalog.dart';
@@ -18,6 +23,13 @@ import 'customer_controllers.dart';
 import 'customer_models.dart';
 import 'customer_widgets.dart';
 import 'checkout_screen.dart';
+import 'medicine_info_section.dart';
+import 'price_gate.dart' show LockedPrice;
+import '../services/buyer_pricing.dart';
+
+/// Height of the image/video carousel. Kept modest so the name, company and
+/// medicine information are visible on first view without scrolling.
+const double _kMediaHeight = 240;
 
 class ProductDetailsScreen extends StatefulWidget {
   const ProductDetailsScreen({super.key, required this.product});
@@ -111,10 +123,47 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
   /// opened with if it has since been deactivated/removed.
   Product get _p => Catalog.byId(widget.product.id) ?? widget.product;
 
+  /// Description minus the composition / storage / uses lines that already
+  /// have their own place on this page.
+  String get _description => descriptionFor(_p);
+
   List<Product> get _related => Catalog.all
       .where((p) => p.category == _p.category && p.id != _p.id)
       .take(6)
       .toList();
+
+  // ---------------------------------------------------------------------------
+  // PRICE VISIBILITY (vendor approval)
+  //
+  // Distributor prices are shown only to an APPROVED vendor. The state comes
+  // from VendorApproval, which mirrors the backend's `approvalStatus` field —
+  // this screen only reads it.
+  //
+  // NOTE: this is PRESENTATIONAL. The product payload still carries the price,
+  // so real protection needs the backend to withhold it from an unapproved
+  // vendor — that is future backend work, not done here.
+  // ---------------------------------------------------------------------------
+
+  bool get _pricesVisible => VendorApproval.instance.canSeePrices;
+
+  /// The call to action shown in place of the price, per registration state.
+  String get _vendorCtaLabel => switch (VendorApproval.instance.status) {
+        VendorApprovalStatus.pending => 'View Registration Status',
+        VendorApprovalStatus.rejected => 'Update & Resubmit',
+        _ => 'Complete Vendor Registration',
+      };
+
+  /// Opens the EXISTING vendor registration flow, or the status screen when a
+  /// registration has already been submitted / rejected. Plain imperative
+  /// navigation, like the rest of the app.
+  void _openVendorFlow() {
+    final status = VendorApproval.instance.status;
+    final Widget screen = (status == VendorApprovalStatus.pending ||
+            status == VendorApprovalStatus.rejected)
+        ? const VendorStatusScreen()
+        : const VendorRegistrationScreen();
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
+  }
 
   Future<void> _addToCart() async {
     setState(() => _adding = true);
@@ -173,6 +222,15 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     final topInset = MediaQuery.of(context).padding.top + kToolbarHeight;
+    // Rebuild when the vendor's approval state changes (sign-in, logout, or
+    // returning from the registration flow) so prices appear/disappear at once.
+    return ListenableBuilder(
+      listenable: VendorApproval.instance,
+      builder: (context, _) => _buildScreen(topInset),
+    );
+  }
+
+  Widget _buildScreen(double topInset) {
     return Scaffold(
       backgroundColor: Colors.white,
       body: Stack(
@@ -275,9 +333,13 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(color: AppColors.greyText, fontSize: 12)),
-      trailing: Text('₹${p.price.toStringAsFixed(0)}',
-          style: const TextStyle(
-              fontWeight: FontWeight.w800, color: AppColors.primary)),
+      // The price must not leak through the inline search results either.
+      trailing: _pricesVisible
+          ? Text('₹${p.price.toStringAsFixed(0)}',
+              style: const TextStyle(
+                  fontWeight: FontWeight.w800, color: AppColors.primary))
+          : const Icon(Icons.lock_outline,
+              size: 18, color: AppColors.greyText),
       onTap: () => _openProduct(p),
     );
   }
@@ -353,7 +415,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     // No media at all → the icon fallback (unchanged behaviour).
     if (slideCount == 0) {
       return Container(
-        height: 280,
+        height: _kMediaHeight,
         width: double.infinity,
         color: AppColors.lighterGreen,
         child: Hero(
@@ -370,7 +432,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
       child: Column(
         children: [
           SizedBox(
-            height: 280,
+            height: _kMediaHeight,
             child: PageView.builder(
               controller: _mediaController,
               itemCount: slideCount,
@@ -531,30 +593,47 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
           Text(_p.title,
               style: const TextStyle(
                   fontSize: 22, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 4),
-          Text(_p.brand,
-              style: const TextStyle(fontSize: 14, color: AppColors.greyText)),
+          // Order on this page is documented in medicine_info_section.dart:
+          // name, price, composition, marketer, storage, product information,
+          // precautions, uses, side effects, directions … disclaimer last.
           const SizedBox(height: 12),
           Row(
             children: [
-              const Icon(Icons.star, color: Color(0xFFF59E0B), size: 18),
-              const SizedBox(width: 4),
-              Text(_p.rating.toStringAsFixed(1),
-                  style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w700)),
-              const SizedBox(width: 6),
-              Text('· ${_p.reviewCount} ratings',
-                  style: const TextStyle(
-                      fontSize: 13, color: AppColors.greyText)),
+              // Only real ratings are shown. Products default to rating 4.5
+              // with 0 reviews on the server, and showing that as a score
+              // would present an invented number to buyers.
+              if (_p.reviewCount > 0) ...[
+                const Icon(Icons.star, color: Color(0xFFF59E0B), size: 18),
+                const SizedBox(width: 4),
+                Text(_p.rating.toStringAsFixed(1),
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w700)),
+                const SizedBox(width: 6),
+                Text('· ${_p.reviewCount} ratings',
+                    style: const TextStyle(
+                        fontSize: 13, color: AppColors.greyText)),
+              ],
               const Spacer(),
               _stockChip(),
             ],
           ),
           const SizedBox(height: 18),
-          PriceTag(price: _p.price, mrp: _p.mrp, large: true),
-          const SizedBox(height: 6),
-          const Text('Inclusive of all taxes',
-              style: TextStyle(fontSize: 12, color: AppColors.greyText)),
+          _buildPriceSection(),
+          MedicineKeyInfo(product: _p),
+          const Divider(height: 32, color: AppColors.border),
+
+          if (_description.isNotEmpty) ...[
+            const Text('Product Information',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            Text(_description,
+                style: const TextStyle(
+                    fontSize: 14, color: AppColors.greyText, height: 1.5)),
+            const SizedBox(height: 4),
+          ],
+          if (_p.packInfo.isNotEmpty) _infoRow('Pack', _p.packInfo),
+          _infoRow('Category', _categoryText()),
+          MedicineInfoPanel(product: _p),
           const Divider(height: 32, color: AppColors.border),
 
           // Quantity selector
@@ -573,22 +652,6 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
               ),
             ],
           ),
-          const Divider(height: 32, color: AppColors.border),
-
-          const Text('Description',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 8),
-          Text(_p.description,
-              style: const TextStyle(
-                  fontSize: 14, color: AppColors.greyText, height: 1.5)),
-          if (_p.packInfo.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            _infoRow('Pack', _p.packInfo),
-          ],
-          _infoRow('Category', _p.category[0].toUpperCase() + _p.category.substring(1)),
-
-          const SizedBox(height: 24),
-          _buildReviews(),
 
           if (_related.isNotEmpty) ...[
             const SizedBox(height: 24),
@@ -634,11 +697,17 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                                         fontSize: 13,
                                         fontWeight: FontWeight.w700)),
                                 const SizedBox(height: 4),
-                                Text(formatRupees(r.price),
-                                    style: const TextStyle(
-                                        fontSize: 14,
+                                // Locked vendors see no price here either.
+                                Text(
+                                    _pricesVisible
+                                        ? formatRupees(r.price)
+                                        : 'Price after verification',
+                                    style: TextStyle(
+                                        fontSize: _pricesVisible ? 14 : 12,
                                         fontWeight: FontWeight.w800,
-                                        color: AppColors.darkGreen)),
+                                        color: _pricesVisible
+                                            ? AppColors.darkGreen
+                                            : AppColors.greyText)),
                               ],
                             ),
                           ),
@@ -650,6 +719,9 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
               ),
             ),
           ],
+
+          // Always the last thing on the page.
+          const MedicineDisclaimer(),
         ],
       ),
     );
@@ -687,6 +759,16 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     );
   }
 
+  /// The stored label ("Tablet") when known, else the chip name ("Medicine").
+  String _categoryText() {
+    if (_p.categoryLabel.isNotEmpty) {
+      return _p.categoryLabel[0].toUpperCase() + _p.categoryLabel.substring(1);
+    }
+    return kCategories
+        .firstWhere((c) => c.id == _p.category, orElse: () => kCategories.last)
+        .name;
+  }
+
   Widget _infoRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(top: 8),
@@ -708,78 +790,118 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     );
   }
 
-  Widget _buildReviews() {
-    final reviews = [
-      ('Rohan S.', 5, 'Genuine product, fast delivery. Will reorder.'),
-      ('Priya M.', 4, 'Good packaging and reasonably priced.'),
-    ];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SectionHeader(
-          title: 'Reviews (${_p.reviewCount})',
-          actionLabel: 'View all',
-          onAction: () => showAppSnack(context, 'Opening all reviews'),
-        ),
-        const SizedBox(height: 12),
-        for (final r in reviews)
-          Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppColors.pageBg,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+
+  /// Distributor price — rendered only for an APPROVED vendor. When locked,
+  /// the price is never built into the tree at all (no blur, no strikethrough,
+  /// no "was ₹x"), so it cannot be read from the UI.
+  Widget _buildPriceSection() {
+    if (_pricesVisible) {
+      // A hospital/clinic or wholesale account is on its own rate card, set
+      // per-product by Marketing (drDisPercent / wholesellerPercent). A retail
+      // account gets tier == retail, where tierOff is 0 and this renders exactly
+      // as it always did.
+      final tier = BuyerPricing.instance.tier;
+      final tierOff = _p.discountPercentFor(tier);
+      final payable = _p.priceFor(tier);
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(tierOff > 0 ? tier.label : 'Distributor Price',
+              style: const TextStyle(fontSize: 12.5, color: AppColors.greyText)),
+          const SizedBox(height: 4),
+          PriceTag(price: payable, mrp: _p.mrp, large: true),
+          if (tierOff > 0) ...[
+            const SizedBox(height: 6),
+            Row(
               children: [
-                Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 14,
-                      backgroundColor: AppColors.primary,
-                      child: Text(r.$1[0],
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700)),
-                    ),
-                    const SizedBox(width: 8),
-                    // Reviewer name is free text from the backend; the Spacer
-                    // beside it can only give away space that is already left
-                    // over, so a long name would push the star row off-screen.
-                    Expanded(
-                      child: Text(r.$1,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 13, fontWeight: FontWeight.w700)),
-                    ),
-                    const SizedBox(width: 8),
-                    Row(
-                      children: List.generate(
-                        5,
-                        (i) => Icon(
-                          i < r.$2 ? Icons.star : Icons.star_border,
-                          size: 14,
-                          color: const Color(0xFFF59E0B),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(r.$3,
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.lightGreenBg,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '${tierOff.toStringAsFixed(0)}% ${tier.label.toLowerCase()}',
                     style: const TextStyle(
-                        fontSize: 13, color: AppColors.greyText)),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.darkGreen,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'You save ${formatRupees(_p.savingFor(tier))}',
+                  style: const TextStyle(
+                      fontSize: 12, color: AppColors.greyText),
+                ),
               ],
             ),
+          ],
+          const SizedBox(height: 6),
+          const Text('Inclusive of all taxes',
+              style: TextStyle(fontSize: 12, color: AppColors.greyText)),
+        ],
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.lighterGreen,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Distributor Price',
+              style: TextStyle(fontSize: 12.5, color: AppColors.greyText)),
+          const SizedBox(height: 6),
+          const LockedPrice(fontSize: 26),
+          const SizedBox(height: 6),
+          const Text(
+            'Available after vendor verification',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: AppColors.darkGreen,
+            ),
           ),
-      ],
+          const SizedBox(height: 14),
+          PrimaryButton(
+            label: _vendorCtaLabel,
+            icon: Icons.verified_user_outlined,
+            onPressed: _openVendorFlow,
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildBottomBar() {
+    // Unapproved vendor: no price, no cart — just the way forward. (The label
+    // carries no price, so nothing leaks through the button either.)
+    if (!_pricesVisible) {
+      return SafeArea(
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(top: BorderSide(color: AppColors.border)),
+          ),
+          child: PrimaryButton(
+            label: _vendorCtaLabel,
+            icon: Icons.verified_user_outlined,
+            onPressed: _openVendorFlow,
+          ),
+        ),
+      );
+    }
+
     return SafeArea(
       child: Container(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
@@ -801,7 +923,8 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
             Expanded(
               flex: 2,
               child: PrimaryButton(
-                label: 'Add to Cart · ${formatRupees(_p.price * _qty)}',
+                label: 'Add to Cart · '
+                    '${formatRupees(_p.priceFor(BuyerPricing.instance.tier) * _qty)}',
                 icon: Icons.shopping_cart_outlined,
                 loading: _adding,
                 onPressed: _p.inStock ? () => _addToCart() : null,

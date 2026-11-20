@@ -7,18 +7,22 @@
 // =============================================================================
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import '../vendor_registration_screen.dart' show AppColors;
 import '../services/auth_service.dart';
+import '../shared/support_contact.dart';
 import '../theme/app_theme.dart' show AppShadows;
 import '../account_deletion/account_deletion_controller.dart';
 import '../account_deletion/privacy_security_screen.dart';
 import 'customer_controllers.dart';
-import 'customer_widgets.dart';
+import 'customer_widgets.dart' show showAppSnack;
 import 'orders_screen.dart';
 import 'addresses_screen.dart';
 import 'saved_items_screen.dart';
 import 'about_us_screen.dart';
+import '../notifications/notifications_screen.dart';
+import '../notifications/user_inbox_controller.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key, this.embedded = false, this.onLogout});
@@ -30,7 +34,7 @@ class ProfileScreen extends StatelessWidget {
 
   /// Real display name when the backend provides one (see AuthService.storeName);
   /// a neutral, non-fake label otherwise.
-  String get _displayName => AuthService.storeName ?? 'MediCaPlus Buyer';
+  String get _displayName => AuthService.storeName ?? 'VS Arogya Buyer';
 
   /// The real mobile number the user signed in with.
   String get _displayPhone =>
@@ -55,6 +59,15 @@ class ProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The Notifications row's subtitle carries the live unread count, so the
+    // screen has to repaint when the inbox changes.
+    return ListenableBuilder(
+      listenable: UserInboxController.instance,
+      builder: (context, _) => _body(context),
+    );
+  }
+
+  Widget _body(BuildContext context) {
     final content = ListView(
       padding: EdgeInsets.zero,
       physics: const BouncingScrollPhysics(),
@@ -103,11 +116,18 @@ class ProfileScreen extends StatelessWidget {
               ),
             ),
           ),
+          // Live feed from the backend (per-user inbox). The subtitle doubles as
+          // the unread indicator; the enclosing group is wrapped in a
+          // ListenableBuilder (see _group) so the count stays current.
           _Tile(
             icon: Icons.notifications_none,
             title: 'Notifications',
-            subtitle: 'Order & offer alerts',
-            onTap: () => showAppSnack(context, 'Notification settings'),
+            subtitle: UserInboxController.instance.unread > 0
+                ? '${UserInboxController.instance.unread} unread'
+                : 'Order & account updates',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+            ),
           ),
           ///// SUPPORT TILE
           _Tile(
@@ -286,6 +306,8 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
+  /// Wrapped so a change in the unread count repaints the Notifications row's
+  /// subtitle without the whole profile screen being rebuilt by hand.
   Widget _group(BuildContext context, List<_Tile> tiles) {
     // The white fill lives on the Material (not an outer DecoratedBox) so the
     // ListTiles can paint their ink splashes on their nearest Material ancestor.
@@ -407,19 +429,20 @@ void _showSupportCard(BuildContext context) {
             ),
 
             const SizedBox(height: 20),
-            //// PHONE CALL
+            // Real details from lib/shared/support_contact.dart. Tap copies.
             ListTile(
               leading: const Icon(Icons.phone),
-              title: const Text('+91 9876543210, 0651-4502340'),
-              subtitle: const Text('Customer Support'),
-              onTap: () {},
+              title: const Text(SupportContact.phone),
+              subtitle: const Text('Customer Support · tap to copy'),
+              onTap: () => _copySupport(
+                  context, SupportContact.phone, 'Phone number copied'),
             ),
-///// LATER IT SHOULD DIRECTLY REDIRECT TO THE GMAIL WITH ADDED SENDER.
             ListTile(
               leading: const Icon(Icons.email_outlined),
-              title: const Text('support@vsarogya.co.IN'),
-              subtitle: const Text('Email Support'),
-              onTap: () {},
+              title: const Text(SupportContact.email),
+              subtitle: const Text('Email Support · tap to copy'),
+              onTap: () =>
+                  _copySupport(context, SupportContact.email, 'Email copied'),
             ),
 
             Card(
@@ -444,20 +467,6 @@ void _showSupportCard(BuildContext context) {
   ),
  ),
 
-            const SizedBox(height: 16),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.support_agent),
-                label: const Text('Contact Us'),
-                onPressed: () {
-                  Navigator.pop(context);
-                  _showContactUsDialog(context);
-                },
-              ),
-            ),
-
             const SizedBox(height: 20),
           ],
         ),
@@ -466,93 +475,12 @@ void _showSupportCard(BuildContext context) {
     },
   );
 }
-void _showContactUsDialog(BuildContext context) {
-  final nameController = TextEditingController();
-  final mobileController = TextEditingController();
-  final messageController = TextEditingController();
-
-  bool consent = false;
-
-  showDialog(
-    context: context,
-    builder: (context) {
-      return StatefulBuilder(
-        builder: (context, setState) {
-          return AlertDialog(
-            title: const Center(
-              child: Text('Contact Us'),
-            ),
-            content: SizedBox(
-              width: 500,
-              child: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    TextField(
-                      controller: nameController,
-                      decoration: const InputDecoration(
-                        hintText: 'Your Name',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: mobileController,
-                      keyboardType: TextInputType.phone,
-                      decoration: const InputDecoration(
-                        hintText: 'Mobile Number',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: messageController,
-                      maxLines: 4,
-                      decoration: const InputDecoration(
-                        hintText: 'Write something...',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Checkbox(
-                          value: consent,
-                          onChanged: (value) {
-                            setState(() {
-                              consent = value ?? false;
-                            });
-                          },
-                        ),
-                        const Expanded(
-                          child: Text(
-                            'I consent to be contacted by our representative.',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    // API Call Here
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Request submitted successfully',
-                        ),
-                      ),
-                    );
-                  },
-                  child: const Text('Submit'),
-                ),
-              ),
-            ],
-          );
-        },
-      );
-    },
-  );
+/// Copies a support channel and confirms it. The sheet is closed first so the
+/// confirmation is visible (a SnackBar renders beneath a bottom sheet).
+Future<void> _copySupport(
+    BuildContext context, String value, String message) async {
+  await Clipboard.setData(ClipboardData(text: value));
+  if (!context.mounted) return;
+  Navigator.pop(context);
+  showAppSnack(context, message);
 }

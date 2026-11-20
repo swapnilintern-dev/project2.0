@@ -43,6 +43,73 @@ class AuthService {
   /// "delivery", …). Saved so a restored session can route to the right portal.
   static String? role;
 
+  /// The email address the user signed in with.
+  ///
+  /// Email + OTP is the primary sign-in method (see OtpAuthService); the
+  /// password path leaves this null and fills [phone] instead, so screens that
+  /// show "you are signed in as …" should fall back from one to the other.
+  static String? email;
+
+  /// The buyer's registration type, as the backend stores it ("Shop / Pharmacy"
+  /// vs "Hospital / Clinic") together with the finer `shop_type`.
+  ///
+  /// Kept on the session because the catalogue prices one product three ways and
+  /// the rate card is derived from these two values — a restored session that
+  /// lost them would silently drop the account back to the retail price.
+  static String? vendorType;
+  static String? shopType;
+
+  /// The signed-in account's own id, as the backend returns it (`id` on the
+  /// login response). Several role-scoped calls need it — the Area Agent's
+  /// pincode feed and the per-user notification inbox both key on it.
+  static String? userId;
+
+  // ---------------------------------------------------------------------------
+  // ADOPTING A LOGIN RESPONSE
+  // ---------------------------------------------------------------------------
+
+  /// Captures a successful authentication response into the shared session.
+  ///
+  /// Both sign-in paths end here — [login] for password, OtpAuthService for
+  /// email + OTP — so neither can drift from the other or forget to persist a
+  /// field. The backend returns the SAME body shape for both
+  /// (server/controller/emailverifyController.js mirrors userController.login
+  /// field for field), which is what makes one adopter possible.
+  static void adoptAuthResponse(
+    Map<String, dynamic> body, {
+    String? emailUsed,
+    String? phoneUsed,
+  }) {
+    if (body['token'] is String && (body['token'] as String).isNotEmpty) {
+      authToken = body['token'] as String;
+    }
+
+    final name =
+        body['store_name'] ?? body['contact_person_name'] ?? body['name'];
+    if (name is String && name.trim().isNotEmpty) {
+      storeName = name.trim();
+    }
+
+    if (body['role'] is String) role = body['role'] as String;
+    if (body['id'] != null) userId = body['id'].toString();
+    if (body['vendor_type'] != null) vendorType = body['vendor_type'].toString();
+    if (body['shop_type'] != null) shopType = body['shop_type'].toString();
+
+    // Prefer what the server echoed back; fall back to what the user typed.
+    final serverEmail = body['email'];
+    if (serverEmail is String && serverEmail.trim().isNotEmpty) {
+      email = serverEmail.trim();
+    } else if (emailUsed != null && emailUsed.trim().isNotEmpty) {
+      email = emailUsed.trim();
+    }
+
+    if (phoneUsed != null && phoneUsed.trim().isNotEmpty) {
+      phone = phoneUsed.trim();
+    }
+
+    _saveSession();
+  }
+
   // ---------------------------------------------------------------------------
   // SESSION PERSISTENCE
   //
@@ -59,6 +126,10 @@ class AuthService {
   static const _kPhone = 'session_phone';
   static const _kRole = 'session_role';
   static const _kSavedAt = 'session_saved_at';
+  static const _kEmail = 'session_email';
+  static const _kUserId = 'session_user_id';
+  static const _kVendorType = 'session_vendor_type';
+  static const _kShopType = 'session_shop_type';
 
   /// How long a saved session is trusted. Slightly less than the server's
   /// 1-day token so the app never starts with an about-to-expire session.
@@ -157,6 +228,17 @@ class AuthService {
     if (body['role'] is String) {
       role = body['role'] as String;
     }
+    // Same two fields the email-OTP path captures via [adoptAuthResponse], so a
+    // password session and an OTP session carry identical state. Without this,
+    // anything keyed on the account id would work after an OTP login and fail
+    // after a password one.
+    if (body['id'] != null) userId = body['id'].toString();
+    if (body['vendor_type'] != null) vendorType = body['vendor_type'].toString();
+    if (body['shop_type'] != null) shopType = body['shop_type'].toString();
+    final loginEmail = body['email'];
+    if (loginEmail is String && loginEmail.trim().isNotEmpty) {
+      email = loginEmail.trim();
+    }
 
     // Area Agent (a Vendor with role "agent") — capture the id + assigned
     // pincode the backend returns so the dashboard can pull its pincode-wise
@@ -188,6 +270,10 @@ class AuthService {
       await prefs.setString(_kStoreName, storeName ?? '');
       await prefs.setString(_kPhone, phone ?? '');
       await prefs.setString(_kRole, role ?? '');
+      await prefs.setString(_kEmail, email ?? '');
+      await prefs.setString(_kUserId, userId ?? '');
+      await prefs.setString(_kVendorType, vendorType ?? '');
+      await prefs.setString(_kShopType, shopType ?? '');
       await prefs.setInt(_kSavedAt, DateTime.now().millisecondsSinceEpoch);
     } catch (_) {
       // Storage unavailable — the session simply won't survive a restart.
@@ -221,6 +307,14 @@ class AuthService {
       phone = ph.isEmpty ? null : ph;
       final r = prefs.getString(_kRole) ?? '';
       role = r.isEmpty ? null : r;
+      final em = prefs.getString(_kEmail) ?? '';
+      email = em.isEmpty ? null : em;
+      final uid = prefs.getString(_kUserId) ?? '';
+      userId = uid.isEmpty ? null : uid;
+      final vt = prefs.getString(_kVendorType) ?? '';
+      vendorType = vt.isEmpty ? null : vt;
+      final st = prefs.getString(_kShopType) ?? '';
+      shopType = st.isEmpty ? null : st;
       return true;
     } catch (_) {
       return false;
@@ -234,12 +328,27 @@ class AuthService {
     storeName = null;
     phone = null;
     role = null;
+    email = null;
+    userId = null;
+    vendorType = null;
+    shopType = null;
     // Also drop the saved copy so the next app start asks for a login.
     SharedPreferences.getInstance().then(_clearSaved).catchError((_) {});
   }
 
   static Future<void> _clearSaved(SharedPreferences prefs) async {
-    for (final k in [_kToken, _kCookie, _kStoreName, _kPhone, _kRole, _kSavedAt]) {
+    for (final k in [
+      _kToken,
+      _kCookie,
+      _kStoreName,
+      _kPhone,
+      _kRole,
+      _kEmail,
+      _kUserId,
+      _kVendorType,
+      _kShopType,
+      _kSavedAt,
+    ]) {
       await prefs.remove(k);
     }
   }

@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'services/vendor_api_service.dart';
+import 'services/vendor_approval.dart';
 import 'shared/form_validators.dart';
 
 
@@ -139,7 +140,14 @@ class VendorRegistrationModel {
 // STATIC OPTION LISTS
 // =============================================================================
 
-const List<String> _vendorTypes = ['Shop / Pharmacy', 'Hospital / Clinic'];
+const List<String> _vendorTypes = [
+  'Shop / Pharmacy',
+  'Hospital / Clinic',
+  // Stored as-is in vendor_type; every pricing check (server buyerPricing.js,
+  // lib/services/buyer_pricing.dart, website pricing.js) maps "doctor" to the
+  // doctor rate, same as Hospital / Clinic.
+  'Doctor',
+];
 
 const List<String> _shopTypes = [
   'Retail Pharmacy',
@@ -348,6 +356,12 @@ class _VendorRegistrationScreenState extends State<VendorRegistrationScreen>
       _showSnack(result.message);
       return;
     }
+
+    // The registration reached the server, so this device shows "under review"
+    // instead of asking the vendor to register again. Optimistic UI only — the
+    // real decision is the admin's, and the backend's `approvalStatus` replaces
+    // this at the next sign-in (see lib/services/vendor_approval.dart).
+    VendorApproval.instance.markSubmittedLocally();
 
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const RegistrationSuccessScreen()),

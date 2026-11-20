@@ -213,7 +213,6 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen>
               child: AdminSearchField(
                 hint: 'Order ID or buyer…',
                 onChanged: (v) => setState(() => _query = v),
-                onFilter: () => adminSnack(context, 'Filters'),
               ),
             ),
             AdminSegmentTabs(

@@ -308,7 +308,10 @@ class AdminApi {
       final list = (body['products'] as List?) ?? const [];
       return list.whereType<Map<String, dynamic>>().map((j) {
         final id = (j['_id'] ?? '').toString();
-        final stock = (j['quantity'] as num?)?.toInt() ?? 0;
+        // Units on hand are `stock` (a number). `quantity` is a String pack
+        // label ("1"), and casting it to num threw — which the catch below
+        // turned into an empty catalogue ("0 SKUs").
+        final stock = _numOf(j['stock']).toInt();
         return AdminProduct(
           id: id,
           name: (j['title'] ?? 'Product').toString(),
@@ -318,7 +321,8 @@ class AdminApi {
           price: _numOf(j['price']),
           stock: stock,
           category: (j['category'] ?? '').toString(),
-          active: stock > 0,
+          // The real listing flag; an in-stock product can still be unlisted.
+          active: j['active'] is bool ? j['active'] as bool : true,
         );
       }).toList();
     } catch (_) {

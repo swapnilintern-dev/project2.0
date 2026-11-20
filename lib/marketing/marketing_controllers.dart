@@ -235,7 +235,7 @@ class MarketingProductsController extends ChangeNotifier {
   /// update if the backend is unreachable.
   Future<bool> updateRemote(
     InventoryProduct product, {
-    required List<ProductMedia> keptImages,
+    required List<ProductMedia>? keptImages,
     List<XFile> newImages = const [],
     XFile? video,
     bool removeVideo = false,

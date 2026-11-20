@@ -11,6 +11,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../services/vendor_approval.dart';
 import 'catalog.dart';
 import 'customer_api.dart';
 import 'customer_models.dart';
@@ -247,6 +248,9 @@ class CartController extends ChangeNotifier {
   /// ACTUALLY added, which is less than [quantity] when the cap bites and 0
   /// when the line is already at it. Callers show the shortfall to the vendor.
   int add(Product product, {int quantity = 1}) {
+    // Browse-only account (OTP guest / unapproved vendor) never gets a cart.
+    // The UI asks first (price_gate.ensureCanOrder); this is the backstop.
+    if (!VendorApproval.instance.canSeePrices) return 0;
     final index = _items.indexWhere((i) => i.product.id == product.id);
     final current = index >= 0 ? _items[index].quantity : 0;
 
@@ -480,6 +484,15 @@ class OrdersController extends ChangeNotifier {
   /// Loads order history from the backend (GET /get-order). On failure the
   /// current list is kept — NO mock/dummy data is ever injected.
   Future<void> refresh() async {
+    // A browse-only (guest) session has no orders, and the server refuses its
+    // token anyway — don't keep asking.
+    if (!VendorApproval.instance.canSeePrices) {
+      if (!_loaded) {
+        _loaded = true;
+        notifyListeners();
+      }
+      return;
+    }
     final backend = await _api.getOrders();
     if (backend != null) {
       // Preserve any just-placed / offline-only orders the backend list doesn't

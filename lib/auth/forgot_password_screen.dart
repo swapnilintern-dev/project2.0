@@ -2,21 +2,28 @@
 // MediCaPlus — Forgot Password flow (not logged in)
 //
 // Reached from the Sign In screen. A single stepped screen:
-//   Mobile Number → OTP Verification (30s resend) → New Password → Success.
+//   Email Address → OTP Verification (30s resend) → New Password → Success.
 // On success the user goes back to the Sign In screen.
 //
 // OTP send/verify and the "number must exist" check are backend concerns and
-// are stubbed with TODO(backend) markers — the UI flow is fully functional so
-// the screens can be wired to real endpoints by filling those in.
+// All three steps are LIVE against the backend:
+//   POST /vsArogya/eotp          → mails the code
+//   POST /vsArogya/eotp-verify   → mints a session, which IS the reset proof
+//   PUT  /vsArogya/update-password → sets the new password with that session
+//
+// Email rather than SMS because mobile OTP needs a DLT registration that is
+// still pending; the server's OTP flow is email-based today.
 // =============================================================================
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../vendor_registration_screen.dart' show AppColors;
 import 'auth_widgets.dart';
+import '../services/otp_auth_service.dart';
+import '../services/account_api.dart';
+import '../services/auth_service.dart';
 
 enum _Step { mobile, otp, password, success }
 
@@ -66,10 +73,16 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       );
   }
 
-  String get _maskedMobile {
-    final m = _mobileCtrl.text.trim();
-    if (m.length < 4) return m;
-    return '+91 •••••${m.substring(m.length - 5)}';
+  /// Partially hides the address in the "code sent to …" line, so a shoulder
+  /// surfer can't read the full email off the screen.
+  String get _maskedEmail {
+    final e = _mobileCtrl.text.trim();
+    final at = e.indexOf('@');
+    if (at <= 1) return e;
+    final name = e.substring(0, at);
+    final domain = e.substring(at);
+    if (name.length <= 2) return '${name[0]}•••$domain';
+    return '${name.substring(0, 2)}${'•' * (name.length - 2)}$domain';
   }
 
   // --- Step transitions ------------------------------------------------------
@@ -92,24 +105,44 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     if (!(_mobileFormKey.currentState?.validate() ?? false)) return;
     FocusScope.of(context).unfocus();
     setState(() => _busy = true);
-    // TODO(backend): POST send-otp — verify the number exists, then SMS a code.
-    await Future<void>.delayed(const Duration(milliseconds: 700));
+
+    final result =
+        await const OtpAuthService().requestOtp(_mobileCtrl.text.trim());
     if (!mounted) return;
+    setState(() => _busy = false);
+
+    if (!result.success) {
+      _snack(result.message, error: true);
+      return;
+    }
+
     setState(() {
-      _busy = false;
       _step = _Step.otp;
+      _otp = '';
     });
     _startResendTimer();
-    _snack('OTP sent to ${_maskedMobile.trim()}');
+    // NOTE: the server answers identically whether or not the address is
+    // registered, so this is "if that address has an account, a code is on its
+    // way" — not a confirmation that one exists.
+    _snack('If that address has an account, a code is on its way.');
   }
 
   Future<void> _resendOtp() async {
-    if (_secondsLeft > 0) return;
-    // TODO(backend): POST resend-otp.
-    _startResendTimer();
-    _snack('OTP resent');
+    if (_secondsLeft > 0 || _busy) return;
+    setState(() => _busy = true);
+    final result =
+        await const OtpAuthService().requestOtp(_mobileCtrl.text.trim());
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (result.success) _startResendTimer();
+    _snack(result.message, error: !result.success);
   }
 
+  /// Verifies the code.
+  ///
+  /// This is what actually authorises the reset: a correct code mints a real
+  /// session token, and the password update below is made with it. There is no
+  /// separate "reset token" — proving control of the email IS the proof.
   Future<void> _verifyOtp() async {
     if (_otp.length != 6) {
       _snack('Enter the 6-digit code', error: true);
@@ -117,26 +150,47 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     }
     FocusScope.of(context).unfocus();
     setState(() => _busy = true);
-    // TODO(backend): POST verify-otp — reject and show an error if it's wrong.
-    await Future<void>.delayed(const Duration(milliseconds: 600));
+
+    final result = await const OtpAuthService()
+        .verifyOtp(email: _mobileCtrl.text.trim(), code: _otp);
     if (!mounted) return;
-    setState(() {
-      _busy = false;
-      _step = _Step.password;
-    });
+    setState(() => _busy = false);
+
+    if (!result.success) {
+      // Wrong / expired / too many attempts — the server distinguishes them.
+      _snack(result.message, error: true);
+      return;
+    }
+
+    setState(() => _step = _Step.password);
   }
 
   Future<void> _changePassword() async {
     if (!(_passwordFormKey.currentState?.validate() ?? false)) return;
     FocusScope.of(context).unfocus();
     setState(() => _busy = true);
-    // TODO(backend): POST reset-password { mobile, otp, newPassword }.
-    await Future<void>.delayed(const Duration(milliseconds: 700));
+
+    // No currentPassword: the OTP step above already proved this user controls
+    // the account, and someone who has forgotten their password cannot supply
+    // the old one.
+    final result = await const AccountApi()
+        .updatePassword(newPassword: _newPassCtrl.text);
+
     if (!mounted) return;
-    setState(() {
-      _busy = false;
-      _step = _Step.success;
-    });
+    setState(() => _busy = false);
+
+    if (!result.success) {
+      _snack(result.message, error: true);
+      return;
+    }
+
+    // The OTP sign-in left a live session behind. Clear it so the user has to
+    // sign in with the NEW password — landing them inside the app on a session
+    // minted by a password-reset flow would be a surprise, and would skip the
+    // one check that confirms the new password actually works.
+    AuthService.clearSession();
+
+    setState(() => _step = _Step.success);
     _resendTimer?.cancel();
   }
 
@@ -205,13 +259,13 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       _Step.mobile => (
           Icons.lock_reset_rounded,
           'Reset your password',
-          'Enter your registered mobile number and we’ll send you a one-time '
+          'Enter your registered email address and we’ll send you a one-time '
               'code to verify it’s you.',
         ),
       _Step.otp => (
           Icons.sms_outlined,
           'Verify OTP',
-          'Enter the 6-digit code sent to $_maskedMobile.',
+          'Enter the 6-digit code sent to $_maskedEmail.',
         ),
       _Step.password => (
           Icons.password_rounded,
@@ -254,7 +308,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Mobile Number',
+          const Text('Email Address',
               style: TextStyle(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w600,
@@ -262,18 +316,18 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           const SizedBox(height: 6),
           TextFormField(
             controller: _mobileCtrl,
-            keyboardType: TextInputType.phone,
-            maxLength: 10,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            keyboardType: TextInputType.emailAddress,
             style: const TextStyle(fontSize: 14, color: AppColors.darkText),
             decoration: _fieldDecoration(
-              hint: 'Enter 10-digit mobile number',
-              icon: Icons.phone_outlined,
+              hint: 'you@pharmacy.com',
+              icon: Icons.alternate_email_outlined,
             ),
             validator: (v) {
               final t = v?.trim() ?? '';
-              if (t.isEmpty) return 'Mobile number is required';
-              if (t.length != 10) return 'Enter a valid 10-digit number';
+              if (t.isEmpty) return 'Email address is required';
+              if (!OtpAuthService.isValidEmail(t)) {
+                return 'Enter a valid email address';
+              }
               return null;
             },
           ),

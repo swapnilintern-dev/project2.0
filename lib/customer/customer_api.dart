@@ -56,6 +56,11 @@ class CustomerApi {
   /// order the server created, so no order is ever lost or duplicated.)
   static const Duration _slowTimeout = Duration(seconds: 100);
 
+  /// The catalogue is the first thing a returning user loads (splash → home in
+  /// under 3 s), so on a sleeping backend it IS the cold-start request (~55 s
+  /// measured). With the 12 s [_timeout] it gave up and the shop opened empty.
+  static const Duration _catalogTimeout = Duration(seconds: 70);
+
   /// Shared base URL — see [ApiConfig]. (Previously pointed at localhost:3000,
   /// which made the customer app talk to a different server than the rest.)
   static String get baseUrl => ApiConfig.baseUrl;
@@ -84,7 +89,7 @@ class CustomerApi {
     try {
       final res = await _client
           .get(Uri.parse('$baseUrl/vsArogya/all-products'), headers: _headers)
-          .timeout(_timeout);
+          .timeout(_catalogTimeout);
       if (res.statusCode == 200) {
         final body = jsonDecode(res.body) as Map<String, dynamic>;
         final list = (body['products'] as List?) ?? const [];
@@ -363,7 +368,9 @@ class CustomerApi {
               'pincode': address.pincode,
               'country': 'India', // backend requires it; app has no country field
               'phoneNo': address.phone,
-              // Backend applies the coupon's percentOff to the subtotal.
+              // Backend re-validates the code and applies its percentOff
+              // (capped at maxDiscount) to the subtotal — `coupan_discount`
+              // is the field name the server reads.
               if (couponCode != null && couponCode.isNotEmpty)
                 'coupan_discount': couponCode,
             }),
@@ -510,6 +517,9 @@ class CustomerApi {
   /// Order history (GET /get-order). Returns null when the call fails (offline /
   /// not logged in) so the caller keeps its current list.
   Future<List<Order>?> getOrders() async {
+    // An email-OTP guest has no orders and the server refuses its token —
+    // the order screens poll, so don't send a request that can only 403.
+    if (AuthService.role == 'guest') return const [];
     try {
       final res = await _client
           .get(Uri.parse('$baseUrl/vsArogya/get-order'), headers: _headers)
@@ -646,9 +656,10 @@ class CustomerApi {
     return null;
   }
 
-  /// Maps a backend order document onto the app's [Order]. The backend stores a
-  /// single totalAmount (no coupon/GST/delivery split), so it's folded into
-  /// subtotal with the rest zeroed.
+  /// Maps a backend order document onto the app's [Order]. The backend stores
+  /// totalAmount AFTER any coupon plus the coupon's `couponDiscount`, so the
+  /// subtotal is rebuilt as total + discount; GST/delivery are zeroed (prices
+  /// are GST-inclusive, delivery is free).
   static Order _orderFromBackend(Map<String, dynamic> j) {
     final itemsRaw = (j['orderItems'] as List?) ?? const [];
     final items = <OrderItem>[];
@@ -664,6 +675,7 @@ class CustomerApi {
     }
     final addr = (j['shippingAddress'] as Map?) ?? const {};
     final total = _num(j['totalAmount']);
+    final couponDiscount = _num(j['couponDiscount']);
     return Order(
       id: (j['_id'] ?? '').toString(),
       placedAt:
@@ -683,10 +695,10 @@ class CustomerApi {
       paymentMethod: (j['paymentMethod'] ?? '').toString() == 'COD'
           ? PaymentMethod.cod
           : PaymentMethod.razorpay,
-      subtotal: total,
+      subtotal: total + couponDiscount,
       deliveryFee: 0,
       gst: 0,
-      discount: 0,
+      discount: couponDiscount,
       // Server-hosted invoice PDF, when the backend saved one on the order.
       // Prefers the populated invoice document ({invoiceNumber, pdfUrl}) and
       // tolerates the older flat `invoiceUrl` field.

@@ -1,11 +1,17 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'services/auth_service.dart';
+import 'services/otp_auth_service.dart';
+import 'services/vendor_approval.dart';
+import 'services/buyer_pricing.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // Clipboard (tap-to-copy support details)
 import 'vendor_registration_screen.dart'; // AppColors + VendorRegistrationScreen
+import 'auth/auth_widgets.dart' show OtpInput;
 import 'auth/forgot_password_screen.dart';
 import 'auth/session.dart' show homeForRole;
+import 'shared/support_contact.dart';
 import 'delivery/delivery_main.dart';
 import 'delivery/delivery_api.dart';
 import 'delivery/delivery_models.dart' show DeliveryController;
@@ -17,6 +23,15 @@ import 'outlet/outlet_session.dart';
 /// (returned by the backend at login) — there is no on-screen role picker.
 /// `vendor` is the B2B buyer (a pharmacy/clinic) who shops via the customer app.
 enum SignInRole { vendor, admin, delivery, marketing, outletStaff }
+
+/// The two ways to sign in. OTP is the PRIMARY method and what the screen
+/// opens on; password stays available for every account type (admin,
+/// marketing, delivery, outlet staff and vendors with credentials).
+///
+/// This is a presentation choice only — both methods end in the SAME existing
+/// authentication + [homeForRole] role routing. There is deliberately no role
+/// picker: the role comes from the authenticated account.
+enum _LoginMethod { otp, password }
 
 class SignInScreen extends StatefulWidget {
   const SignInScreen({super.key});
@@ -30,15 +45,38 @@ class _SignInScreenState extends State<SignInScreen> {
   final _identifierCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
 
+  // OTP login (the default method). Email, not mobile: the server's OTP flow is
+  // email-based because mobile OTP needs a DLT registration that is still
+  // pending (see OtpAuthService).
+  final _otpEmailCtrl = TextEditingController();
+  String _otpCode = '';
+  bool _otpSent = false;
+  bool _otpBusy = false;
+  Timer? _resendTimer;
+  int _resendSeconds = 0;
+
+  /// OTP first — the screen opens on it.
+  _LoginMethod _method = _LoginMethod.otp;
+
   // Local UI state.
   bool _obscurePassword = true;
   bool _isSubmitting = false;
 
   @override
   void dispose() {
+    _resendTimer?.cancel();
     _identifierCtrl.dispose();
     _passwordCtrl.dispose();
+    _otpEmailCtrl.dispose();
     super.dispose();
+  }
+
+  /// Switches between OTP and password login. Only the selected method's
+  /// fields are built, so the other one's validators never fire.
+  void _selectMethod(_LoginMethod method) {
+    if (_method == method) return;
+    FocusScope.of(context).unfocus();
+    setState(() => _method = method);
   }
 Future<void> _onSignIn() async {
 
@@ -121,6 +159,37 @@ Future<void> _onSignIn() async {
 
     setState(() => _isSubmitting = false);
 
+    _completeSignIn(response, mobile);
+  } catch (_) {
+    // AuthService.login no longer throws, but the agent/outlet fallbacks and
+    // the navigation below still can. Whatever it was, the user gets a sentence
+    // they can act on rather than a Dart exception.
+    if (!mounted) return;
+
+    setState(() => _isSubmitting = false);
+
+    _showMessage('Could not sign you in right now. Please try again.');
+  }
+}
+
+  /// Finishes an authenticated sign-in — used by BOTH login methods so they
+  /// can never diverge.
+  ///
+  /// [response] is the authentication response body exactly as the existing
+  /// backend returns it.
+  void _completeSignIn(Map<String, dynamic> response, String mobile) {
+    // Mirror the account's vendor approval state client-side so the shopping
+    // screens can hide distributor prices until an admin has approved the
+    // vendor. Reads the backend's own `approvalStatus` field when the login
+    // response carries it; a response without it leaves the state "unknown"
+    // and changes nothing (see lib/services/vendor_approval.dart).
+    VendorApproval.instance.adoptFromAuthResponse(response);
+
+    // Which rate card this account is on (base / doctor / wholesale). Derived
+    // from the vendor_type + shop_type the login response carries; an account
+    // without them stays on the undiscounted retail price.
+    BuyerPricing.instance.adoptFromProfile(response);
+
     // Route to the portal for the account's role. The backend MUST return
     // `role` in the login response (server: userController.login -> add
     // `role: user.role`). The mapping lives in [homeForRole] (auth/session.dart)
@@ -136,17 +205,99 @@ Future<void> _onSignIn() async {
         builder: (_) => nextScreen,
       ),
     );
-  } catch (_) {
-    // AuthService.login no longer throws, but the agent/outlet fallbacks and
-    // the navigation below still can. Whatever it was, the user gets a sentence
-    // they can act on rather than a Dart exception.
+  }
+
+  // ---------------------------------------------------------------------------
+  // OTP LOGIN (primary method)
+  //
+  // The network side lives in OtpAuthService, which is a documented seam: the
+  // backend has no OTP endpoint yet, so requestOtp/verifyOtp report that
+  // honestly and NOTHING here fabricates a session. When the endpoints land,
+  // this UI works unchanged.
+  // ---------------------------------------------------------------------------
+
+  void _startResendTimer() {
+    _resendTimer?.cancel();
+    setState(() => _resendSeconds = 30);
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return;
+      if (_resendSeconds <= 1) {
+        t.cancel();
+        setState(() => _resendSeconds = 0);
+      } else {
+        setState(() => _resendSeconds--);
+      }
+    });
+  }
+
+  Future<void> _onSendOtp() async {
+    FocusScope.of(context).unfocus();
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    setState(() => _otpBusy = true);
+    final result =
+        await const OtpAuthService().requestOtp(_otpEmailCtrl.text.trim());
     if (!mounted) return;
 
-    setState(() => _isSubmitting = false);
-
-    _showMessage('Could not sign you in right now. Please try again.');
+    setState(() {
+      _otpBusy = false;
+      if (result.success) {
+        _otpSent = true;
+        _otpCode = '';
+      }
+    });
+    if (result.success) _startResendTimer();
+    _showMessage(result.message);
   }
-}
+
+  Future<void> _onResendOtp() async {
+    if (_resendSeconds > 0 || _otpBusy) return;
+    setState(() => _otpBusy = true);
+    final result =
+        await const OtpAuthService().requestOtp(_otpEmailCtrl.text.trim());
+    if (!mounted) return;
+    setState(() => _otpBusy = false);
+    if (result.success) _startResendTimer();
+    _showMessage(result.message);
+  }
+
+  /// Verifies the code and, on success, hands the authentication response to
+  /// the same [_completeSignIn] the password login uses.
+  Future<void> _onVerifyOtp() async {
+    FocusScope.of(context).unfocus();
+    if (_otpCode.length != 6) {
+      _showMessage('Enter the 6-digit code');
+      return;
+    }
+
+    final email = _otpEmailCtrl.text.trim();
+    setState(() => _otpBusy = true);
+    final result = await const OtpAuthService()
+        .verifyOtp(email: email, code: _otpCode);
+    if (!mounted) return;
+    setState(() => _otpBusy = false);
+
+    // No session unless the server actually authenticated the code.
+    if (!result.success || result.body == null) {
+      _showMessage(result.message);
+      return;
+    }
+
+    // OtpAuthService has already captured the session (token/role/name). The
+    // mobile number is whatever the account carries, not something typed here —
+    // pass the server's value so screens that show it stay correct.
+    _completeSignIn(result.body!, AuthService.phone ?? '');
+  }
+
+  /// Back to the email step (wrong address / start over).
+  void _changeEmail() {
+    _resendTimer?.cancel();
+    setState(() {
+      _otpSent = false;
+      _otpCode = '';
+      _resendSeconds = 0;
+    });
+  }
 
   /// One place for the sign-in screen's user-facing messages, so none of them
   /// can accidentally carry exception text.
@@ -467,83 +618,15 @@ Future<void> _onSignIn() async {
             ),
             const SizedBox(height: 20),
 
-            // Identifier field.
-            _InputField(
-              label: 'Mobile Number / Email',
-              hint: 'Enter mobile or email',
-              controller: _identifierCtrl,
-              icon: Icons.person_outline,
-              keyboardType: TextInputType.emailAddress,
-              validator: (v) {
-                if (v == null || v.trim().isEmpty) {
-                  return 'Mobile number or email is required';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
+            // Login method switch — OTP (primary) / Password (secondary).
+            // NOT a role picker: the role always comes from the account.
+            _buildMethodToggle(),
+            const SizedBox(height: 18),
 
-            // Password field with show/hide toggle.
-            _InputField(
-              label: 'Password',
-              hint: 'Enter your password',
-              controller: _passwordCtrl,
-              icon: Icons.lock_outline,
-              obscureText: _obscurePassword,
-              suffix: IconButton(
-                onPressed: ( 
-
-                ) =>
-                    setState(() => _obscurePassword = !_obscurePassword),
-                icon: Icon(
-                  _obscurePassword
-                      ? Icons.visibility_off_outlined
-                      : Icons.visibility_outlined,
-                  color: AppColors.greyText,
-                  size: 20,
-                ),
-                tooltip: _obscurePassword ? 'Show password' : 'Hide password',
-              ),
-              validator: (v) {
-                if (v == null || v.isEmpty) return 'Password is required';
-                // The message used to say 6 while the check said 4, so a 4- or
-                // 5-character password was accepted under a rule the user had
-                // just been told it broke. 4 is the real minimum the backend
-                // allows for existing accounts, so the message follows the code.
-                if (v.length < 4) return 'Password must be at least 4 characters';
-                return null;
-              },
-            ),
-
-
-            // Forgot password.
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                      builder: (_) => const ForgotPasswordScreen()),
-                ),
-                style: TextButton.styleFrom(
-                  foregroundColor: AppColors.primary,
-                  visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                ),
-                child: const Text(
-                  'Forgot Password?',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-
-
-            // Sign In button with green glow.
-            _GlowGradientButton(
-              label: 'Sign In →',
-              loading: _isSubmitting,
-              onPressed: _isSubmitting ? null : _onSignIn,
-            ),
+            if (_method == _LoginMethod.otp)
+              ..._buildOtpFields()
+            else
+              ..._buildPasswordFields(),
             const SizedBox(height: 22),
 
             // Divider with label.
@@ -597,6 +680,267 @@ Future<void> _onSignIn() async {
       ),
     );
   }
+  // ---------------------------------------------------------------------------
+  // LOGIN METHOD SWITCH + FIELDS
+  // ---------------------------------------------------------------------------
+
+  /// Two-pill segmented switch. OTP sits first because it is the default.
+  Widget _buildMethodToggle() {
+    Widget pill(_LoginMethod method, IconData icon, String label) {
+      final selected = _method == method;
+      return Expanded(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => _selectMethod(method),
+            borderRadius: BorderRadius.circular(12),
+            child: Ink(
+              height: 44,
+              decoration: BoxDecoration(
+                gradient: selected ? AppColors.greenGradient : null,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon,
+                      size: 17,
+                      color:
+                          selected ? AppColors.white : AppColors.greyText),
+                  const SizedBox(width: 7),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color:
+                          selected ? AppColors.white : AppColors.greyText,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppColors.pageBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          pill(_LoginMethod.otp, Icons.sms_outlined, 'OTP Login'),
+          pill(_LoginMethod.password, Icons.lock_outline, 'Password Login'),
+        ],
+      ),
+    );
+  }
+
+  /// OTP login: mobile number → 6-digit code.
+  List<Widget> _buildOtpFields() {
+    if (!_otpSent) {
+      return [
+        _InputField(
+          label: 'Email Address',
+          hint: 'you@pharmacy.com',
+          controller: _otpEmailCtrl,
+          icon: Icons.alternate_email_outlined,
+          keyboardType: TextInputType.emailAddress,
+          onSubmitted: (_) {
+            if (!_otpBusy) _onSendOtp();
+          },
+          validator: (v) {
+            final value = (v ?? '').trim();
+            if (value.isEmpty) return 'Email address is required';
+            if (!OtpAuthService.isValidEmail(value)) {
+              return 'Enter a valid email address';
+            }
+            return null;
+          },
+        ),
+        // Honest notice while the backend OTP endpoints don't exist yet — the
+        // user is told where to go instead of hitting a dead end. Disappears
+        // on its own once OtpAuthService.isAvailable is true.
+        if (!OtpAuthService.isAvailable) ...[
+          const SizedBox(height: 12),
+          _noticeBanner(OtpAuthService.unavailableMessage),
+        ],
+        const SizedBox(height: 18),
+        _GlowGradientButton(
+          label: 'Send OTP →',
+          loading: _otpBusy,
+          onPressed: _otpBusy ? null : _onSendOtp,
+        ),
+      ];
+    }
+
+    return [
+      Text(
+        'Enter the 6-digit code sent to ${_otpEmailCtrl.text.trim()}',
+        style: const TextStyle(fontSize: 13, color: AppColors.greyText),
+      ),
+      const SizedBox(height: 16),
+      OtpInput(onChanged: (v) => _otpCode = v),
+      const SizedBox(height: 12),
+      Row(
+        children: [
+          TextButton(
+            onPressed: _changeEmail,
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.greyText,
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(vertical: 4),
+            ),
+            child: const Text('Change email',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          ),
+          const Spacer(),
+          if (_resendSeconds > 0)
+            Text(
+              'Resend in ${_resendSeconds}s',
+              style: const TextStyle(fontSize: 13, color: AppColors.greyText),
+            )
+          else
+            TextButton(
+              onPressed: _otpBusy ? null : _onResendOtp,
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.primary,
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(vertical: 4),
+              ),
+              child: const Text('Resend OTP',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+            ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      _GlowGradientButton(
+        label: 'Verify & Sign In →',
+        loading: _otpBusy,
+        onPressed: _otpBusy ? null : _onVerifyOtp,
+      ),
+    ];
+  }
+
+  /// Password login — the EXISTING fields and the existing [_onSignIn] call,
+  /// moved into a builder so only one method's fields are on screen at a time.
+  List<Widget> _buildPasswordFields() {
+    return [
+      // Identifier field.
+      _InputField(
+        label: 'User ID (Mobile Number / Email)',
+        hint: 'Enter mobile or email',
+        controller: _identifierCtrl,
+        icon: Icons.person_outline,
+        keyboardType: TextInputType.emailAddress,
+        validator: (v) {
+          if (v == null || v.trim().isEmpty) {
+            return 'Mobile number or email is required';
+          }
+          return null;
+        },
+      ),
+      const SizedBox(height: 16),
+
+      // Password field with show/hide toggle.
+      _InputField(
+        label: 'Password',
+        hint: 'Enter your password',
+        controller: _passwordCtrl,
+        icon: Icons.lock_outline,
+        obscureText: _obscurePassword,
+        onSubmitted: (_) {
+          if (!_isSubmitting) _onSignIn();
+        },
+        suffix: IconButton(
+          onPressed: () =>
+              setState(() => _obscurePassword = !_obscurePassword),
+          icon: Icon(
+            _obscurePassword
+                ? Icons.visibility_off_outlined
+                : Icons.visibility_outlined,
+            color: AppColors.greyText,
+            size: 20,
+          ),
+          tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+        ),
+        validator: (v) {
+          if (v == null || v.isEmpty) return 'Password is required';
+          // The message used to say 6 while the check said 4, so a 4- or
+          // 5-character password was accepted under a rule the user had
+          // just been told it broke. 4 is the real minimum the backend
+          // allows for existing accounts, so the message follows the code.
+          if (v.length < 4) return 'Password must be at least 4 characters';
+          return null;
+        },
+      ),
+
+      // Forgot password.
+      Align(
+        alignment: Alignment.centerRight,
+        child: TextButton(
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const ForgotPasswordScreen()),
+          ),
+          style: TextButton.styleFrom(
+            foregroundColor: AppColors.primary,
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(vertical: 4),
+          ),
+          child: const Text(
+            'Forgot Password?',
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+          ),
+        ),
+      ),
+      const SizedBox(height: 8),
+
+      // Sign In button with green glow.
+      _GlowGradientButton(
+        label: 'Sign In →',
+        loading: _isSubmitting,
+        onPressed: _isSubmitting ? null : _onSignIn,
+      ),
+    ];
+  }
+
+  /// Soft informational strip (shared palette, no new visual language).
+  Widget _noticeBanner(String message) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.lightGreenBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline,
+              size: 17, color: AppColors.darkGreen),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                fontSize: 12,
+                height: 1.4,
+                color: AppColors.darkGreen,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // VENDOR REGISTRATION BANNER
   // ---------------------------------------------------------------------------
 
@@ -694,6 +1038,7 @@ class _InputField extends StatelessWidget {
     this.keyboardType,
     this.obscureText = false,
     this.suffix,
+    this.onSubmitted,
   });
 
   final String label;
@@ -704,6 +1049,10 @@ class _InputField extends StatelessWidget {
   final TextInputType? keyboardType;
   final bool obscureText;
   final Widget? suffix;
+
+  /// Called on Enter / the keyboard's Done key. Null moves focus to the next
+  /// field instead. On the website, users expect Enter to submit the form.
+  final ValueChanged<String>? onSubmitted;
 
   @override
   Widget build(BuildContext context) {
@@ -729,6 +1078,9 @@ class _InputField extends StatelessWidget {
           validator: validator,
           keyboardType: keyboardType,
           obscureText: obscureText,
+          textInputAction:
+              onSubmitted != null ? TextInputAction.done : TextInputAction.next,
+          onFieldSubmitted: onSubmitted,
           style: const TextStyle(fontSize: 14, color: AppColors.darkText),
           decoration: InputDecoration(
             hintText: hint,
@@ -837,10 +1189,6 @@ class _GlowGradientButton extends StatelessWidget {
 class _SupportSheet extends StatelessWidget {
   const _SupportSheet();
 
-  // TODO: replace with the company's real support contact details.
-  static const String _phone = '+91 1800 123 4567';
-  static const String _email = 'support@vsarogya.in';
-
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -898,17 +1246,18 @@ class _SupportSheet extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 20),
+            // Real details from lib/shared/support_contact.dart.
             const _SupportContactTile(
               icon: Icons.call_outlined,
               label: 'Phone',
-              value: _phone,
+              value: SupportContact.phone,
               copiedMessage: 'Phone number copied',
             ),
             const SizedBox(height: 12),
             const _SupportContactTile(
               icon: Icons.mail_outline,
               label: 'Email',
-              value: _email,
+              value: SupportContact.email,
               copiedMessage: 'Email copied',
             ),
             const SizedBox(height: 16),

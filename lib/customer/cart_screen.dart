@@ -360,7 +360,7 @@ class _CouponFieldState extends State<_CouponField> {
                   controller: _controller,
                   textCapitalization: TextCapitalization.characters,
                   decoration: const InputDecoration(
-                    hintText: 'Enter coupon code (e.g. BULK20)',
+                    hintText: 'Enter coupon code',
                     hintStyle: TextStyle(fontSize: 13, color: AppColors.greyText),
                     border: InputBorder.none,
                   ),

@@ -10,7 +10,6 @@
 
 import 'package:flutter/material.dart';
 
-import '../auth/session.dart';
 import '../vendor_registration_screen.dart' show AppColors;
 import '../theme/app_widgets.dart' show maybeExitApp, BrandStatusBar;
 import 'marketing_controllers.dart';
@@ -40,8 +39,6 @@ class _MarketingRoleMainState extends State<MarketingRoleMain> {
 
   void _select(int i) => setState(() => _index = i);
 
-  void _logout() => logout(context);
-
   @override
   Widget build(BuildContext context) {
     // One green/white theme across every tab.
@@ -69,7 +66,7 @@ class _MarketingRoleMainState extends State<MarketingRoleMain> {
         backgroundColor: AppColors.pageBg,
         // No app bar: each tab draws its own gradient header. We fill the
         // status-bar strip with the same brand gradient so the green banner
-        // reads edge-to-edge (no white gap), and float the logout at top-right.
+        // reads edge-to-edge (no white gap). Logout is in the Dashboard header.
         body: BrandStatusBar(
           child: Stack(
             children: [
@@ -89,30 +86,6 @@ class _MarketingRoleMainState extends State<MarketingRoleMain> {
                 ),
               ),
               IndexedStack(index: _index, children: tabs),
-              Positioned(
-                top: 0,
-                right: 8,
-                child: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Material(
-                      color: Colors.black.withValues(alpha: 0.18),
-                      shape: const CircleBorder(),
-                      clipBehavior: Clip.antiAlias,
-                      child: IconButton(
-                        onPressed: _logout,
-                        icon: const Icon(
-                          Icons.logout,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                        tooltip: 'Logout',
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
             ],
           ),
         ),

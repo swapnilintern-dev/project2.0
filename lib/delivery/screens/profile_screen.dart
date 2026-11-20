@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import '../../account_deletion/account_deletion_controller.dart';
 import '../../account_deletion/privacy_security_screen.dart';
 import '../../auth/session.dart';
+import '../../shared/support_contact.dart';
 import '../../vendor_registration_screen.dart' show AppColors;
 import '../../theme/app_theme.dart' show AppPalette, AppShadows;
 import '../delivery_models.dart';
@@ -48,33 +50,20 @@ class DeliveryProfileScreen extends StatelessWidget {
                 ),
               ),
             ]),
-            _menuGroup(context, [
-              _MenuItem(
-                icon: Icons.person_outline,
-                label: 'Personal Details',
-                onTap: () => _snack(context, 'Opening personal details'),
-              ),
-              _MenuItem(
-                icon: Icons.description_outlined,
-                label: 'Documents & Licence',
-                onTap: () => _snack(context, 'Opening documents'),
-              ),
-              _MenuItem(
-                icon: Icons.account_balance_outlined,
-                label: 'Bank & Payouts',
-                onTap: () => _snack(context, 'Opening bank & payouts'),
-              ),
-              _MenuItem(
-                icon: Icons.map_outlined,
-                label: 'Service Areas',
-                onTap: () => _snack(context, 'Opening service areas'),
-              ),
-            ]),
+            // (Personal Details / Documents / Bank & Payouts / Service Areas /
+            // App Settings rows were removed: none had a screen or backend
+            // behind them — each only flashed an "Opening …" snackbar.)
             _menuGroup(context, [
               _MenuItem(
                 icon: Icons.headset_mic_outlined,
                 label: 'Help & Support',
-                onTap: () => _snack(context, 'Connecting to support'),
+                onTap: () async {
+                  await Clipboard.setData(
+                      const ClipboardData(text: SupportContact.email));
+                  if (!context.mounted) return;
+                  _snack(context,
+                      'Support email copied: ${SupportContact.email}');
+                },
               ),
               _MenuItem(
                 icon: Icons.privacy_tip_outlined,
@@ -87,11 +76,6 @@ class DeliveryProfileScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-              ),
-              _MenuItem(
-                icon: Icons.settings_outlined,
-                label: 'App Settings',
-                onTap: () => _snack(context, 'Opening app settings'),
               ),
             ]),
             Padding(
